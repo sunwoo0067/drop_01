@@ -19,7 +19,7 @@ async def register_product_endpoint(
     쿠팡 상품 등록을 트리거합니다.
     작업은 백그라운드에서 비동기로 수행됩니다.
     """
-    # Find a coupay account
+    # 쿠팡 계정 조회
     stmt = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
     account = session.scalars(stmt).first()
     
