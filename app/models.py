@@ -2,7 +2,7 @@ from pgvector.sqlalchemy import Vector
 from datetime import datetime
 import uuid
 
-from sqlalchemy import BigInteger, DateTime, Integer, Text, UniqueConstraint
+from sqlalchemy import BigInteger, DateTime, Integer, Text, UniqueConstraint, ForeignKey
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -29,6 +29,7 @@ class SupplierAccount(Base):
     user_type: Mapped[str] = mapped_column(Text, nullable=False)
     username: Mapped[str] = mapped_column(Text, nullable=False)
     access_token: Mapped[str] = mapped_column(Text, nullable=False)
+    credentials: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_primary: Mapped[bool] = mapped_column(default=False)
     is_active: Mapped[bool] = mapped_column(default=True)
@@ -135,3 +136,111 @@ class SupplierCategoryRaw(Base):
     category_id: Mapped[str] = mapped_column(Text, nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+
+# --------------------------------------------------------------------------
+# Market Domain (Sales Channels)
+# --------------------------------------------------------------------------
+
+class MarketAccount(Base):
+    __tablename__ = "market_accounts"
+    __table_args__ = (UniqueConstraint("market_code", "name", name="uq_market_accounts_code_name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_code: Mapped[str] = mapped_column(Text, nullable=False)  # 'COUPANG', 'SMARTSTORE'
+    name: Mapped[str] = mapped_column(Text, nullable=False)  # Account Alias
+    credentials: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    is_active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class MarketOrderRaw(Base):
+    __tablename__ = "market_order_raw"
+    __table_args__ = (
+        UniqueConstraint("market_code", "account_id", "order_id", name="uq_market_order_raw_account_order"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_code: Mapped[str] = mapped_column(Text, nullable=False)
+    account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_accounts.id"), nullable=False)
+    order_id: Mapped[str] = mapped_column(Text, nullable=False)  # Market's Order ID
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+
+class MarketProductRaw(Base):
+    __tablename__ = "market_product_raw"
+    __table_args__ = (
+        UniqueConstraint("market_code", "account_id", "market_item_id", name="uq_market_product_raw_account_item"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_code: Mapped[str] = mapped_column(Text, nullable=False)
+    account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_accounts.id"), nullable=False)
+    market_item_id: Mapped[str] = mapped_column(Text, nullable=False)  # sellerProductId
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+
+# --------------------------------------------------------------------------
+# Core Business Domain (Unified)
+# --------------------------------------------------------------------------
+
+class Product(Base):
+    __tablename__ = "products"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    supplier_item_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("supplier_item_raw.id"), nullable=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    brand: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cost_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    selling_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="DRAFT")  # DRAFT, ACTIVE, SUSPENDED
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class MarketListing(Base):
+    __tablename__ = "market_listings"
+    __table_args__ = (
+        UniqueConstraint("market_account_id", "market_item_id", name="uq_market_listings_account_item"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("products.id"), nullable=False)
+    market_account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_accounts.id"), nullable=False)
+    market_item_id: Mapped[str] = mapped_column(Text, nullable=False)  # e.g. sellerProductId
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="ACTIVE")
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SupplierOrder(Base):
+    __tablename__ = "supplier_orders"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    supplier_code: Mapped[str] = mapped_column(Text, nullable=False)
+    supplier_order_id: Mapped[str | None] = mapped_column(Text, nullable=True) # ID assigned by supplier
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="PENDING")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class Order(Base):
+    __tablename__ = "orders"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_order_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("market_order_raw.id"), nullable=True)
+    supplier_order_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("supplier_orders.id"), nullable=True)
+    
+    order_number: Mapped[str] = mapped_column(Text, nullable=False, unique=True) # Internal Order Number
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="PAYMENT_COMPLETED")
+    
+    recipient_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recipient_phone: Mapped[str | None] = mapped_column(Text, nullable=True)
+    address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    total_amount: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

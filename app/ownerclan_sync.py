@@ -145,93 +145,279 @@ def sync_ownerclan_orders_raw(session: Session, job: SupplierSyncJob) -> OwnerCl
     )
 
     params = dict(job.params or {})
-    page = int(params.get("page", 1))
-    limit = int(params.get("limit", 50))
-    include_details = bool(params.get("includeDetails", False))
+    order_key = params.get("orderKey")
+    order_keys = params.get("orderKeys")
+    if order_key and not order_keys:
+        order_keys = [order_key]
+
+    order_query = """
+query ($key: String!) {
+  order(key: $key) {
+    key
+    id
+    products {
+      quantity
+      price
+      shippingType
+      itemKey
+      itemOptionInfo {
+        optionAttributes {
+          name
+          value
+        }
+        price
+      }
+      trackingNumber
+      shippingCompanyCode
+      shippedDate
+      additionalAttributes {
+        key
+        value
+      }
+      taxFree
+    }
+    status
+    shippingInfo {
+      sender {
+        name
+        phoneNumber
+        email
+      }
+      recipient {
+        name
+        phoneNumber
+        destinationAddress {
+          addr1
+          addr2
+          postalCode
+        }
+      }
+      shippingFee
+    }
+    createdAt
+    updatedAt
+    note
+    ordererNote
+    sellerNote
+    isBeingMediated
+    adjustments {
+      reason
+      price
+      taxFree
+    }
+    transactions {
+      key
+      id
+      kind
+      status
+      amount {
+        currency
+        value
+      }
+      createdAt
+      updatedAt
+      closedAt
+      note
+    }
+  }
+}
+"""
+
+    all_orders_query = """
+query {
+  allOrders {
+    edges {
+      node {
+        key
+        id
+        products {
+          quantity
+          price
+          shippingType
+          itemKey
+          itemOptionInfo {
+            optionAttributes {
+              name
+              value
+            }
+            price
+          }
+          trackingNumber
+          shippingCompanyName
+          shippedDate
+          additionalAttributes {
+            key
+            value
+          }
+          taxFree
+        }
+        status
+        shippingInfo {
+          sender {
+            name
+            phoneNumber
+            email
+          }
+          recipient {
+            name
+            phoneNumber
+            destinationAddress {
+              addr1
+              addr2
+              postalCode
+            }
+          }
+          shippingFee
+        }
+        createdAt
+        updatedAt
+        note
+        ordererNote
+        sellerNote
+        isBeingMediated
+        adjustments {
+          reason
+          price
+          taxFree
+        }
+        transactions {
+          key
+          id
+          kind
+          status
+          amount {
+            currency
+            value
+          }
+          createdAt
+          updatedAt
+          closedAt
+          note
+        }
+      }
+    }
+  }
+}
+"""
+
+    def _upsert_order(order_id: str, raw_order: dict) -> None:
+        stmt = insert(SupplierOrderRaw).values(
+            supplier_code="ownerclan",
+            account_id=account_id,
+            order_id=order_id,
+            raw=_sanitize_json(raw_order),
+            fetched_at=datetime.now(timezone.utc),
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["supplier_code", "account_id", "order_id"],
+            set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at},
+        )
+        session.execute(stmt)
 
     processed = 0
 
-    while True:
-        query_params: dict[str, Any] = {"page": page, "limit": limit}
-        for k in ("start_date", "end_date", "status"):
-            if params.get(k):
-                query_params[k] = params[k]
-
-        status_code, payload = client.get("/v1/orders", params=query_params)
-
-        session.add(
-            SupplierRawFetchLog(
-                supplier_code="ownerclan",
-                account_id=account_id,
-                endpoint=f"{settings.ownerclan_api_base_url}/v1/orders",
-                request_payload={"params": query_params},
-                http_status=status_code,
-                response_payload=payload,
-                error_message=None,
-            )
-        )
-
-        if status_code == 401:
-            raise RuntimeError("오너클랜 인증이 만료되었습니다(401). 토큰을 갱신해 주세요")
-        if status_code >= 400:
-            raise RuntimeError(f"오너클랜 주문 목록 호출 실패: HTTP {status_code}")
-        if payload.get("success") is False and payload.get("error"):
-            raise RuntimeError(f"오너클랜 주문 목록 오류: {payload.get('error')}")
-
-        data = payload.get("data") or payload
-        orders = data.get("orders") or []
-
-        for order in orders:
-            order_id = (order or {}).get("order_id") or (order or {}).get("orderId")
-            if not order_id:
+    if isinstance(order_keys, list) and order_keys:
+        for ok in order_keys:
+            if not ok:
                 continue
 
-            raw_order = order
-            if include_details:
-                s2, detail = client.get(f"/v1/order/{order_id}")
+            try:
+                status_code, payload = client.graphql(order_query, variables={"key": str(ok)})
+            except Exception as e:
                 session.add(
                     SupplierRawFetchLog(
                         supplier_code="ownerclan",
                         account_id=account_id,
-                        endpoint=f"{settings.ownerclan_api_base_url}/v1/order/{order_id}",
-                        request_payload={},
-                        http_status=s2,
-                        response_payload=detail,
-                        error_message=None,
+                        endpoint=settings.ownerclan_graphql_url,
+                        request_payload={"query": order_query, "variables": {"key": str(ok)}},
+                        http_status=None,
+                        response_payload=None,
+                        error_message=str(e),
                     )
                 )
-                if s2 == 200 and detail:
-                    raw_order = detail.get("data") or detail
+                session.commit()
+                raise
 
-            stmt = insert(SupplierOrderRaw).values(
+            session.add(
+                SupplierRawFetchLog(
+                    supplier_code="ownerclan",
+                    account_id=account_id,
+                    endpoint=settings.ownerclan_graphql_url,
+                    request_payload={"query": order_query, "variables": {"key": str(ok)}},
+                    http_status=status_code,
+                    response_payload=_sanitize_json(payload),
+                    error_message=None,
+                )
+            )
+            session.commit()
+
+            if status_code == 401:
+                raise RuntimeError("오너클랜 인증이 만료되었습니다(401). 토큰을 갱신해 주세요")
+            if status_code >= 400:
+                raise RuntimeError(f"오너클랜 GraphQL 호출 실패: HTTP {status_code}")
+            if payload.get("errors"):
+                raise RuntimeError(f"오너클랜 GraphQL 오류: {payload.get('errors')}")
+
+            order_node = (payload.get("data") or {}).get("order")
+            if not order_node:
+                continue
+
+            _upsert_order(str(ok), order_node)
+            processed += 1
+            job.progress = processed
+            session.commit()
+            time.sleep(1.1)
+
+        return OwnerClanJobResult(processed=processed)
+
+    try:
+        status_code, payload = client.graphql(all_orders_query)
+    except Exception as e:
+        session.add(
+            SupplierRawFetchLog(
                 supplier_code="ownerclan",
                 account_id=account_id,
-                order_id=str(order_id),
-                raw=_sanitize_json(raw_order),
-                fetched_at=datetime.now(timezone.utc),
+                endpoint=settings.ownerclan_graphql_url,
+                request_payload={"query": all_orders_query},
+                http_status=None,
+                response_payload=None,
+                error_message=str(e),
             )
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["supplier_code", "account_id", "order_id"],
-                set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at},
-            )
-            session.execute(stmt)
-            processed += 1
-
-        job.progress = processed
+        )
         session.commit()
+        raise
 
-        total_pages = data.get("total_pages") or data.get("totalPages")
-        has_next = data.get("has_next")
-        if isinstance(total_pages, int) and page >= total_pages:
-            break
-        if has_next is False:
-            break
-        if not orders:
-            break
+    session.add(
+        SupplierRawFetchLog(
+            supplier_code="ownerclan",
+            account_id=account_id,
+            endpoint=settings.ownerclan_graphql_url,
+            request_payload={"query": all_orders_query},
+            http_status=status_code,
+            response_payload=_sanitize_json(payload),
+            error_message=None,
+        )
+    )
+    session.commit()
 
-        page += 1
-        time.sleep(1.1)
+    if status_code == 401:
+        raise RuntimeError("오너클랜 인증이 만료되었습니다(401). 토큰을 갱신해 주세요")
+    if status_code >= 400:
+        raise RuntimeError(f"오너클랜 GraphQL 호출 실패: HTTP {status_code}")
+    if payload.get("errors"):
+        raise RuntimeError(f"오너클랜 GraphQL 오류: {payload.get('errors')}")
 
+    edges = (((payload.get("data") or {}).get("allOrders") or {}).get("edges") or [])
+    for edge in edges:
+        node = (edge or {}).get("node") or {}
+        ok = node.get("key")
+        if not ok:
+            continue
+        _upsert_order(str(ok), node)
+        processed += 1
+
+    job.progress = processed
+    session.commit()
     return OwnerClanJobResult(processed=processed)
 
 
@@ -246,86 +432,142 @@ def sync_ownerclan_qna_raw(session: Session, job: SupplierSyncJob) -> OwnerClanJ
     )
 
     params = dict(job.params or {})
-    page = int(params.get("page", 1))
-    limit = int(params.get("limit", 50))
-    include_details = bool(params.get("includeDetails", False))
+    qna_key = params.get("qnaKey")
+    qna_keys = params.get("qnaKeys")
+    if qna_key and not qna_keys:
+        qna_keys = [qna_key]
+
+    single_query = """
+query SellerQnaArticle($key: ID!) {
+  sellerQnaArticle(key: $key) {
+    key
+    id
+    type
+    isSecret
+    title
+    content
+    files
+    relatedItemKey
+    relatedOrderKey
+    recipientName
+    createdAt
+    comments
+    subArticles {
+      key
+      id
+      type
+      isSecret
+      title
+      content
+      files
+      relatedItemKey
+      relatedOrderKey
+      recipientName
+      createdAt
+      comments
+    }
+  }
+}
+"""
+
+    list_query = """
+query AllSellerQnaArticles {
+  allSellerQnaArticles {
+    pageInfo {
+      hasNextPage
+      hasPreviousPage
+      startCursor
+      endCursor
+    }
+    edges {
+      cursor
+      node {
+        key
+        id
+        type
+        isSecret
+        title
+        content
+        files
+        relatedItemKey
+        relatedOrderKey
+        recipientName
+        createdAt
+        comments
+        subArticles {
+          key
+          id
+          type
+          isSecret
+          title
+          content
+          files
+          relatedItemKey
+          relatedOrderKey
+          recipientName
+          createdAt
+          comments
+        }
+      }
+    }
+  }
+}
+"""
 
     processed = 0
 
-    while True:
-        query_params: dict[str, Any] = {"page": page, "limit": limit}
-        for k in ("start_date", "end_date", "status"):
-            if params.get(k):
-                query_params[k] = params[k]
-
-        try:
-            status_code, payload = client.get("/v1/qna", params=query_params)
-        except Exception as e:
-            session.add(
-                SupplierRawFetchLog(
-                    supplier_code="ownerclan",
-                    account_id=account_id,
-                    endpoint=f"{settings.ownerclan_api_base_url}/v1/qna",
-                    request_payload={"params": query_params},
-                    http_status=None,
-                    response_payload=None,
-                    error_message=str(e),
-                )
-            )
-            session.commit()
-            raise
-
-        session.add(
-            SupplierRawFetchLog(
-                supplier_code="ownerclan",
-                account_id=account_id,
-                endpoint=f"{settings.ownerclan_api_base_url}/v1/qna",
-                request_payload={"params": query_params},
-                http_status=status_code,
-                response_payload=payload,
-                error_message=None,
-            )
-        )
-
-        session.commit()
-
-        if status_code == 401:
-            raise RuntimeError("오너클랜 인증이 만료되었습니다(401). 토큰을 갱신해 주세요")
-        if status_code >= 400:
-            raise RuntimeError(f"오너클랜 문의 목록 호출 실패: HTTP {status_code}")
-        if payload.get("success") is False and payload.get("error"):
-            raise RuntimeError(f"오너클랜 문의 목록 오류: {payload.get('error')}")
-
-        data = payload.get("data") or payload
-        qna_list = data.get("qna_list") or data.get("qnaList") or []
-
-        for qna in qna_list:
-            qna_id = (qna or {}).get("qna_id") or (qna or {}).get("qnaId") or (qna or {}).get("id")
-            if not qna_id:
+    if isinstance(qna_keys, list) and qna_keys:
+        for qk in qna_keys:
+            if not qk:
                 continue
 
-            raw_qna = qna
-            if include_details:
-                s2, detail = client.get(f"/v1/qna/{qna_id}")
+            try:
+                status_code, payload = client.graphql(single_query, variables={"key": str(qk)})
+            except Exception as e:
                 session.add(
                     SupplierRawFetchLog(
                         supplier_code="ownerclan",
                         account_id=account_id,
-                        endpoint=f"{settings.ownerclan_api_base_url}/v1/qna/{qna_id}",
-                        request_payload={},
-                        http_status=s2,
-                        response_payload=detail,
-                        error_message=None,
+                        endpoint=settings.ownerclan_graphql_url,
+                        request_payload={"query": single_query, "variables": {"key": str(qk)}},
+                        http_status=None,
+                        response_payload=None,
+                        error_message=str(e),
                     )
                 )
-                if s2 == 200 and detail:
-                    raw_qna = detail.get("data") or detail
+                session.commit()
+                raise
 
+            session.add(
+                SupplierRawFetchLog(
+                    supplier_code="ownerclan",
+                    account_id=account_id,
+                    endpoint=settings.ownerclan_graphql_url,
+                    request_payload={"query": single_query, "variables": {"key": str(qk)}},
+                    http_status=status_code,
+                    response_payload=_sanitize_json(payload),
+                    error_message=None,
+                )
+            )
+            session.commit()
+
+            if status_code == 401:
+                raise RuntimeError("오너클랜 인증이 만료되었습니다(401). 토큰을 갱신해 주세요")
+            if status_code >= 400:
+                raise RuntimeError(f"오너클랜 GraphQL 호출 실패: HTTP {status_code}")
+            if payload.get("errors"):
+                raise RuntimeError(f"오너클랜 GraphQL 오류: {payload.get('errors')}")
+
+            node = (payload.get("data") or {}).get("sellerQnaArticle")
+            if not node:
+                continue
+
+            qna_id = node.get("key") or str(qk)
             stmt = insert(SupplierQnaRaw).values(
                 supplier_code="ownerclan",
                 account_id=account_id,
                 qna_id=str(qna_id),
-                raw=_sanitize_json(raw_qna),
+                raw=_sanitize_json(node),
                 fetched_at=datetime.now(timezone.utc),
             )
             stmt = stmt.on_conflict_do_update(
@@ -334,21 +576,71 @@ def sync_ownerclan_qna_raw(session: Session, job: SupplierSyncJob) -> OwnerClanJ
             )
             session.execute(stmt)
             processed += 1
+            job.progress = processed
+            session.commit()
+            time.sleep(1.1)
 
-        job.progress = processed
+        return OwnerClanJobResult(processed=processed)
 
-        total_pages = data.get("total_pages") or data.get("totalPages")
-        has_next = data.get("has_next")
-        if isinstance(total_pages, int) and page >= total_pages:
-            break
-        if has_next is False:
-            break
-        if not qna_list:
-            break
+    try:
+        status_code, payload = client.graphql(list_query)
+    except Exception as e:
+        session.add(
+            SupplierRawFetchLog(
+                supplier_code="ownerclan",
+                account_id=account_id,
+                endpoint=settings.ownerclan_graphql_url,
+                request_payload={"query": list_query},
+                http_status=None,
+                response_payload=None,
+                error_message=str(e),
+            )
+        )
+        session.commit()
+        raise
 
-        page += 1
-        time.sleep(1.1)
+    session.add(
+        SupplierRawFetchLog(
+            supplier_code="ownerclan",
+            account_id=account_id,
+            endpoint=settings.ownerclan_graphql_url,
+            request_payload={"query": list_query},
+            http_status=status_code,
+            response_payload=_sanitize_json(payload),
+            error_message=None,
+        )
+    )
+    session.commit()
 
+    if status_code == 401:
+        raise RuntimeError("오너클랜 인증이 만료되었습니다(401). 토큰을 갱신해 주세요")
+    if status_code >= 400:
+        raise RuntimeError(f"오너클랜 GraphQL 호출 실패: HTTP {status_code}")
+    if payload.get("errors"):
+        raise RuntimeError(f"오너클랜 GraphQL 오류: {payload.get('errors')}")
+
+    edges = (((payload.get("data") or {}).get("allSellerQnaArticles") or {}).get("edges") or [])
+    for edge in edges:
+        node = (edge or {}).get("node") or {}
+        qna_id = node.get("key")
+        if not qna_id:
+            continue
+        stmt = insert(SupplierQnaRaw).values(
+            supplier_code="ownerclan",
+            account_id=account_id,
+            qna_id=str(qna_id),
+            raw=_sanitize_json(node),
+            fetched_at=datetime.now(timezone.utc),
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["supplier_code", "account_id", "qna_id"],
+            set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at},
+        )
+        session.execute(stmt)
+        processed += 1
+
+    job.progress = processed
+    session.commit()
     return OwnerClanJobResult(processed=processed)
 
 
@@ -393,7 +685,7 @@ def sync_ownerclan_categories_raw(session: Session, job: SupplierSyncJob) -> Own
             query_params[k] = params[k]
 
     try:
-        status_code, payload = client.get("/v1/categories", params=query_params or None)
+        status_code, payload = client.get_categories(parent_id=query_params.get("parent_id"), level=query_params.get("level"))
     except Exception as e:
         session.add(
             SupplierRawFetchLog(
