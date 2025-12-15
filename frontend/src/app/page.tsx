@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-import { Users, ShoppingBag, CheckCircle, Clock } from "lucide-react";
+import { ShoppingBag, CheckCircle, Clock } from "lucide-react";
 
 export default function Home() {
   const [stats, setStats] = useState({

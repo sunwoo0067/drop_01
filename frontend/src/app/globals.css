@@ -56,7 +56,6 @@
   --radius-sm: calc(var(--radius) - 2px);
   --radius-md: calc(var(--radius));
   --radius-lg: calc(var(--radius) + 2px);
-  --font-sans: var(--font-sans);
 }
 
 @media (prefers-color-scheme: dark) {
