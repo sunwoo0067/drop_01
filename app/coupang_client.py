@@ -177,7 +177,7 @@ class CoupangClient:
     def update_price(self, vendor_item_id: str, price: int, force: bool = False) -> tuple[int, dict[str, Any]]:
         """상품 아이템별 가격 변경"""
         params = {"forceSalePriceUpdate": "true" if force else "false"}
-        return self.put(f"/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/{vendor_item_id}/prices/{price}", payload=None) 
+        return self.put(f"/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/{vendor_item_id}/prices/{price}", params=params) 
         # 참고: 쿠팡 API는 가격을 경로 파라미터로 사용하지만 문서는 .../prices/{price} 엔드 포인트와 
         # 쿼리 스트링 파라미터를 명시합니다. _request에서 PUT 요청 시 params 처리가 되는지 확인이 필요합니다.
         # _request 로직은 params가 있으면 쿼리 스트링을 생성하므로 정상 동작합니다.
