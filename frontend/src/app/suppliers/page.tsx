@@ -6,6 +6,7 @@ import api from "@/lib/api";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
+import { Input } from "@/components/ui/Input";
 
 type OwnerClanStatus = {
     configured: boolean;
@@ -34,6 +35,63 @@ type SupplierSyncJob = {
     createdAt: string | null;
     updatedAt: string | null;
 };
+
+type OwnerClanRawType = "items" | "orders" | "qna" | "categories";
+
+type OwnerClanItemRawRow = {
+    id: string;
+    supplierCode: string;
+    itemCode: string | null;
+    itemKey: string | null;
+    itemId: string | null;
+    sourceUpdatedAt: string | null;
+    fetchedAt: string | null;
+};
+
+type OwnerClanOrderRawRow = {
+    id: string;
+    supplierCode: string;
+    accountId: string;
+    orderId: string;
+    fetchedAt: string | null;
+};
+
+type OwnerClanQnaRawRow = {
+    id: string;
+    supplierCode: string;
+    accountId: string;
+    qnaId: string;
+    fetchedAt: string | null;
+};
+
+type OwnerClanCategoryRawRow = {
+    id: string;
+    supplierCode: string;
+    categoryId: string;
+    fetchedAt: string | null;
+};
+
+const rawEndpointMap: Record<OwnerClanRawType, string> = {
+    items: "/suppliers/ownerclan/raw/items",
+    orders: "/suppliers/ownerclan/raw/orders",
+    qna: "/suppliers/ownerclan/raw/qna",
+    categories: "/suppliers/ownerclan/raw/categories",
+};
+
+function getRawLabel(type: OwnerClanRawType): string {
+    switch (type) {
+        case "items":
+            return "상품(items)";
+        case "orders":
+            return "주문(orders)";
+        case "qna":
+            return "QnA";
+        case "categories":
+            return "카테고리";
+        default:
+            return type;
+    }
+}
 
 function formatDateTime(value: string | null | undefined): string {
     if (!value) return "-";
@@ -94,6 +152,18 @@ export default function SuppliersPage() {
 
     const [triggerLoading, setTriggerLoading] = useState<string | null>(null);
 
+    const [rawType, setRawType] = useState<OwnerClanRawType>("items");
+    const [rawQuery, setRawQuery] = useState("");
+    const [rawOffset, setRawOffset] = useState(0);
+    const rawLimit = 50;
+    const [rawRows, setRawRows] = useState<
+        OwnerClanItemRawRow[] | OwnerClanOrderRawRow[] | OwnerClanQnaRawRow[] | OwnerClanCategoryRawRow[]
+    >([]);
+    const [rawLoading, setRawLoading] = useState(false);
+    const [rawSelectedId, setRawSelectedId] = useState<string | null>(null);
+    const [rawDetail, setRawDetail] = useState<any | null>(null);
+    const [rawDetailLoading, setRawDetailLoading] = useState(false);
+
     const canTrigger = !!ownerClanStatus?.configured;
 
     const runningJobIds = useMemo(() => new Set(jobs.filter((j) => j.status === "queued" || j.status === "running").map((j) => j.id)), [jobs]);
@@ -124,6 +194,46 @@ export default function SuppliersPage() {
         }
     };
 
+    const fetchRawRows = async (targetOffset?: number) => {
+        const offset = targetOffset ?? rawOffset;
+        setRawLoading(true);
+        try {
+            const res = await api.get(rawEndpointMap[rawType], {
+                params: {
+                    q: rawQuery || undefined,
+                    limit: rawLimit,
+                    offset,
+                },
+            });
+            setRawRows(res.data);
+        } catch (e) {
+            console.error(e);
+            alert(getErrorMessage(e));
+        } finally {
+            setRawLoading(false);
+        }
+    };
+
+    const fetchRawDetail = async (id: string) => {
+        setRawDetailLoading(true);
+        try {
+            const res = await api.get(`${rawEndpointMap[rawType]}/${id}`);
+            setRawDetail(res.data);
+        } catch (e) {
+            console.error(e);
+            alert(getErrorMessage(e));
+        } finally {
+            setRawDetailLoading(false);
+        }
+    };
+
+    const changeRawType = (type: OwnerClanRawType) => {
+        setRawType(type);
+        setRawOffset(0);
+        setRawSelectedId(null);
+        setRawDetail(null);
+    };
+
     useEffect(() => {
         fetchOwnerClanStatus();
         fetchJobs();
@@ -138,6 +248,10 @@ export default function SuppliersPage() {
 
         return () => clearInterval(timer);
     }, [runningJobIds]);
+
+    useEffect(() => {
+        fetchRawRows();
+    }, [rawType, rawOffset]);
 
     const triggerSync = async (type: "items" | "orders" | "qna" | "categories") => {
         if (!canTrigger) {
@@ -305,6 +419,234 @@ export default function SuppliersPage() {
                                 )}
                             </tbody>
                         </table>
+                    </div>
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle>수집 데이터 조회(Raw)</CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <div className="flex flex-col gap-3">
+                        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                            <div className="flex flex-wrap gap-2">
+                                <Button variant={rawType === "items" ? "primary" : "outline"} onClick={() => changeRawType("items")}>
+                                    상품
+                                </Button>
+                                <Button variant={rawType === "orders" ? "primary" : "outline"} onClick={() => changeRawType("orders")}>
+                                    주문
+                                </Button>
+                                <Button variant={rawType === "qna" ? "primary" : "outline"} onClick={() => changeRawType("qna")}>
+                                    QnA
+                                </Button>
+                                <Button
+                                    variant={rawType === "categories" ? "primary" : "outline"}
+                                    onClick={() => changeRawType("categories")}
+                                >
+                                    카테고리
+                                </Button>
+                            </div>
+
+                            <div className="flex flex-col sm:flex-row gap-2">
+                                <Input
+                                    placeholder={`${getRawLabel(rawType)} 검색`}
+                                    value={rawQuery}
+                                    onChange={(e) => setRawQuery(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter") {
+                                            setRawSelectedId(null);
+                                            setRawDetail(null);
+
+                                            if (rawOffset === 0) {
+                                                fetchRawRows(0);
+                                            } else {
+                                                setRawOffset(0);
+                                            }
+                                        }
+                                    }}
+                                />
+                                <div className="flex gap-2">
+                                    <Button
+                                        variant="outline"
+                                        disabled={rawLoading}
+                                        onClick={() => {
+                                            setRawSelectedId(null);
+                                            setRawDetail(null);
+
+                                            if (rawOffset === 0) {
+                                                fetchRawRows(0);
+                                            } else {
+                                                setRawOffset(0);
+                                            }
+                                        }}
+                                    >
+                                        검색
+                                    </Button>
+                                    <Button variant="outline" disabled={rawLoading} onClick={() => fetchRawRows()}>
+                                        새로고침
+                                    </Button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                            <Button
+                                variant="outline"
+                                disabled={rawLoading || rawOffset === 0}
+                                onClick={() => setRawOffset((prev) => Math.max(0, prev - rawLimit))}
+                            >
+                                이전
+                            </Button>
+                            <Button
+                                variant="outline"
+                                disabled={rawLoading || rawRows.length < rawLimit}
+                                onClick={() => setRawOffset((prev) => prev + rawLimit)}
+                            >
+                                다음
+                            </Button>
+                            <div className="text-sm text-muted-foreground">offset: {rawOffset}</div>
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            <div className="overflow-x-auto rounded-md border">
+                                <table className="w-full caption-bottom text-sm text-left">
+                                    <thead className="[&_tr]:border-b">
+                                        {rawType === "items" ? (
+                                            <tr className="border-b">
+                                                <th className="h-12 px-4 align-middle font-medium text-muted-foreground">itemCode</th>
+                                                <th className="h-12 px-4 align-middle font-medium text-muted-foreground">itemKey</th>
+                                                <th className="h-12 px-4 align-middle font-medium text-muted-foreground">fetched</th>
+                                            </tr>
+                                        ) : rawType === "orders" ? (
+                                            <tr className="border-b">
+                                                <th className="h-12 px-4 align-middle font-medium text-muted-foreground">orderId</th>
+                                                <th className="h-12 px-4 align-middle font-medium text-muted-foreground">accountId</th>
+                                                <th className="h-12 px-4 align-middle font-medium text-muted-foreground">fetched</th>
+                                            </tr>
+                                        ) : rawType === "qna" ? (
+                                            <tr className="border-b">
+                                                <th className="h-12 px-4 align-middle font-medium text-muted-foreground">qnaId</th>
+                                                <th className="h-12 px-4 align-middle font-medium text-muted-foreground">accountId</th>
+                                                <th className="h-12 px-4 align-middle font-medium text-muted-foreground">fetched</th>
+                                            </tr>
+                                        ) : (
+                                            <tr className="border-b">
+                                                <th className="h-12 px-4 align-middle font-medium text-muted-foreground">categoryId</th>
+                                                <th className="h-12 px-4 align-middle font-medium text-muted-foreground">fetched</th>
+                                            </tr>
+                                        )}
+                                    </thead>
+                                    <tbody className="[&_tr:last-child]:border-0">
+                                        {rawLoading && rawRows.length === 0 ? (
+                                            <tr>
+                                                <td colSpan={3} className="h-24 text-center text-muted-foreground">
+                                                    불러오는 중...
+                                                </td>
+                                            </tr>
+                                        ) : rawRows.length === 0 ? (
+                                            <tr>
+                                                <td colSpan={3} className="h-24 text-center text-muted-foreground">
+                                                    데이터가 없습니다.
+                                                </td>
+                                            </tr>
+                                        ) : rawType === "items" ? (
+                                            (rawRows as OwnerClanItemRawRow[]).map((row) => (
+                                                <tr
+                                                    key={row.id}
+                                                    className="border-b transition-colors hover:bg-muted/50 cursor-pointer"
+                                                    onClick={() => {
+                                                        setRawSelectedId(row.id);
+                                                        fetchRawDetail(row.id);
+                                                    }}
+                                                >
+                                                    <td className="p-4 align-middle">
+                                                        <div className="font-medium">{row.itemCode ?? "-"}</div>
+                                                        <div className="text-xs text-muted-foreground">{row.id}</div>
+                                                    </td>
+                                                    <td className="p-4 align-middle">{row.itemKey ?? "-"}</td>
+                                                    <td className="p-4 align-middle">{formatDateTime(row.fetchedAt)}</td>
+                                                </tr>
+                                            ))
+                                        ) : rawType === "orders" ? (
+                                            (rawRows as OwnerClanOrderRawRow[]).map((row) => (
+                                                <tr
+                                                    key={row.id}
+                                                    className="border-b transition-colors hover:bg-muted/50 cursor-pointer"
+                                                    onClick={() => {
+                                                        setRawSelectedId(row.id);
+                                                        fetchRawDetail(row.id);
+                                                    }}
+                                                >
+                                                    <td className="p-4 align-middle">
+                                                        <div className="font-medium">{row.orderId}</div>
+                                                        <div className="text-xs text-muted-foreground">{row.id}</div>
+                                                    </td>
+                                                    <td className="p-4 align-middle">
+                                                        <div className="text-xs break-all">{row.accountId}</div>
+                                                    </td>
+                                                    <td className="p-4 align-middle">{formatDateTime(row.fetchedAt)}</td>
+                                                </tr>
+                                            ))
+                                        ) : rawType === "qna" ? (
+                                            (rawRows as OwnerClanQnaRawRow[]).map((row) => (
+                                                <tr
+                                                    key={row.id}
+                                                    className="border-b transition-colors hover:bg-muted/50 cursor-pointer"
+                                                    onClick={() => {
+                                                        setRawSelectedId(row.id);
+                                                        fetchRawDetail(row.id);
+                                                    }}
+                                                >
+                                                    <td className="p-4 align-middle">
+                                                        <div className="font-medium">{row.qnaId}</div>
+                                                        <div className="text-xs text-muted-foreground">{row.id}</div>
+                                                    </td>
+                                                    <td className="p-4 align-middle">
+                                                        <div className="text-xs break-all">{row.accountId}</div>
+                                                    </td>
+                                                    <td className="p-4 align-middle">{formatDateTime(row.fetchedAt)}</td>
+                                                </tr>
+                                            ))
+                                        ) : (
+                                            (rawRows as OwnerClanCategoryRawRow[]).map((row) => (
+                                                <tr
+                                                    key={row.id}
+                                                    className="border-b transition-colors hover:bg-muted/50 cursor-pointer"
+                                                    onClick={() => {
+                                                        setRawSelectedId(row.id);
+                                                        fetchRawDetail(row.id);
+                                                    }}
+                                                >
+                                                    <td className="p-4 align-middle">
+                                                        <div className="font-medium">{row.categoryId}</div>
+                                                        <div className="text-xs text-muted-foreground">{row.id}</div>
+                                                    </td>
+                                                    <td className="p-4 align-middle">{formatDateTime(row.fetchedAt)}</td>
+                                                </tr>
+                                            ))
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div className="rounded-md border p-4">
+                                <div className="flex items-center justify-between gap-2">
+                                    <div className="font-medium">상세 JSON</div>
+                                    {rawSelectedId ? <div className="text-xs text-muted-foreground">{rawSelectedId}</div> : null}
+                                </div>
+
+                                {rawDetailLoading ? (
+                                    <div className="mt-3 text-sm text-muted-foreground">불러오는 중...</div>
+                                ) : rawDetail ? (
+                                    <pre className="mt-3 max-h-[560px] overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-3 text-xs">
+                                        {JSON.stringify(rawDetail, null, 2)}
+                                    </pre>
+                                ) : (
+                                    <div className="mt-3 text-sm text-muted-foreground">왼쪽 목록에서 항목을 선택해 주세요.</div>
+                                )}
+                            </div>
+                        </div>
                     </div>
                 </CardContent>
             </Card>
