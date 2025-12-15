@@ -2,7 +2,7 @@ from pgvector.sqlalchemy import Vector
 from datetime import datetime
 import uuid
 
-from sqlalchemy import BigInteger, DateTime, Integer, Text, UniqueConstraint, ForeignKey
+from sqlalchemy import BigInteger, DateTime, Integer, Text, UniqueConstraint, ForeignKey, Float
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -262,7 +262,55 @@ class BenchmarkProduct(Base):
     detail_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_data: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     
+    # Advanced Sourcing Fields
+    review_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pain_points: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True) # e.g. ["heavy", "breaks easily"]
+    
     embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class SourcingCandidate(Base):
+    """
+    Potential products found from suppliers (e.g. OwnerClan) that match a sourcing strategy.
+    These are transient candidates before being promoted to real 'Products'.
+    """
+    __tablename__ = "sourcing_candidates"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    supplier_code: Mapped[str] = mapped_column(Text, nullable=False)
+    supplier_item_id: Mapped[str] = mapped_column(Text, nullable=False)
+    
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    supply_price: Mapped[int] = mapped_column(Integer, nullable=False)
+    
+    # Sourcing Analysis Data
+    source_strategy: Mapped[str] = mapped_column(Text, nullable=False) # e.g. "KEYWORD", "BENCHMARK_GAP", "SPEC_MATCH"
+    benchmark_product_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("benchmark_products.id"), nullable=True)
+    
+    similarity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    seasonal_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    margin_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    final_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    
+    spec_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True) # Extracted specs
+    seo_keywords: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True) # High value keywords
+    target_event: Mapped[str | None] = mapped_column(Text, nullable=True) # e.g. "Christmas"
+
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
+    
+    status: Mapped[str] = mapped_column(Text, default="PENDING") # PENDING, APPROVED, REJECTED
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class APIKey(Base):
+    __tablename__ = "api_keys"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    provider: Mapped[str] = mapped_column(Text, nullable=False) # 'gemini', 'openai'
+    key: Mapped[str] = mapped_column(Text, nullable=False)
+    is_active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+

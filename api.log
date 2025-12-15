@@ -1,0 +1,9 @@
+GEMINI_API_KEY is not set. AI features heavily restricted.
+INFO:     Started server process [196990]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8888 (Press CTRL+C to quit)
+INFO:     127.0.0.1:42846 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42846 - "POST /api/sourcing/keyword HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35418 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35418 - "POST /api/sourcing/keyword HTTP/1.1" 200 OK
