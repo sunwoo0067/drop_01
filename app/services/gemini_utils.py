@@ -70,9 +70,10 @@ def analyze_pain_points(text: str) -> List[str]:
         logger.error(f"Error analyzing pain points: {e}")
         return []
 
-def optimize_seo(product_name: str, original_keywords: List[str]) -> Dict[str, Any]:
+def optimize_seo(product_name: str, original_keywords: List[str], detail_text: str = "") -> Dict[str, Any]:
     """
     Optimizes product title and generates tags for SEO.
+    Uses detail_text to extract USP (Unique Selling Points) for more unique names.
     Returns dict with 'title' and 'tags'.
     """
     if not model:
@@ -80,16 +81,24 @@ def optimize_seo(product_name: str, original_keywords: List[str]) -> Dict[str, A
 
     prompt = f"""
     Optimize the following product name for SEO on a Korean e-commerce platform (Coupang).
-    Combine it with the provided keywords to make a rich, search-friendly title.
-    Also select top 20 relevant tags.
     
-    Original Name: {product_name}
-    Related Keywords: {', '.join(original_keywords)}
+    Goal: Create a UNIQUE, high-click-through-rate title that avoids "Item Winner" grouping (exact name matches).
     
-    Rules:
-    1. Title should be < 50 chars if possible, but descriptive. Main keywords first.
-    2. Remove banned words like "Best", "No.1", "최고".
-    3. Return JSON with keys: "title" (string), "tags" (list of strings).
+    Input Data:
+    - Original Name: {product_name}
+    - Keywords: {', '.join(original_keywords)}
+    - Product Details: {detail_text[:3000] if detail_text else "Not provided"}
+    
+    Instructions:
+    1. Analyze the 'Product Details' to find key features (Material, Usage, Benefit).
+    2. Construct a title in the format: "[Brand/Key Feature] Main Keyword + Sub Keyword + Spec/Benefit".
+    3. Make it different from the 'Original Name' to avoid grouping, using synonyms or rearranging.
+    4. Remove banned words like "Best", "No.1", "최고", "1위".
+    5. Length: 30-50 characters preferred.
+    
+    Return ONLY a JSON object with:
+    - "title": (string) The optimized Korean title.
+    - "tags": (list of strings) Top 20 search tags.
     """
     
     try:

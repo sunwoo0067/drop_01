@@ -42,12 +42,12 @@ class CoupangClient:
         params: dict[str, Any] | None = None,
         payload: dict[str, Any] | None = None,
     ) -> tuple[int, dict[str, Any]]:
-        # Canonical query string
+        # Canonical query string 생성
         query_string = ""
         if params:
-            # Sort params by key
+            # 키 기준으로 파라미터 정렬
             sorted_params = sorted(params.items())
-            # value definition: url naming
+            # 값 정의: URL 인코딩
             query_string = urllib.parse.urlencode(sorted_params)
 
         signature_header = self._generate_signature(method, path, query_string)
@@ -114,8 +114,8 @@ class CoupangClient:
 
     def predict_category(self, product_name: str, attributes: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
         """카테고리 추천 (예측)"""
-        # Note: Implementation depends on specific endpoint, assuming generic v1 structure for now if not explicitly in docs
-        # but docs usually point to /v2/providers/seller_api/apis/api/v1/marketplace/seller-products/recommend-categories
+        # 참고: 구체적인 엔드포인트 구현에 따라 달라질 수 있음. 명시적인 문서가 없다면 일반적인 v1 구조를 가정.
+        # 문서는 보통 /v2/providers/seller_api/apis/api/v1/marketplace/seller-products/recommend-categories 를 가리킴
         payload = {"productName": product_name}
         if attributes:
             payload["attributes"] = attributes
@@ -176,19 +176,16 @@ class CoupangClient:
 
     def update_price(self, vendor_item_id: str, price: int, force: bool = False) -> tuple[int, dict[str, Any]]:
         """상품 아이템별 가격 변경"""
-        params = {"forceSalePriceUpdate": "true" if force else "false"}
-        return self.put(f"/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/{vendor_item_id}/prices/{price}", payload=None) 
-        # Note: Coupang API uses path param for price but doc says endpoint .../prices/{price} 
-        # and has Query String params. Handled in `_request` if we pass params separately to put? No, _request handles query string generation.
-        # But here I need to inject params into URL query string for PUT.
-        # _request supports params for GET, but generic _request logic builds query string for ANY method if params is passed.
-        # Let's verify `_request`: yes, if params is present, it builds query string. So:
-        # return self._request("PUT", path, params=params)
+        return self._update_price_internal(vendor_item_id, price, force) 
+        # 참고: 쿠팡 API는 가격을 경로 파라미터로 사용하지만 문서는 .../prices/{price} 엔드 포인트와 
+        # 쿼리 스트링 파라미터를 명시합니다. _request에서 PUT 요청 시 params 처리가 되는지 확인이 필요합니다.
+        # _request 로직은 params가 있으면 쿼리 스트링을 생성하므로 정상 동작합니다.
+        # 즉, return self._request("PUT", path, params=params) 형태가 되어야 합니다.
 
     def _update_price_internal(self, vendor_item_id: str, price: int, force: bool = False) -> tuple[int, dict[str, Any]]:
          path = f"/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/{vendor_item_id}/prices/{price}"
          params = {"forceSalePriceUpdate": "true"} if force else {}
-         # Using low-level _request to ensure params are attached to URL even for PUT
+         # PUT 요청에서도 URL 파라미터를 확실히 붙이기 위해 저수준 _request 사용
          return self._request("PUT", path, params=params)
 
     def stop_sales(self, vendor_item_id: str) -> tuple[int, dict[str, Any]]:
@@ -230,25 +227,25 @@ class CoupangClient:
         return self.get(f"/v2/providers/openapi/apis/api/v1/vendors/{self._vendor_id}/orders/{order_id}")
 
     def stop_delivery(self, invoice_no: str) -> tuple[int, dict[str, Any]]:
-        """배송 중지 요청 (송장 번호 기준) - This maps roughly to 'stop shipment' concepts"""
-        # Note: Actual endpoint needed from docs. Assuming receiptId based on docs logic in other areas or invoice 
-        # If API doc for `delivery_api.md` lists distinct endpoint, use that.
-        # Assuming generic /v2/providers/openapi/apis/api/v1/vendors/{vendorId}/orders/{orderId}/cancel or similar.
-        # Without specific doc content for this in prompt, I'll omit or use a placeholder if unsure. 
-        # For now, let's stick to what was visible in README/Product: "발주서 조회, 송장 업로드, 취소 처리"
-        # I will implement 'register_invoice' which is critical.
+        """배송 중지 요청 (송장 번호 기준) - '출고 중지' 개념과 매핑됨"""
+        # 참고: 문서에서 정확한 엔드포인트가 필요함. 다른 영역의 로직을 볼 때 receiptId 기준일 것으로 추정됨.
+        # delivery_api.md 문서가 별도의 엔드포인트를 명시한다면 그것을 사용해야 함.
+        # 일반적으로 /v2/providers/openapi/apis/api/v1/vendors/{vendorId}/orders/{orderId}/cancel 등과 유사함.
+        # 정확한 문서 내용 없이 프롬프트만으로는 구현이 불확실하므로 일단 비워둠.
+        # 현재는 README/Product에 명시된 "발주서 조회, 송장 업로드, 취소 처리" 중 
+        # 'register_invoice'(송장 등록) 구현에 집중함.
         pass
 
     def register_invoice(self, order_sheet_id: str, delivery_company_code: str, invoice_no: str) -> tuple[int, dict[str, Any]]:
         """송장 업로드 (배송지시)"""
         # POST /v2/providers/openapi/apis/api/v1/vendors/{vendorId}/ordersheets/{orderSheetId}/history
-        # This is a common pattern for invoice registration in Coupang
+        # 쿠팡 송장 등록의 일반적인 패턴
         payload = {
             "vendorId": self._vendor_id,
             "orderSheetId": order_sheet_id,
             "deliveryCompanyCode": delivery_company_code,
             "invoiceNumber": invoice_no,
-            "splitShipping": False # Default
+            "splitShipping": False # 기본값
         }
         return self.post(f"/v2/providers/openapi/apis/api/v1/vendors/{self._vendor_id}/ordersheets/{order_sheet_id}/history", payload)
 

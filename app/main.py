@@ -14,11 +14,13 @@ from app.ownerclan_client import OwnerClanClient
 from app.ownerclan_sync import start_background_ownerclan_job
 from app.session_factory import session_factory
 from app.settings import settings
-from app.api.endpoints import sourcing
+from app.api.endpoints import sourcing, products, coupang
 
 app = FastAPI()
 
 app.include_router(sourcing.router, prefix="/api/sourcing", tags=["Sourcing"])
+app.include_router(products.router, prefix="/api/products", tags=["Products"]) 
+app.include_router(coupang.router, prefix="/api/coupang", tags=["Coupang"])
 
 
 class EmbeddingIn(BaseModel):

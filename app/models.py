@@ -198,6 +198,12 @@ class Product(Base):
     cost_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     selling_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="DRAFT")  # DRAFT, ACTIVE, SUSPENDED
+    # Processing Fields
+    processed_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    processed_keywords: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    processed_image_urls: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    processing_status: Mapped[str] = mapped_column(Text, nullable=False, default="PENDING") # PENDING, PROCESSING, COMPLETED, FAILED
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
