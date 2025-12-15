@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, func
 from typing import List
 import uuid
 
@@ -9,6 +9,19 @@ from app.models import Product
 from app.schemas.product import ProductResponse
 
 router = APIRouter()
+
+@router.get("/stats")
+def get_product_stats(session: Session = Depends(get_session)):
+    """상품 통계를 조회합니다."""
+    total = session.scalar(select(func.count(Product.id))) or 0
+    pending = session.scalar(select(func.count(Product.id)).where(Product.processing_status != "COMPLETED")) or 0
+    completed = session.scalar(select(func.count(Product.id)).where(Product.processing_status == "COMPLETED")) or 0
+    
+    return {
+        "total": total,
+        "pending": pending,
+        "completed": completed
+    }
 
 @router.get("/", response_model=List[ProductResponse])
 def list_products(session: Session = Depends(get_session)):

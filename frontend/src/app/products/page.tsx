@@ -1,21 +1,23 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import api from "@/lib/api";
 import { Product } from "@/types";
-import { Loader2 } from "lucide-react";
+import { Loader2, RefreshCw, ExternalLink } from "lucide-react";
+import { Button } from "@/components/ui/Button";
+import { Badge } from "@/components/ui/Badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 
 export default function ProductListPage() {
+    const router = useRouter();
     const [products, setProducts] = useState<Product[]>([]);
     const [loading, setLoading] = useState(true);
 
     const fetchProducts = async () => {
+        setLoading(true);
         try {
-            // Assuming /api/sourcing/products endpoint exists or similar
-            // If not, we might need to adjust. Based on previous crawls, /api/sourcing might have search endpoints.
-            // Let's assume a generic GET /api/sourcing/products for now or check backend.
-            // Using /products based on router prefix '/api/products' and proxy /api -> backend:8000/api
-            const response = await api.get("/products");
+            const response = await api.get("/products/");
             setProducts(response.data);
         } catch (error) {
             console.error("Failed to fetch products", error);
@@ -30,85 +32,102 @@ export default function ProductListPage() {
 
     const handleRegister = async (productId: string) => {
         try {
-            if (!confirm("Register this product to Coupang?")) return;
-            await api.post(`/coupang/register/${productId}`); // Adjust endpoint as per backend implementation
-            alert("Registration initiated!");
-            fetchProducts(); // Refresh
+            if (!confirm("이 상품을 쿠팡에 등록하시겠습니까?")) return;
+            await api.post(`/coupang/register/${productId}`);
+            alert("등록이 시작되었습니다!");
+            fetchProducts();
         } catch (error) {
             console.error("Registration failed", error);
-            alert("Registration failed");
+            alert("등록 실패");
         }
     };
 
-    if (loading) {
-        return (
-            <div className="flex justify-center items-center h-64">
-                <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-            </div>
-        );
-    }
+    const getStatusBadge = (status: string) => {
+        switch (status) {
+            case 'COMPLETED': return <Badge variant="success">완료</Badge>;
+            case 'FAILED': return <Badge variant="destructive">실패</Badge>;
+            case 'PROCESSING': return <Badge variant="warning">처리중</Badge>;
+            default: return <Badge variant="secondary">{status}</Badge>;
+        }
+    };
 
     return (
-        <div>
-            <div className="flex justify-between items-center mb-6">
-                <h1 className="text-3xl font-bold text-gray-800">Product List</h1>
-                <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md font-medium transition-colors">
-                    Refresh
-                </button>
+        <div className="space-y-6">
+            <div className="flex justify-between items-center">
+                <h1 className="text-3xl font-bold tracking-tight">상품 목록</h1>
+                <Button onClick={fetchProducts} disabled={loading} variant="outline">
+                    <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                    새로고침
+                </Button>
             </div>
 
-            <div className="bg-white rounded-lg shadow overflow-hidden border border-gray-200">
-                <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                        <tr>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Image</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                        {products.map((product) => (
-                            <tr key={product.id} className="hover:bg-gray-50">
-                                <td className="px-6 py-4 whitespace-nowrap">
-                                    {product.processed_image_urls && product.processed_image_urls.length > 0 ? (
-                                        <img src={product.processed_image_urls[0]} alt={product.name} className="h-12 w-12 object-cover rounded" />
-                                    ) : (
-                                        <div className="h-12 w-12 bg-gray-200 rounded animate-pulse" />
-                                    )}
-                                </td>
-                                <td className="px-6 py-4">
-                                    <div className="text-sm font-medium text-gray-900 line-clamp-2">{product.processed_name || product.name}</div>
-                                    <div className="text-xs text-gray-500">{product.brand}</div>
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                    {product.selling_price.toLocaleString()} KRW
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap">
-                                    <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${product.processing_status === 'COMPLETED' ? 'bg-green-100 text-green-800' :
-                                        product.processing_status === 'FAILED' ? 'bg-red-100 text-red-800' :
-                                            'bg-yellow-100 text-yellow-800'
-                                        }`}>
-                                        {product.processing_status}
-                                    </span>
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                                    <button
-                                        onClick={() => handleRegister(product.id)}
-                                        className="text-indigo-600 hover:text-indigo-900 mr-4"
-                                    >
-                                        Register
-                                    </button>
-                                    <a href={`/products/${product.id}`} className="text-gray-600 hover:text-gray-900">
-                                        Edit
-                                    </a>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
+            <Card>
+                <CardHeader>
+                    <CardTitle>등록 상품 관리</CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                    <div className="overflow-x-auto">
+                        <table className="w-full caption-bottom text-sm text-left">
+                            <thead className="[&_tr]:border-b">
+                                <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
+                                    <th className="h-12 px-4 align-middle font-medium text-muted-foreground w-[100px]">이미지</th>
+                                    <th className="h-12 px-4 align-middle font-medium text-muted-foreground">상품명</th>
+                                    <th className="h-12 px-4 align-middle font-medium text-muted-foreground">가격</th>
+                                    <th className="h-12 px-4 align-middle font-medium text-muted-foreground">상태</th>
+                                    <th className="h-12 px-4 align-middle font-medium text-muted-foreground text-right">작업</th>
+                                </tr>
+                            </thead>
+                            <tbody className="[&_tr:last-child]:border-0">
+                                {loading ? (
+                                    <tr>
+                                        <td colSpan={5} className="h-24 text-center">
+                                            <Loader2 className="mx-auto h-6 w-6 animate-spin text-muted-foreground" />
+                                        </td>
+                                    </tr>
+                                ) : products.length === 0 ? (
+                                    <tr>
+                                        <td colSpan={5} className="h-24 text-center text-muted-foreground">
+                                            등록된 상품이 없습니다.
+                                        </td>
+                                    </tr>
+                                ) : (
+                                    products.map((product) => (
+                                        <tr key={product.id} className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
+                                            <td className="p-4 align-middle">
+                                                {product.processed_image_urls && product.processed_image_urls.length > 0 ? (
+                                                    <img src={product.processed_image_urls[0]} alt={product.name} className="h-12 w-12 object-cover rounded-md border" />
+                                                ) : (
+                                                    <div className="h-12 w-12 bg-muted rounded-md border flex items-center justify-center text-xs text-muted-foreground">No img</div>
+                                                )}
+                                            </td>
+                                            <td className="p-4 align-middle">
+                                                <div className="font-medium line-clamp-1">{product.processed_name || product.name}</div>
+                                                <div className="text-xs text-muted-foreground">{product.brand}</div>
+                                            </td>
+                                            <td className="p-4 align-middle">
+                                                {product.selling_price?.toLocaleString()} 원
+                                            </td>
+                                            <td className="p-4 align-middle">
+                                                {getStatusBadge(product.processing_status)}
+                                            </td>
+                                            <td className="p-4 align-middle text-right">
+                                                <div className="flex justify-end gap-2">
+                                                    <Button size="sm" variant="ghost" onClick={() => handleRegister(product.id)}>
+                                                        등록
+                                                    </Button>
+                                                    <Button size="sm" variant="outline" onClick={() => router.push(`/products/${product.id}`)}>
+                                                        수정
+                                                    </Button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </CardContent>
+            </Card>
         </div>
     );
 }
