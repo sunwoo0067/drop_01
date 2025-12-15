@@ -3,11 +3,11 @@ from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.db import get_session
-from app.models import SupplierSyncJob
+from app.models import SupplierCategoryRaw, SupplierItemRaw, SupplierOrderRaw, SupplierQnaRaw, SupplierSyncJob
 from app.ownerclan_sync import start_background_ownerclan_job
 from app.session_factory import session_factory
 
@@ -126,4 +126,214 @@ def get_sync_job(job_id: uuid.UUID, session: Session = Depends(get_session)) -> 
         "finishedAt": _to_iso(job.finished_at),
         "createdAt": _to_iso(job.created_at),
         "updatedAt": _to_iso(job.updated_at),
+    }
+
+
+@router.get("/ownerclan/raw/items")
+def list_ownerclan_items_raw(
+    session: Session = Depends(get_session),
+    q: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> list[dict]:
+    stmt = (
+        select(SupplierItemRaw)
+        .where(SupplierItemRaw.supplier_code == "ownerclan")
+        .order_by(SupplierItemRaw.fetched_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+
+    if q:
+        like = f"%{q}%"
+        stmt = stmt.where(or_(SupplierItemRaw.item_code.ilike(like), SupplierItemRaw.item_key.ilike(like)))
+
+    items = session.scalars(stmt).all()
+
+    result: list[dict] = []
+    for item in items:
+        result.append(
+            {
+                "id": str(item.id),
+                "supplierCode": item.supplier_code,
+                "itemCode": item.item_code,
+                "itemKey": item.item_key,
+                "itemId": item.item_id,
+                "sourceUpdatedAt": _to_iso(item.source_updated_at),
+                "fetchedAt": _to_iso(item.fetched_at),
+            }
+        )
+
+    return result
+
+
+@router.get("/ownerclan/raw/items/{item_raw_id}")
+def get_ownerclan_item_raw(item_raw_id: uuid.UUID, session: Session = Depends(get_session)) -> dict:
+    item = session.get(SupplierItemRaw, item_raw_id)
+    if not item or item.supplier_code != "ownerclan":
+        raise HTTPException(status_code=404, detail="raw item을 찾을 수 없습니다")
+
+    return {
+        "id": str(item.id),
+        "supplierCode": item.supplier_code,
+        "itemCode": item.item_code,
+        "itemKey": item.item_key,
+        "itemId": item.item_id,
+        "sourceUpdatedAt": _to_iso(item.source_updated_at),
+        "fetchedAt": _to_iso(item.fetched_at),
+        "raw": item.raw,
+    }
+
+
+@router.get("/ownerclan/raw/orders")
+def list_ownerclan_orders_raw(
+    session: Session = Depends(get_session),
+    q: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> list[dict]:
+    stmt = (
+        select(SupplierOrderRaw)
+        .where(SupplierOrderRaw.supplier_code == "ownerclan")
+        .order_by(SupplierOrderRaw.fetched_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+
+    if q:
+        like = f"%{q}%"
+        stmt = stmt.where(SupplierOrderRaw.order_id.ilike(like))
+
+    orders = session.scalars(stmt).all()
+
+    result: list[dict] = []
+    for order in orders:
+        result.append(
+            {
+                "id": str(order.id),
+                "supplierCode": order.supplier_code,
+                "accountId": str(order.account_id),
+                "orderId": order.order_id,
+                "fetchedAt": _to_iso(order.fetched_at),
+            }
+        )
+
+    return result
+
+
+@router.get("/ownerclan/raw/orders/{order_raw_id}")
+def get_ownerclan_order_raw(order_raw_id: uuid.UUID, session: Session = Depends(get_session)) -> dict:
+    order = session.get(SupplierOrderRaw, order_raw_id)
+    if not order or order.supplier_code != "ownerclan":
+        raise HTTPException(status_code=404, detail="raw order를 찾을 수 없습니다")
+
+    return {
+        "id": str(order.id),
+        "supplierCode": order.supplier_code,
+        "accountId": str(order.account_id),
+        "orderId": order.order_id,
+        "fetchedAt": _to_iso(order.fetched_at),
+        "raw": order.raw,
+    }
+
+
+@router.get("/ownerclan/raw/qna")
+def list_ownerclan_qna_raw(
+    session: Session = Depends(get_session),
+    q: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> list[dict]:
+    stmt = (
+        select(SupplierQnaRaw)
+        .where(SupplierQnaRaw.supplier_code == "ownerclan")
+        .order_by(SupplierQnaRaw.fetched_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+
+    if q:
+        like = f"%{q}%"
+        stmt = stmt.where(SupplierQnaRaw.qna_id.ilike(like))
+
+    qna_rows = session.scalars(stmt).all()
+
+    result: list[dict] = []
+    for qna in qna_rows:
+        result.append(
+            {
+                "id": str(qna.id),
+                "supplierCode": qna.supplier_code,
+                "accountId": str(qna.account_id),
+                "qnaId": qna.qna_id,
+                "fetchedAt": _to_iso(qna.fetched_at),
+            }
+        )
+
+    return result
+
+
+@router.get("/ownerclan/raw/qna/{qna_raw_id}")
+def get_ownerclan_qna_raw(qna_raw_id: uuid.UUID, session: Session = Depends(get_session)) -> dict:
+    qna = session.get(SupplierQnaRaw, qna_raw_id)
+    if not qna or qna.supplier_code != "ownerclan":
+        raise HTTPException(status_code=404, detail="raw qna를 찾을 수 없습니다")
+
+    return {
+        "id": str(qna.id),
+        "supplierCode": qna.supplier_code,
+        "accountId": str(qna.account_id),
+        "qnaId": qna.qna_id,
+        "fetchedAt": _to_iso(qna.fetched_at),
+        "raw": qna.raw,
+    }
+
+
+@router.get("/ownerclan/raw/categories")
+def list_ownerclan_categories_raw(
+    session: Session = Depends(get_session),
+    q: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> list[dict]:
+    stmt = (
+        select(SupplierCategoryRaw)
+        .where(SupplierCategoryRaw.supplier_code == "ownerclan")
+        .order_by(SupplierCategoryRaw.fetched_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+
+    if q:
+        like = f"%{q}%"
+        stmt = stmt.where(SupplierCategoryRaw.category_id.ilike(like))
+
+    categories = session.scalars(stmt).all()
+
+    result: list[dict] = []
+    for category in categories:
+        result.append(
+            {
+                "id": str(category.id),
+                "supplierCode": category.supplier_code,
+                "categoryId": category.category_id,
+                "fetchedAt": _to_iso(category.fetched_at),
+            }
+        )
+
+    return result
+
+
+@router.get("/ownerclan/raw/categories/{category_raw_id}")
+def get_ownerclan_category_raw(category_raw_id: uuid.UUID, session: Session = Depends(get_session)) -> dict:
+    category = session.get(SupplierCategoryRaw, category_raw_id)
+    if not category or category.supplier_code != "ownerclan":
+        raise HTTPException(status_code=404, detail="raw category를 찾을 수 없습니다")
+
+    return {
+        "id": str(category.id),
+        "supplierCode": category.supplier_code,
+        "categoryId": category.category_id,
+        "fetchedAt": _to_iso(category.fetched_at),
+        "raw": category.raw,
     }
