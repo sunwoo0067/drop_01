@@ -6,8 +6,17 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from app.models import SupplierItemRaw, Product
+from app.settings import settings
 
 logger = logging.getLogger(__name__)
+
+def _parse_int_price(value) -> int:
+    if value is None:
+        return 0
+    try:
+        return int(float(value))
+    except Exception:
+        return 0
 
 def normalize_supplier_items(session: Session, batch_size: int = 1000, item_ids: list[uuid.UUID] | None = None) -> int:
     """
@@ -37,17 +46,27 @@ def normalize_supplier_items(session: Session, batch_size: int = 1000, item_ids:
         # Extract Fields (OwnerClan Spec)
         # Fallbacks included for safety
         item_name = data.get("item_name") or data.get("name") or "Untitled"
-        supply_price = data.get("supply_price") or 0
+        supply_price = (
+            data.get("supply_price")
+            or data.get("supplyPrice")
+            or data.get("fixedPrice")
+            or data.get("fixed_price")
+            or data.get("price")
+            or 0
+        )
         brand_name = data.get("brand") or data.get("brand_name")
         description = data.get("description") or data.get("content")
         
-        # Calculate Selling Price (Simple Logic: Cost * 1.2)
-        try:
-            cost = int(float(supply_price))
-        except (ValueError, TypeError):
-            cost = 0
+        # Calculate Selling Price (Simple Logic: Cost * margin_rate)
+        cost = _parse_int_price(supply_price)
             
-        selling_price = int(cost * 1.2)
+        try:
+            margin_rate = float(settings.pricing_default_margin_rate or 0.0)
+        except Exception:
+            margin_rate = 0.0
+        if margin_rate < 0:
+            margin_rate = 0.0
+        selling_price = int(cost * (1.0 + margin_rate))
         
         # Check if Product exists for this raw item
         # We need a way to look up Product by supplier_item_id.

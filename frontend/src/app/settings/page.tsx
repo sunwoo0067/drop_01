@@ -24,6 +24,17 @@ type OwnerClanStatus = {
     };
 };
 
+type OwnerClanAccount = {
+    id: string;
+    supplierCode: string;
+    userType: string;
+    username: string;
+    tokenExpiresAt: string | null;
+    isPrimary: boolean;
+    isActive: boolean;
+    updatedAt: string | null;
+};
+
 type CoupangAccount = {
     id: string;
     marketCode: string;
@@ -74,6 +85,15 @@ export default function SettingsPage() {
         userType: "seller",
         username: "",
         password: "",
+    });
+
+    const [ownerClanAccounts, setOwnerClanAccounts] = useState<OwnerClanAccount[]>([]);
+    const [ownerClanAccountsLoading, setOwnerClanAccountsLoading] = useState(false);
+    const [ownerClanVendorForm, setOwnerClanVendorForm] = useState({
+        userType: "vendor",
+        username: "",
+        password: "",
+        setPrimary: true,
     });
 
     const [coupangLoading, setCoupangLoading] = useState(false);
@@ -128,6 +148,19 @@ export default function SettingsPage() {
         }
     };
 
+    const fetchOwnerClanAccounts = async () => {
+        setOwnerClanAccountsLoading(true);
+        try {
+            const res = await api.get<OwnerClanAccount[]>("/settings/suppliers/ownerclan/accounts");
+            setOwnerClanAccounts(res.data);
+        } catch (e) {
+            console.error(e);
+            alert(getErrorMessage(e));
+        } finally {
+            setOwnerClanAccountsLoading(false);
+        }
+    };
+
     const fetchCoupangAccounts = async () => {
         setCoupangLoading(true);
         try {
@@ -156,6 +189,7 @@ export default function SettingsPage() {
 
     useEffect(() => {
         fetchOwnerClanStatus();
+        fetchOwnerClanAccounts();
         fetchCoupangAccounts();
         fetchAIKeys();
     }, []);
@@ -175,12 +209,39 @@ export default function SettingsPage() {
             });
             setOwnerClanForm((prev) => ({ ...prev, password: "" }));
             await fetchOwnerClanStatus();
+            await fetchOwnerClanAccounts();
             alert("오너클랜 대표 계정이 설정되었습니다.");
         } catch (e) {
             console.error(e);
             alert(getErrorMessage(e));
         } finally {
             setOwnerClanLoading(false);
+        }
+    };
+
+    const handleOwnerClanVendorSave = async () => {
+        if (!ownerClanVendorForm.username || !ownerClanVendorForm.password) {
+            alert("오너클랜 vendor 계정 ID/PW를 입력해 주세요.");
+            return;
+        }
+
+        setOwnerClanAccountsLoading(true);
+        try {
+            await api.post("/settings/suppliers/ownerclan/accounts", {
+                user_type: ownerClanVendorForm.userType,
+                username: ownerClanVendorForm.username,
+                password: ownerClanVendorForm.password,
+                set_primary: ownerClanVendorForm.setPrimary,
+                is_active: true,
+            });
+            setOwnerClanVendorForm((prev) => ({ ...prev, password: "" }));
+            await fetchOwnerClanAccounts();
+            alert("오너클랜 vendor 계정이 저장되었습니다.");
+        } catch (e) {
+            console.error(e);
+            alert(getErrorMessage(e));
+        } finally {
+            setOwnerClanAccountsLoading(false);
         }
     };
 
@@ -343,6 +404,7 @@ export default function SettingsPage() {
                         variant="ghost"
                         onClick={() => {
                             fetchOwnerClanStatus();
+                            fetchOwnerClanAccounts();
                             fetchCoupangAccounts();
                             fetchAIKeys();
                         }}
@@ -432,6 +494,75 @@ export default function SettingsPage() {
                         </CardContent>
                         <CardFooter className="flex justify-end">
                             <Button onClick={handleOwnerClanSave} isLoading={ownerClanLoading}>
+                                저장
+                            </Button>
+                        </CardFooter>
+                    </Card>
+
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>오너클랜 vendor(QnA) 계정 설정 (선택)</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <div className="space-y-2">
+                                <div className="text-sm text-muted-foreground">
+                                    셀러만 사용하시면 이 설정은 건너뛰셔도 됩니다. vendor QnA는 seller 계정으로 호출할 수 없어서 vendor 전용 계정(토큰)이 필요합니다.
+                                </div>
+                                <div className="text-sm">
+                                    <div className="text-muted-foreground">현재 저장된 ownerclan 계정</div>
+                                    {ownerClanAccountsLoading ? (
+                                        <div className="text-sm text-muted-foreground mt-1">불러오는 중...</div>
+                                    ) : ownerClanAccounts.length === 0 ? (
+                                        <div className="text-sm text-muted-foreground mt-1">저장된 계정이 없습니다.</div>
+                                    ) : (
+                                        <div className="mt-2 space-y-1">
+                                            {ownerClanAccounts.map((a) => (
+                                                <div key={a.id} className="flex flex-wrap items-center gap-2 text-sm">
+                                                    <Badge variant={a.isActive ? "secondary" : "outline"}>{a.isActive ? "활성" : "비활성"}</Badge>
+                                                    {a.isPrimary ? <Badge variant="success">primary</Badge> : <Badge variant="outline">non-primary</Badge>}
+                                                    <span className="font-medium">{a.userType}</span>
+                                                    <span className="text-muted-foreground">{a.username}</span>
+                                                    <span className="text-xs text-muted-foreground">업데이트: {formatDateTime(a.updatedAt)}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="space-y-1">
+                                    <div className="text-sm font-medium">유형</div>
+                                    <select
+                                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                        value={ownerClanVendorForm.userType}
+                                        onChange={(e) => setOwnerClanVendorForm((prev) => ({ ...prev, userType: e.target.value }))}
+                                    >
+                                        <option value="vendor">vendor</option>
+                                        <option value="supplier">supplier</option>
+                                    </select>
+                                </div>
+                                <div className="space-y-1">
+                                    <div className="text-sm font-medium">아이디</div>
+                                    <Input
+                                        value={ownerClanVendorForm.username}
+                                        onChange={(e) => setOwnerClanVendorForm((prev) => ({ ...prev, username: e.target.value }))}
+                                        placeholder="오너클랜 vendor 아이디"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <div className="text-sm font-medium">비밀번호</div>
+                                    <Input
+                                        type="password"
+                                        value={ownerClanVendorForm.password}
+                                        onChange={(e) => setOwnerClanVendorForm((prev) => ({ ...prev, password: e.target.value }))}
+                                        placeholder="오너클랜 vendor 비밀번호"
+                                    />
+                                </div>
+                            </div>
+                        </CardContent>
+                        <CardFooter className="flex justify-end">
+                            <Button onClick={handleOwnerClanVendorSave} isLoading={ownerClanAccountsLoading}>
                                 저장
                             </Button>
                         </CardFooter>

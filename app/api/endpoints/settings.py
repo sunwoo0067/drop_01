@@ -39,11 +39,20 @@ class OwnerClanPrimaryAccountIn(BaseModel):
     password: str
 
 
+class OwnerClanAccountIn(BaseModel):
+    user_type: str
+    username: str
+    password: str
+    set_primary: bool = True
+    is_active: bool = True
+
+
 @router.get("/suppliers/ownerclan/primary")
 def get_ownerclan_primary_account(session: Session = Depends(get_session)) -> dict:
     account = (
         session.query(SupplierAccount)
         .filter(SupplierAccount.supplier_code == "ownerclan")
+        .filter(SupplierAccount.user_type == "seller")
         .filter(SupplierAccount.is_primary.is_(True))
         .filter(SupplierAccount.is_active.is_(True))
         .one_or_none()
@@ -87,7 +96,8 @@ def set_ownerclan_primary_account(payload: OwnerClanPrimaryAccountIn, session: S
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"오너클랜 토큰 발급 실패: {e}")
 
-    session.query(SupplierAccount).filter(SupplierAccount.supplier_code == "ownerclan").update({"is_primary": False})
+    # primary는 user_type 별로 유지합니다(seller/vendor 각각 1개씩 가능)
+    session.query(SupplierAccount).filter(SupplierAccount.supplier_code == "ownerclan").filter(SupplierAccount.user_type == user_type).update({"is_primary": False})
 
     existing = (
         session.query(SupplierAccount)
@@ -120,6 +130,97 @@ def set_ownerclan_primary_account(payload: OwnerClanPrimaryAccountIn, session: S
         "accountId": str(account.id),
         "username": account.username,
         "tokenExpiresAt": _to_iso(account.token_expires_at),
+    }
+
+
+@router.get("/suppliers/ownerclan/accounts")
+def list_ownerclan_accounts(session: Session = Depends(get_session)) -> list[dict]:
+    accounts = (
+        session.query(SupplierAccount)
+        .filter(SupplierAccount.supplier_code == "ownerclan")
+        .order_by(SupplierAccount.updated_at.desc())
+        .all()
+    )
+
+    result: list[dict] = []
+    for account in accounts:
+        result.append(
+            {
+                "id": str(account.id),
+                "supplierCode": account.supplier_code,
+                "userType": account.user_type,
+                "username": account.username,
+                "tokenExpiresAt": _to_iso(account.token_expires_at),
+                "isPrimary": bool(account.is_primary),
+                "isActive": bool(account.is_active),
+                "updatedAt": _to_iso(account.updated_at),
+            }
+        )
+    return result
+
+
+@router.post("/suppliers/ownerclan/accounts")
+def upsert_ownerclan_account(payload: OwnerClanAccountIn, session: Session = Depends(get_session)) -> dict:
+    user_type = str(payload.user_type or "").strip().lower()
+    username = str(payload.username or "").strip()
+    password = str(payload.password or "")
+    set_primary = bool(payload.set_primary)
+    is_active = bool(payload.is_active)
+
+    if user_type not in ("seller", "vendor", "supplier"):
+        raise HTTPException(status_code=400, detail="user_type은 seller/vendor/supplier 중 하나여야 합니다")
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="오너클랜 계정 ID/PW가 필요합니다")
+
+    client = OwnerClanClient(
+        auth_url=settings.ownerclan_auth_url,
+        api_base_url=settings.ownerclan_api_base_url,
+        graphql_url=settings.ownerclan_graphql_url,
+    )
+
+    try:
+        token = client.issue_token(username=username, password=password, user_type=user_type)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"오너클랜 토큰 발급 실패: {e}")
+
+    if set_primary:
+        session.query(SupplierAccount).filter(SupplierAccount.supplier_code == "ownerclan").filter(SupplierAccount.user_type == user_type).update({"is_primary": False})
+
+    existing = (
+        session.query(SupplierAccount)
+        .filter(SupplierAccount.supplier_code == "ownerclan")
+        .filter(SupplierAccount.username == username)
+        .one_or_none()
+    )
+
+    if existing:
+        existing.user_type = user_type
+        existing.access_token = token.access_token
+        existing.token_expires_at = token.expires_at
+        existing.is_primary = set_primary
+        existing.is_active = is_active
+        account = existing
+    else:
+        account = SupplierAccount(
+            supplier_code="ownerclan",
+            user_type=user_type,
+            username=username,
+            access_token=token.access_token,
+            token_expires_at=token.expires_at,
+            is_primary=set_primary,
+            is_active=is_active,
+        )
+        session.add(account)
+        session.flush()
+
+    return {
+        "accountId": str(account.id),
+        "userType": account.user_type,
+        "username": account.username,
+        "tokenExpiresAt": _to_iso(account.token_expires_at),
+        "isPrimary": bool(account.is_primary),
+        "isActive": bool(account.is_active),
+        "updatedAt": _to_iso(account.updated_at),
     }
 
 

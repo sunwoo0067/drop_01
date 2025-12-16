@@ -22,6 +22,17 @@ type OwnerClanStatus = {
     };
 };
 
+type OwnerClanAccount = {
+    id: string;
+    supplierCode: string;
+    userType: string;
+    username: string;
+    tokenExpiresAt: string | null;
+    isPrimary: boolean;
+    isActive: boolean;
+    updatedAt: string | null;
+};
+
 type SupplierSyncJob = {
     id: string;
     supplierCode: string;
@@ -146,11 +157,14 @@ function getJobLabel(jobType: string): string {
 export default function SuppliersPage() {
     const [ownerClanStatus, setOwnerClanStatus] = useState<OwnerClanStatus | null>(null);
     const [loadingStatus, setLoadingStatus] = useState(false);
+    const [ownerClanAccounts, setOwnerClanAccounts] = useState<OwnerClanAccount[]>([]);
 
     const [jobs, setJobs] = useState<SupplierSyncJob[]>([]);
     const [jobsLoading, setJobsLoading] = useState(false);
 
     const [triggerLoading, setTriggerLoading] = useState<string | null>(null);
+
+    const [itemDatePreset, setItemDatePreset] = useState<"1d" | "3d" | "7d" | "30d" | "all">("7d");
 
     const [rawType, setRawType] = useState<OwnerClanRawType>("items");
     const [rawQuery, setRawQuery] = useState("");
@@ -178,6 +192,16 @@ export default function SuppliersPage() {
             alert(getErrorMessage(e));
         } finally {
             setLoadingStatus(false);
+        }
+    };
+
+    const fetchOwnerClanAccounts = async () => {
+        try {
+            const res = await api.get<OwnerClanAccount[]>("/settings/suppliers/ownerclan/accounts");
+            setOwnerClanAccounts(res.data);
+        } catch (e) {
+            // vendor 계정은 선택사항이라 실패해도 화면은 동작해야 함
+            console.error(e);
         }
     };
 
@@ -236,6 +260,7 @@ export default function SuppliersPage() {
 
     useEffect(() => {
         fetchOwnerClanStatus();
+        fetchOwnerClanAccounts();
         fetchJobs();
     }, []);
 
@@ -253,7 +278,7 @@ export default function SuppliersPage() {
         fetchRawRows();
     }, [rawType, rawOffset]);
 
-    const triggerSync = async (type: "items" | "orders" | "qna" | "categories") => {
+    const triggerSync = async (type: "items" | "orders" | "qna" | "categories", extraParams?: Record<string, any>) => {
         if (!canTrigger) {
             alert("오너클랜 대표 계정이 설정되어 있지 않습니다. 설정 메뉴에서 먼저 계정을 등록해 주세요.");
             return;
@@ -271,7 +296,7 @@ export default function SuppliersPage() {
         setTriggerLoading(type);
         try {
             const endpoint = `/suppliers/ownerclan/sync/${type}`;
-            const res = await api.post<{ jobId: string }>(endpoint, { params: {} });
+            const res = await api.post<{ jobId: string }>(endpoint, { params: extraParams || {} });
             await fetchJobs();
             alert(`수집 작업이 등록되었습니다. jobId=${res.data.jobId}`);
         } catch (e) {
@@ -282,10 +307,12 @@ export default function SuppliersPage() {
         }
     };
 
+    const hasVendorAccount = ownerClanAccounts.some((a) => (a.userType === "vendor" || a.userType === "supplier") && a.isActive);
+
     return (
         <div className="space-y-6">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <h1 className="text-3xl font-bold tracking-tight">공급사 수집</h1>
+                <h1 className="text-3xl font-bold tracking-tight">공급사 상품수집</h1>
                 <div className="flex items-center gap-2">
                     <Button
                         variant="outline"
@@ -342,19 +369,61 @@ export default function SuppliersPage() {
                     <CardTitle>수집 실행</CardTitle>
                 </CardHeader>
                 <CardContent>
-                    <div className="flex flex-wrap gap-2">
-                        <Button disabled={!canTrigger} isLoading={triggerLoading === "items"} onClick={() => triggerSync("items")}>
+                    <div className="flex flex-wrap gap-2 items-center">
+                        <div className="flex items-center gap-2">
+                            <div className="text-sm text-muted-foreground">기간</div>
+                            <select
+                                className="h-10 rounded-md border bg-background px-3 text-sm"
+                                value={itemDatePreset}
+                                onChange={(e) => setItemDatePreset(e.target.value as any)}
+                                disabled={!canTrigger || triggerLoading === "items"}
+                            >
+                                <option value="1d">최근 1일</option>
+                                <option value="3d">최근 3일</option>
+                                <option value="7d">최근 7일</option>
+                                <option value="30d">최근 30일</option>
+                                <option value="all">전체(최근 179일)</option>
+                            </select>
+                        </div>
+
+                        <Button
+                            disabled={!canTrigger}
+                            isLoading={triggerLoading === "items"}
+                            onClick={() => triggerSync("items", { datePreset: itemDatePreset })}
+                        >
                             상품(items)
                         </Button>
                         <Button disabled={!canTrigger} isLoading={triggerLoading === "orders"} onClick={() => triggerSync("orders")}>
                             주문(orders)
                         </Button>
                         <Button disabled={!canTrigger} isLoading={triggerLoading === "qna"} onClick={() => triggerSync("qna")}>
-                            QnA
+                            QnA(seller)
                         </Button>
+                        {hasVendorAccount ? (
+                            <Button
+                                disabled={!canTrigger}
+                                isLoading={triggerLoading === "qna"}
+                                variant="outline"
+                                onClick={() => triggerSync("qna", { userType: "vendor" })}
+                            >
+                                QnA(vendor)
+                            </Button>
+                        ) : (
+                            <Button
+                                disabled
+                                variant="outline"
+                                onClick={() => { }}
+                                title="seller 계정만으로는 vendor QnA를 수집할 수 없습니다. (필요 시 설정에서 vendor 계정 추가)"
+                            >
+                                QnA(vendor)
+                            </Button>
+                        )}
                         <Button disabled={!canTrigger} isLoading={triggerLoading === "categories"} onClick={() => triggerSync("categories")}>
                             카테고리
                         </Button>
+                    </div>
+                    <div className="mt-2 text-xs text-muted-foreground">
+                        셀러 계정 기준으로는 QnA가 0건일 수 있습니다. vendor QnA는 vendor/supplier 계정이 있을 때만 수집 가능합니다.
                     </div>
                     <div className="mt-3 text-sm text-muted-foreground">
                         실행 중인 작업이 있으면 목록이 자동으로 갱신됩니다.
@@ -410,6 +479,8 @@ export default function SuppliersPage() {
                                                     <div className="max-w-[520px] whitespace-pre-wrap break-words text-xs text-destructive">
                                                         {job.lastError}
                                                     </div>
+                                                ) : job.status === "succeeded" && job.progress === 0 ? (
+                                                    <span className="text-muted-foreground text-xs">데이터 없음</span>
                                                 ) : (
                                                     <span className="text-muted-foreground">-</span>
                                                 )}

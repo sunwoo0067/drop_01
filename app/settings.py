@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     ownerclan_access_key: str = "" 
     ownerclan_secret_key: str = ""
 
+    pricing_default_margin_rate: float = 0.0
+
     
     # AI Settings
     default_ai_provider: str = "openai" # gemini, ollama, or openai

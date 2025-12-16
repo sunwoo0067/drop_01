@@ -9,6 +9,25 @@ export interface Product {
     created_at: string;
 }
 
+export interface SourcingCandidate {
+    id: string;
+    supplierCode: string;
+    supplierItemId: string;
+    name: string;
+    supplyPrice: number;
+    sourceStrategy: string;
+    benchmarkProductId?: string | null;
+    similarityScore?: number | null;
+    seasonalScore?: number | null;
+    marginScore?: number | null;
+    finalScore?: number | null;
+    specData?: Record<string, any> | null;
+    seoKeywords?: string[] | null;
+    targetEvent?: string | null;
+    status: string;
+    createdAt?: string | null;
+}
+
 export interface MarketListing {
     id: string;
     product_id: string;
