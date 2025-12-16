@@ -37,6 +37,24 @@ class SupplierAccount(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class BenchmarkCollectJob(Base):
+    __tablename__ = "benchmark_collect_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="queued")
+    market_code: Mapped[str] = mapped_column(Text, nullable=False, default="COUPANG")
+    markets: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    limit: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_markets: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    params: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class SupplierSyncJob(Base):
     __tablename__ = "supplier_sync_jobs"
 
