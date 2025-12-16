@@ -163,9 +163,7 @@ export default function SuppliersPage() {
     const [jobsLoading, setJobsLoading] = useState(false);
 
     const [triggerLoading, setTriggerLoading] = useState<string | null>(null);
-
     const [itemDatePreset, setItemDatePreset] = useState<"1d" | "3d" | "7d" | "30d" | "all">("7d");
-
     const [rawType, setRawType] = useState<OwnerClanRawType>("items");
     const [rawQuery, setRawQuery] = useState("");
     const [rawOffset, setRawOffset] = useState(0);
