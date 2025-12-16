@@ -1,13 +1,16 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
+from sqlalchemy.dialects.postgresql import insert
 
 from app.db import get_session
-from app.models import SupplierCategoryRaw, SupplierItemRaw, SupplierOrderRaw, SupplierQnaRaw, SupplierSyncJob
+from app.models import SupplierAccount, SupplierCategoryRaw, SupplierItemRaw, SupplierOrderRaw, SupplierQnaRaw, SupplierSyncJob
+from app.ownerclan_client import OwnerClanClient
+from app.settings import settings
 from app.ownerclan_sync import start_background_ownerclan_job
 from app.session_factory import session_factory
 
@@ -22,6 +25,17 @@ def _to_iso(dt: datetime | None) -> str | None:
 
 class OwnerClanSyncRequestIn(BaseModel):
     params: dict = Field(default_factory=dict)
+
+
+class OwnerClanItemsSearchOut(BaseModel):
+    itemCode: str | None = None
+    itemName: str | None = None
+    supplyPrice: int | None = None
+    raw: dict | None = None
+
+
+class OwnerClanItemImportIn(BaseModel):
+    itemCode: str
 
 
 def _enqueue_job(session: Session, supplier_code: str, job_type: str, params: dict) -> SupplierSyncJob:
@@ -108,6 +122,130 @@ def list_sync_jobs(
     return result
 
 
+@router.get("/ownerclan/items/search")
+def search_ownerclan_items(
+    session: Session = Depends(get_session),
+    keyword: str = Query(..., min_length=1),
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=20, ge=1, le=50),
+) -> dict:
+    account = (
+        session.query(SupplierAccount)
+        .filter(SupplierAccount.supplier_code == "ownerclan")
+        .filter(SupplierAccount.user_type == "seller")
+        .filter(SupplierAccount.is_primary.is_(True))
+        .filter(SupplierAccount.is_active.is_(True))
+        .one_or_none()
+    )
+    if not account:
+        raise HTTPException(status_code=400, detail="오너클랜(seller) 대표 계정이 설정되어 있지 않습니다")
+
+    client = OwnerClanClient(
+        auth_url=settings.ownerclan_auth_url,
+        api_base_url=settings.ownerclan_api_base_url,
+        graphql_url=settings.ownerclan_graphql_url,
+        access_token=account.access_token,
+    )
+
+    status_code, data = client.get_products(keyword=keyword, page=page, limit=limit)
+    if status_code >= 400:
+        raise HTTPException(status_code=400, detail=f"오너클랜 상품 검색 실패: HTTP {status_code}")
+
+    data_obj = data.get("data") if isinstance(data, dict) else None
+    items_obj = None
+    if isinstance(data_obj, dict):
+        items_obj = data_obj.get("items")
+        if items_obj is None and isinstance(data_obj.get("data"), dict):
+            items_obj = data_obj.get("data").get("items")
+
+    items_list = items_obj if isinstance(items_obj, list) else []
+    result_items: list[dict] = []
+    for it in items_list:
+        if not isinstance(it, dict):
+            continue
+        item_code = it.get("item_code") or it.get("itemCode") or it.get("item_code") or it.get("item")
+        item_name = it.get("item_name") or it.get("name") or it.get("itemName")
+        supply_price = it.get("supply_price") or it.get("supplyPrice")
+        try:
+            supply_price_int = int(float(supply_price)) if supply_price is not None else None
+        except Exception:
+            supply_price_int = None
+        result_items.append(
+            {
+                "itemCode": str(item_code) if item_code is not None else None,
+                "itemName": str(item_name) if item_name is not None else None,
+                "supplyPrice": supply_price_int,
+                "raw": it,
+            }
+        )
+
+    return {"httpStatus": status_code, "keyword": keyword, "page": page, "limit": limit, "items": result_items}
+
+
+@router.post("/ownerclan/items/import", status_code=200)
+def import_ownerclan_item(payload: OwnerClanItemImportIn, session: Session = Depends(get_session)) -> dict:
+    item_code = str(payload.itemCode or "").strip()
+    if not item_code:
+        raise HTTPException(status_code=400, detail="itemCode가 필요합니다")
+
+    account = (
+        session.query(SupplierAccount)
+        .filter(SupplierAccount.supplier_code == "ownerclan")
+        .filter(SupplierAccount.user_type == "seller")
+        .filter(SupplierAccount.is_primary.is_(True))
+        .filter(SupplierAccount.is_active.is_(True))
+        .one_or_none()
+    )
+    if not account:
+        raise HTTPException(status_code=400, detail="오너클랜(seller) 대표 계정이 설정되어 있지 않습니다")
+
+    client = OwnerClanClient(
+        auth_url=settings.ownerclan_auth_url,
+        api_base_url=settings.ownerclan_api_base_url,
+        graphql_url=settings.ownerclan_graphql_url,
+        access_token=account.access_token,
+    )
+
+    status_code, data = client.get_product(item_code)
+    if status_code >= 400:
+        raise HTTPException(status_code=400, detail=f"오너클랜 상품 조회 실패(itemCode={item_code}): HTTP {status_code}")
+
+    data_obj = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(data_obj, dict):
+        data_obj = {}
+
+    source_updated_at = data_obj.get("updatedAt") or data_obj.get("updated_at")
+
+    stmt = insert(SupplierItemRaw).values(
+        supplier_code="ownerclan",
+        item_code=item_code,
+        item_key=str(data_obj.get("key")) if data_obj.get("key") is not None else None,
+        item_id=str(data_obj.get("id")) if data_obj.get("id") is not None else None,
+        source_updated_at=source_updated_at,
+        raw=data_obj,
+        fetched_at=datetime.now(timezone.utc),
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["supplier_code", "item_code"],
+        set_={
+            "item_key": stmt.excluded.item_key,
+            "item_id": stmt.excluded.item_id,
+            "raw": stmt.excluded.raw,
+            "fetched_at": stmt.excluded.fetched_at,
+        },
+    )
+    session.execute(stmt)
+
+    row = (
+        session.query(SupplierItemRaw)
+        .filter(SupplierItemRaw.supplier_code == "ownerclan")
+        .filter(SupplierItemRaw.item_code == item_code)
+        .one_or_none()
+    )
+
+    return {"imported": True, "itemCode": item_code, "supplierItemRawId": str(row.id) if row else None}
+
+
 @router.get("/sync/jobs/{job_id}")
 def get_sync_job(job_id: uuid.UUID, session: Session = Depends(get_session)) -> dict:
     job = session.get(SupplierSyncJob, job_id)
@@ -146,12 +284,27 @@ def list_ownerclan_items_raw(
 
     if q:
         like = f"%{q}%"
-        stmt = stmt.where(or_(SupplierItemRaw.item_code.ilike(like), SupplierItemRaw.item_key.ilike(like)))
+        stmt = stmt.where(
+            or_(
+                SupplierItemRaw.item_code.ilike(like),
+                SupplierItemRaw.item_key.ilike(like),
+                SupplierItemRaw.raw["item_name"].astext.ilike(like),
+                SupplierItemRaw.raw["name"].astext.ilike(like),
+            )
+        )
 
     items = session.scalars(stmt).all()
 
     result: list[dict] = []
     for item in items:
+        raw = item.raw if isinstance(item.raw, dict) else {}
+        item_name = raw.get("item_name") or raw.get("name")
+
+        supply_price = raw.get("supply_price") or raw.get("supplyPrice") or raw.get("fixedPrice") or raw.get("price")
+        try:
+            supply_price_int = int(float(supply_price)) if supply_price is not None else None
+        except Exception:
+            supply_price_int = None
         result.append(
             {
                 "id": str(item.id),
@@ -159,6 +312,8 @@ def list_ownerclan_items_raw(
                 "itemCode": item.item_code,
                 "itemKey": item.item_key,
                 "itemId": item.item_id,
+                "itemName": item_name,
+                "supplyPrice": supply_price_int,
                 "sourceUpdatedAt": _to_iso(item.source_updated_at),
                 "fetchedAt": _to_iso(item.fetched_at),
             }

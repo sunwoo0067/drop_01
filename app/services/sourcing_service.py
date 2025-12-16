@@ -4,7 +4,7 @@ import uuid
 from sqlalchemy.orm import Session
 from sqlalchemy import select, or_, desc
 
-from app.models import Product, SourcingCandidate, BenchmarkProduct, SupplierItemRaw
+from app.models import Product, SourcingCandidate, BenchmarkProduct, SupplierItemRaw, SupplierAccount
 from app.ownerclan_client import OwnerClanClient
 from app.settings import settings
 from app.services.ai import AIService
@@ -23,37 +23,87 @@ class SourcingService:
         self.embedding_service = EmbeddingService()
         self.ai_service = AIService()
 
-    def _get_api_token(self):
-        # TODO: Implement proper token management/caching
-        # For now, assumes we have user credentials in settings or handled elsewhere
-        # Ideally this should be injected or managed by a TokenManager
-        return "temp_token" # Placeholder: Integration with TokenManager needed
+    def _get_ownerclan_primary_client(self, user_type: str = "seller") -> OwnerClanClient:
+        account = (
+            self.db.query(SupplierAccount)
+            .filter(SupplierAccount.supplier_code == "ownerclan")
+            .filter(SupplierAccount.user_type == user_type)
+            .filter(SupplierAccount.is_primary.is_(True))
+            .filter(SupplierAccount.is_active.is_(True))
+            .one_or_none()
+        )
+        if not account:
+            raise RuntimeError("오너클랜 대표 계정이 설정되어 있지 않습니다")
 
-    async def execute_keyword_sourcing(self, keywords: List[str], min_margin: float = 0.15):
+        return OwnerClanClient(
+            auth_url=settings.ownerclan_auth_url,
+            api_base_url=settings.ownerclan_api_base_url,
+            graphql_url=settings.ownerclan_graphql_url,
+            access_token=account.access_token,
+        )
+
+    def _extract_items(self, data: dict) -> list[dict]:
+        if not isinstance(data, dict):
+            return []
+        data_obj = data.get("data")
+        if not isinstance(data_obj, dict):
+            return []
+        items_obj = data_obj.get("items")
+        if items_obj is None and isinstance(data_obj.get("data"), dict):
+            items_obj = data_obj.get("data").get("items")
+        if isinstance(items_obj, list):
+            return [it for it in items_obj if isinstance(it, dict)]
+        return []
+
+    def _to_int(self, value) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(float(value))
+        except Exception:
+            return None
+
+    def execute_keyword_sourcing(self, keywords: List[str], min_margin: float = 0.15):
         """
         Strategy 1: Simple Keyword Sourcing
         Searches OwnerClan for keywords, filters by margin, and creates candidates.
         """
         logger.info(f"Starting Keyword Sourcing for: {keywords}")
+
+        client = self._get_ownerclan_primary_client(user_type="seller")
         
         # 1. Search OwnerClan
         found_items = []
         for kw in keywords:
-            status, data = self.clant.get_products(keyword=kw, limit=50) 
-            if status == 200 and "data" in data:
-                 found_items.extend(data["data"]["items"])
+            status_code, data = client.get_products(keyword=kw, limit=50)
+            if status_code != 200:
+                logger.warning(f"오너클랜 상품 검색 실패: HTTP {status_code} (keyword={kw})")
+                continue
+            found_items.extend(self._extract_items(data))
         
         # 2. Process Items
         for item in found_items:
-            supply_price = item.get("supply_price", 99999999)
-            selling_price = item.get("selling_price", 0) 
-            
-            if selling_price > 0:
-                margin = (selling_price - supply_price) / selling_price
-                if margin >= min_margin:
-                    self._create_candidate(item, strategy="KEYWORD", margin_score=margin)
+            supply_price = self._to_int(
+                item.get("supply_price")
+                or item.get("supplyPrice")
+                or item.get("fixedPrice")
+                or item.get("price")
+            )
+            selling_price = self._to_int(
+                item.get("selling_price")
+                or item.get("sellingPrice")
+                or item.get("fixedPrice")
+                or item.get("price")
+            )
 
-    async def execute_benchmark_sourcing(self, benchmark_id: uuid.UUID):
+            margin: float | None = None
+            if selling_price and selling_price > 0 and supply_price is not None:
+                margin = (selling_price - supply_price) / selling_price
+
+            if margin is None or margin >= min_margin:
+                self._create_candidate(item, strategy="KEYWORD", margin_score=margin)
+
+    def execute_benchmark_sourcing(self, benchmark_id: uuid.UUID):
         """
         Strategy 2: Benchmark Sourcing (Gap Analysis & Spec Match)
         """
@@ -62,6 +112,8 @@ class SourcingService:
             logger.error(f"Benchmark product {benchmark_id} not found")
             return
 
+        client = self._get_ownerclan_primary_client(user_type="seller")
+
         # 1. Analyze Benchmark (if not already)
         if not benchmark.pain_points:
             # Use Tier 1 (Gemini) for complex reasoning like Pain Point Analysis
@@ -69,12 +121,13 @@ class SourcingService:
             self.db.commit()
             
         search_terms = [benchmark.name] 
-        
         # 3. Search OwnerClan
         found_items = []
-        status, data = self.clant.get_products(keyword=benchmark.name, limit=50)
-        if status == 200 and "data" in data and "items" in data["data"]:
-             found_items = data["data"]["items"]
+        status_code, data = client.get_products(keyword=benchmark.name, limit=50)
+        if status_code == 200:
+            found_items = self._extract_items(data)
+        else:
+            logger.warning(f"오너클랜 상품 검색 실패: HTTP {status_code} (keyword={benchmark.name})")
 
         # 4. Score and Filter
         for item in found_items:
@@ -87,7 +140,10 @@ class SourcingService:
             # B. Gap Analysis skipped for brevity in this step
             
             # C. Seasonality & Event Scoring
-            season_data = self.ai_service.predict_seasonality(candidate_item.get("name", ""), provider="auto")
+            season_data = self.ai_service.predict_seasonality(
+                (candidate_item.get("item_name") or candidate_item.get("name") or ""),
+                provider="auto"
+            )
             current_month_score = season_data.get("current_month_score", 0.0)
             
             # D. Create Candidate
@@ -99,20 +155,52 @@ class SourcingService:
                 spec_data=specs
             )
 
-    def _create_candidate(self, item: dict, strategy: str, benchmark_id: uuid.UUID = None, 
-                          seasonal_score: float = 0.0, margin_score: float = 0.0, spec_data: dict = None):
+    def _create_candidate(
+        self,
+        item: dict,
+        strategy: str,
+        benchmark_id: uuid.UUID = None,
+        seasonal_score: float | None = None,
+        margin_score: float | None = None,
+        spec_data: dict | None = None,
+    ):
         
         # Check if already exists
-        supplier_id = item.get("item_code") # Adjust key based on OwnerClan API
-        exists = self.db.execute(select(SourcingCandidate).where(SourcingCandidate.supplier_item_id == str(supplier_id))).first()
+        supplier_id = (
+            item.get("item_code")
+            or item.get("itemCode")
+            or item.get("item_id")
+            or item.get("id")
+            or item.get("item")
+        )
+        if supplier_id is None:
+            return
+
+        exists = (
+            self.db.execute(
+                select(SourcingCandidate)
+                .where(SourcingCandidate.supplier_code == "ownerclan")
+                .where(SourcingCandidate.supplier_item_id == str(supplier_id))
+            ).first()
+        )
         if exists:
             return
 
+        name = item.get("item_name") or item.get("name") or item.get("itemName") or "Unknown"
+        supply_price = self._to_int(
+            item.get("supply_price")
+            or item.get("supplyPrice")
+            or item.get("fixedPrice")
+            or item.get("price")
+        )
+        if supply_price is None:
+            supply_price = 0
+
         candidate = SourcingCandidate(
-            supplier_code="OWNERCLAN",
+            supplier_code="ownerclan",
             supplier_item_id=str(supplier_id),
-            name=item.get("name", "Unknown"),
-            supply_price=int(item.get("supply_price", 0)),
+            name=str(name),
+            supply_price=int(supply_price),
             source_strategy=strategy,
             benchmark_product_id=benchmark_id,
             seasonal_score=seasonal_score,
@@ -122,7 +210,6 @@ class SourcingService:
         )
         
         # Optimize SEO immediately? Or lazy load. Let's do lazy for performance.
-        
         self.db.add(candidate)
         self.db.commit()
         logger.info(f"Created candidate: {candidate.name}")

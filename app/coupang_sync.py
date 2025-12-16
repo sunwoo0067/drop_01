@@ -3,13 +3,27 @@ from __future__ import annotations
 import logging
 import uuid
 from typing import Any
+from datetime import datetime, timezone
 
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 
 from app.coupang_client import CoupangClient
-from app.models import MarketAccount, MarketProductRaw, SupplierRawFetchLog, Product, MarketListing
+from app.models import (
+    MarketAccount,
+    MarketOrderRaw,
+    MarketProductRaw,
+    SupplierRawFetchLog,
+    Product,
+    MarketListing,
+    SupplierAccount,
+    SupplierItemRaw,
+    SupplierOrder,
+    Order,
+)
+from app.ownerclan_client import OwnerClanClient
+from app.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +94,8 @@ def sync_coupang_products(session: Session, account_id: uuid.UUID) -> int:
                 market_code="COUPANG",
                 account_id=account.id,
                 market_item_id=seller_product_id,
-                raw=p
+                raw=p,
+                fetched_at=datetime.now(timezone.utc),
             )
             stmt = stmt.on_conflict_do_update(
                 index_elements=["market_code", "account_id", "market_item_id"],
@@ -96,6 +111,115 @@ def sync_coupang_products(session: Session, account_id: uuid.UUID) -> int:
             break
             
     logger.info(f"Finished product sync for {account.name}. Total: {total_processed}")
+    return total_processed
+
+
+def sync_coupang_orders_raw(
+    session: Session,
+    account_id: uuid.UUID,
+    created_at_from: str,
+    created_at_to: str,
+    status: str | None = None,
+    max_per_page: int = 100,
+) -> int:
+    """
+    쿠팡 발주서(주문) 목록을 조회하여 MarketOrderRaw에 저장합니다.
+
+    - created_at_from / created_at_to: 쿠팡 API 규격(yyyy-MM-dd)
+    - status: 쿠팡 주문 상태 필터(옵션)
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account:
+        logger.error(f"MarketAccount {account_id} not found")
+        return 0
+
+    if account.market_code != "COUPANG":
+        logger.error(f"Account {account.name} is not a Coupang account")
+        return 0
+
+    if not account.is_active:
+        logger.info(f"Account {account.name} is inactive, skipping order sync")
+        return 0
+
+    try:
+        client = _get_client_for_account(account)
+    except Exception as e:
+        logger.error(f"Failed to initialize client for {account.name}: {e}")
+        return 0
+
+    total_processed = 0
+
+    # status가 없으면 신규 처리 대상 중심으로 2개 상태를 조회
+    statuses = [status] if status else ["ACCEPT", "INSTRUCT"]
+
+    for st in statuses:
+        next_token: str | None = None
+        while True:
+            try:
+                code, data = client.get_order_sheets(
+                    created_at_from=created_at_from,
+                    created_at_to=created_at_to,
+                    status=st,
+                    next_token=next_token,
+                    max_per_page=max_per_page,
+                )
+            except Exception as e:
+                logger.error(f"Failed to fetch ordersheets for {account.name}: {e}")
+                break
+
+            if code != 200:
+                logger.error(f"Failed to fetch ordersheets for {account.name}: HTTP {code} {data}")
+                break
+
+            if isinstance(data, dict) and data.get("code") not in (None, "SUCCESS", 200, "200"):
+                logger.error(f"Failed to fetch ordersheets for {account.name}: {data}")
+                break
+
+            # 응답 구조 방어: top-level nextToken / data.nextToken 모두 지원
+            root = (data or {}).get("data") if isinstance(data, dict) else None
+            if not isinstance(root, dict):
+                root = {}
+
+            content = root.get("content")
+            if content is None and isinstance((data or {}).get("data"), list):
+                content = (data or {}).get("data")
+            if not isinstance(content, list) or not content:
+                break
+
+            now = datetime.now(timezone.utc)
+            for row in content:
+                if not isinstance(row, dict):
+                    continue
+                order_id = row.get("orderSheetId") or row.get("orderId") or row.get("shipmentBoxId") or row.get("id")
+                if order_id is None:
+                    continue
+
+                # 상태별 조회 결과를 구분하기 위해 raw에 status를 주입(추적용)
+                row_to_store = dict(row)
+                row_to_store.setdefault("_queryStatus", st)
+
+                stmt = insert(MarketOrderRaw).values(
+                    market_code="COUPANG",
+                    account_id=account.id,
+                    order_id=str(order_id),
+                    raw=row_to_store,
+                    fetched_at=now,
+                )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["market_code", "account_id", "order_id"],
+                    set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at},
+                )
+                session.execute(stmt)
+                total_processed += 1
+
+            session.commit()
+
+            next_token = None
+            if isinstance(data, dict):
+                next_token = data.get("nextToken") or root.get("nextToken")
+            if not next_token:
+                break
+
     return total_processed
 
 
@@ -204,6 +328,260 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
     
     logger.info(f"상품 등록 성공 (ID: {product.id}, sellerProductId: {seller_product_id})")
     return True
+
+
+def fulfill_coupang_orders_via_ownerclan(
+    session: Session,
+    coupang_account_id: uuid.UUID,
+    created_at_from: str,
+    created_at_to: str,
+    status: str | None = None,
+    max_per_page: int = 100,
+    dry_run: bool = False,
+    limit: int = 0,
+) -> dict[str, Any]:
+    """
+    쿠팡 발주서(주문) → 오너클랜 주문 생성(발주) 연동.
+
+    - 1) 쿠팡 ordersheets(raw) 수집(업서트)
+    - 2) MarketListing(sellerProductId) → Product → SupplierItemRaw.item_code 매핑
+    - 3) OwnerClan POST /v1/order 호출
+    - 4) Order/ SupplierOrder 레코드로 연결
+    """
+    processed = 0
+    succeeded = 0
+    skipped = 0
+    failed = 0
+    failures: list[dict[str, Any]] = []
+    skipped_details: list[dict[str, Any]] = []
+
+    # 1) 최신 쿠팡 주문 raw 수집
+    sync_coupang_orders_raw(
+        session,
+        account_id=coupang_account_id,
+        created_at_from=created_at_from,
+        created_at_to=created_at_to,
+        status=status,
+        max_per_page=max_per_page,
+    )
+
+    coupang_account = session.get(MarketAccount, coupang_account_id)
+    if not coupang_account:
+        raise RuntimeError("쿠팡 계정을 찾을 수 없습니다")
+
+    # 오너클랜 대표 계정 토큰 로드(판매사)
+    owner = (
+        session.query(SupplierAccount)
+        .filter(SupplierAccount.supplier_code == "ownerclan")
+        .filter(SupplierAccount.user_type == "seller")
+        .filter(SupplierAccount.is_primary.is_(True))
+        .filter(SupplierAccount.is_active.is_(True))
+        .one_or_none()
+    )
+    if not owner:
+        raise RuntimeError("오너클랜(seller) 대표 계정이 설정되어 있지 않습니다")
+
+    owner_client = OwnerClanClient(
+        auth_url=settings.ownerclan_auth_url,
+        api_base_url=settings.ownerclan_api_base_url,
+        graphql_url=settings.ownerclan_graphql_url,
+        access_token=owner.access_token,
+    )
+
+    # 2) 수집된 MarketOrderRaw 기준 처리
+    q = (
+        session.query(MarketOrderRaw)
+        .filter(MarketOrderRaw.market_code == "COUPANG")
+        .filter(MarketOrderRaw.account_id == coupang_account_id)
+        .order_by(MarketOrderRaw.fetched_at.desc())
+    )
+    if limit and limit > 0:
+        q = q.limit(limit)
+
+    rows = q.all()
+    for row in rows:
+        processed += 1
+        raw = row.raw or {}
+        if not isinstance(raw, dict):
+            skipped += 1
+            continue
+
+        # 이미 내부 Order가 생성/연동되었는지 확인
+        existing_order = session.query(Order).filter(Order.market_order_id == row.id).one_or_none()
+        if existing_order and existing_order.supplier_order_id is not None:
+            skipped += 1
+            continue
+
+        order_sheet_id = str(raw.get("orderSheetId") or raw.get("order_id") or raw.get("shipmentBoxId") or row.order_id)
+        order_number = f"CP-{order_sheet_id}"
+
+        # 쿠팡 발주서 row에서 상품 식별자 추출
+        # - ordersheets(timeFrame) 응답은 sellerProductId가 orderItems[*] 안에 들어있습니다.
+        seller_product_id = raw.get("sellerProductId") or raw.get("seller_product_id")
+        order_items = raw.get("orderItems") if isinstance(raw.get("orderItems"), list) else []
+        first_item = order_items[0] if order_items and isinstance(order_items[0], dict) else {}
+        if seller_product_id is None and isinstance(first_item, dict):
+            seller_product_id = first_item.get("sellerProductId") or first_item.get("seller_product_id")
+        if seller_product_id is None:
+            failed += 1
+            failures.append({"orderSheetId": order_sheet_id, "reason": "sellerProductId를 찾을 수 없습니다"})
+            continue
+
+        listing = (
+            session.query(MarketListing)
+            .filter(MarketListing.market_account_id == coupang_account_id)
+            .filter(MarketListing.market_item_id == str(seller_product_id))
+            .one_or_none()
+        )
+        if not listing:
+            skipped += 1
+            skipped_details.append(
+                {
+                    "orderSheetId": order_sheet_id,
+                    "reason": f"MarketListing 없음(sellerProductId={seller_product_id})",
+                    "sellerProductName": (first_item.get("sellerProductName") if isinstance(first_item, dict) else None) or raw.get("sellerProductName"),
+                }
+            )
+            continue
+
+        product = session.get(Product, listing.product_id)
+        if not product or not product.supplier_item_id:
+            failed += 1
+            failures.append({"orderSheetId": order_sheet_id, "reason": "Product 또는 supplier_item_id 매핑이 없습니다"})
+            continue
+
+        supplier_item = session.get(SupplierItemRaw, product.supplier_item_id)
+        product_code = (supplier_item.item_code if supplier_item else None) or (supplier_item.item_key if supplier_item else None)
+        if not product_code:
+            failed += 1
+            failures.append({"orderSheetId": order_sheet_id, "reason": "오너클랜 product_code(item_code)가 없습니다"})
+            continue
+
+        quantity = (
+            raw.get("orderCount")
+            or raw.get("quantity")
+            or (first_item.get("shippingCount") if isinstance(first_item, dict) else None)
+            or 1
+        )
+        try:
+            quantity_int = max(1, int(quantity))
+        except Exception:
+            quantity_int = 1
+
+        receiver = raw.get("receiver") if isinstance(raw.get("receiver"), dict) else {}
+        recipient_name = (raw.get("receiverName") or raw.get("recipientName") or receiver.get("name") or "").strip()
+        recipient_phone = (
+            raw.get("receiverPhoneNumber")
+            or raw.get("receiverMobileNumber")
+            or raw.get("recipientPhone")
+            or receiver.get("safeNumber")
+            or ""
+        ).strip()
+        addr1 = (raw.get("receiverAddress1") or raw.get("address1") or raw.get("shippingAddress1") or receiver.get("addr1") or "").strip()
+        addr2 = (raw.get("receiverAddress2") or raw.get("address2") or raw.get("shippingAddress2") or receiver.get("addr2") or "").strip()
+        zipcode = (raw.get("receiverZipCode") or raw.get("zipCode") or raw.get("postalCode") or receiver.get("postCode") or "").strip()
+
+        if not recipient_name or not recipient_phone or not addr1 or not zipcode:
+            failed += 1
+            failures.append({"orderSheetId": order_sheet_id, "reason": "수령인/연락처/주소/우편번호 필수값이 부족합니다"})
+            continue
+
+        recipient_address = addr1 if not addr2 else f"{addr1} {addr2}"
+        delivery_message = (raw.get("deliveryMessage") or raw.get("shippingNote") or "").strip() or None
+
+        payload = {
+            "product_code": str(product_code),
+            "quantity": quantity_int,
+            "buyer_name": recipient_name,
+            "buyer_phone": recipient_phone,
+            "recipient_name": recipient_name,
+            "recipient_phone": recipient_phone,
+            "recipient_address": recipient_address,
+            "recipient_zipcode": zipcode,
+            "delivery_message": delivery_message,
+            "order_memo": f"Coupang orderSheetId={order_sheet_id}",
+        }
+
+        if dry_run:
+            skipped += 1
+            continue
+
+        status_code, resp = owner_client.create_order(payload)
+        # 최소 성공 판정(문서의 success=true 또는 공통 포맷 code=SUCCESS)
+        ok = status_code < 300 and (
+            (isinstance(resp, dict) and resp.get("success") is True)
+            or (isinstance(resp, dict) and resp.get("code") == "SUCCESS")
+        )
+        supplier_order_id_str = None
+        if isinstance(resp, dict):
+            supplier_order_id_str = resp.get("order_id") or (resp.get("data") or {}).get("order_id") if isinstance(resp.get("data"), dict) else None
+            if supplier_order_id_str is None and isinstance(resp.get("data"), (str, int)):
+                supplier_order_id_str = str(resp.get("data"))
+
+        if not ok or not supplier_order_id_str:
+            failed += 1
+            failures.append({"orderSheetId": order_sheet_id, "reason": f"오너클랜 주문 생성 실패: HTTP {status_code}", "response": resp})
+            session.add(
+                SupplierRawFetchLog(
+                    supplier_code="ownerclan",
+                    account_id=owner.id,
+                    endpoint=f"{settings.ownerclan_api_base_url}/v1/order",
+                    request_payload=payload,
+                    http_status=status_code,
+                    response_payload=resp if isinstance(resp, dict) else {"_raw": resp},
+                    error_message=None if ok else "create_order failed",
+                )
+            )
+            session.commit()
+            continue
+
+        # SupplierOrder / Order 연결 저장
+        supplier_order = SupplierOrder(supplier_code="ownerclan", supplier_order_id=str(supplier_order_id_str), status="PENDING")
+        session.add(supplier_order)
+        session.flush()
+
+        if existing_order:
+            existing_order.supplier_order_id = supplier_order.id
+            existing_order.order_number = existing_order.order_number or order_number
+            existing_order.recipient_name = existing_order.recipient_name or recipient_name
+            existing_order.recipient_phone = existing_order.recipient_phone or recipient_phone
+            existing_order.address = existing_order.address or recipient_address
+        else:
+            session.add(
+                Order(
+                    market_order_id=row.id,
+                    supplier_order_id=supplier_order.id,
+                    order_number=order_number,
+                    status="PAYMENT_COMPLETED",
+                    recipient_name=recipient_name,
+                    recipient_phone=recipient_phone,
+                    address=recipient_address,
+                    total_amount=0,
+                )
+            )
+
+        session.add(
+            SupplierRawFetchLog(
+                supplier_code="ownerclan",
+                account_id=owner.id,
+                endpoint=f"{settings.ownerclan_api_base_url}/v1/order",
+                request_payload=payload,
+                http_status=status_code,
+                response_payload=resp if isinstance(resp, dict) else {"_raw": resp},
+                error_message=None,
+            )
+        )
+        session.commit()
+        succeeded += 1
+
+    return {
+        "processed": processed,
+        "succeeded": succeeded,
+        "skipped": skipped,
+        "failed": failed,
+        "failures": failures[:50],
+        "skippedDetails": skipped_details[:50],
+    }
 
 
 def _get_default_centers(client: CoupangClient) -> tuple[str | None, str | None]:
