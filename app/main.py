@@ -9,8 +9,9 @@ from typing import List
 
 from supabase import create_client
 
-from app.db import engine, get_session
-from app.models import Base, Embedding, SupplierAccount, SupplierSyncJob
+from app.db import dropship_engine, get_session
+from app.models import DropshipBase, Embedding, SupplierAccount, SupplierSyncJob
+
 from app.ownerclan_client import OwnerClanClient
 from app.ownerclan_sync import start_background_ownerclan_job
 from app.session_factory import session_factory
@@ -68,10 +69,17 @@ class EmbeddingIn(BaseModel):
 
 @app.on_event("startup")
 def on_startup() -> None:
-    with engine.begin() as conn:
+    # Vector extension is needed for Dropship DB (Embeddings)
+    with dropship_engine.begin() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    
+    # Auto-create tables (Legacy support, though Alembic is preferred)
     if os.getenv("DB_AUTO_CREATE_TABLES", "").strip() in ("1", "true", "TRUE", "yes", "YES"):
-        Base.metadata.create_all(bind=engine)
+        DropshipBase.metadata.create_all(bind=dropship_engine)
+        # Add others if needed:
+        # SourceBase.metadata.create_all(bind=source_engine)
+        # MarketBase.metadata.create_all(bind=market_engine)
+
 
 
 @app.get("/health")

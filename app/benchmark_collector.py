@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 from typing import List, Dict, Any
 import asyncio
 from app.models import BenchmarkProduct
-from app.session_factory import SessionLocal
+from app.db import SessionLocal
 from app.embedding_service import EmbeddingService
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ class BenchmarkCollector:
             try:
                 response = await client.get(url, allow_redirects=True)
                 if response.status_code != 200:
-                    logger.error(f"Failed to fetch {url}: {response.status_code}")
+                    logger.error(f"벤치마크 랭킹 페이지 호출 실패: HTTP {response.status_code} ({url})")
                     return []
                 
                 soup = BeautifulSoup(response.text, "html.parser")
@@ -69,7 +69,7 @@ class BenchmarkCollector:
                     })
                     
             except Exception as e:
-                logger.error(f"Error collecting ranking: {e}")
+                logger.error(f"벤치마크 랭킹 수집 중 오류: {e}")
                 return []
                 
         return items
@@ -82,7 +82,7 @@ class BenchmarkCollector:
             try:
                 response = await client.get(product_url, allow_redirects=True)
                 if response.status_code != 200:
-                    logger.error(f"Failed to fetch detail {product_url}: {response.status_code}")
+                    logger.error(f"벤치마크 상세 페이지 호출 실패: HTTP {response.status_code} ({product_url})")
                     return {}
 
                 soup = BeautifulSoup(response.text, "html.parser")
@@ -108,7 +108,7 @@ class BenchmarkCollector:
                 }
 
             except Exception as e:
-                logger.error(f"Error collecting detail: {e}")
+                logger.error(f"벤치마크 상세 수집 중 오류: {e}")
                 return {}
 
     async def save_product(self, product_data: Dict[str, Any]):
@@ -178,7 +178,7 @@ class BenchmarkCollector:
                 db.add(new_item)
             
             db.commit()
-            logger.info(f"Saved benchmark product: {product_data['name']} (Embedded: {bool(embedding)})")
+            logger.info(f"벤치마크 상품 저장 완료: {product_data['name']} (임베딩={'성공' if embedding else '실패'})")
 
     async def run_collection_flow(self):
         """

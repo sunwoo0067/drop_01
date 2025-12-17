@@ -1,5 +1,5 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 import uuid
@@ -19,7 +19,7 @@ router = APIRouter()
 class BenchmarkRankingCollectIn(BaseModel):
     marketCode: str = "COUPANG"
     categoryUrl: str | None = None
-    limit: int = 10
+    limit: int = Field(default=10, ge=1, le=50)
 
 
 def _to_iso(dt: datetime | None) -> str | None:
@@ -184,6 +184,8 @@ async def collect_benchmark_ranking(
     limit = int(payload.limit or 0)
     if limit <= 0:
         raise HTTPException(status_code=400, detail="limit은 1 이상이어야 합니다")
+    if limit > 50:
+        raise HTTPException(status_code=400, detail="limit은 50 이하여야 합니다")
 
     if market_code.strip().upper() == "ALL":
         markets = get_supported_market_codes()
@@ -240,7 +242,7 @@ def _execute_benchmark_ranking_collection(job_id: uuid.UUID, market_code: str, c
     except Exception as e:
         logger.exception(f"벤치마크 수집 실패: marketCode={market_code}: {e}")
         failed.append(market_code)
-        last_error = str(e)
+        last_error = f"벤치마크 수집 실패: {e}"
 
     with session_factory() as job_session:
         job = job_session.get(BenchmarkCollectJob, job_id)
@@ -249,7 +251,7 @@ def _execute_benchmark_ranking_collection(job_id: uuid.UUID, market_code: str, c
         job.progress = 100
         job.failed_markets = failed
         job.last_error = last_error
-        job.status = "succeeded"
+        job.status = "failed" if failed else "succeeded"
         job.finished_at = datetime.now(timezone.utc)
         job_session.commit()
 
@@ -301,7 +303,7 @@ def _execute_benchmark_all_ranking_collection(job_id: uuid.UUID, market_codes: l
         job = job_session.get(BenchmarkCollectJob, job_id)
         if not job:
             return
-        job.status = "succeeded"
+        job.status = "failed" if failed else "succeeded"
         job.progress = 100
         job.failed_markets = failed
         job.last_error = last_error

@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Modal } from "@/components/ui/Modal";
-import { Loader2, ExternalLink, RefreshCw, Search, Plus, Radio, AlertCircle } from "lucide-react";
+import { Loader2, ExternalLink, RefreshCw, Search, Plus, AlertCircle } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 
 // --- Types ---
@@ -59,7 +59,7 @@ function CollectionDialog({ isOpen, onClose, onRefresh }: { isOpen: boolean, onC
             await api.post('/benchmarks/collect/ranking', {
                 marketCode,
                 categoryUrl: categoryUrl || undefined,
-                limit
+                limit: Math.min(Math.max(limit, 1), 50)
             });
             onClose();
             onRefresh(); // Trigger status refresh
@@ -95,6 +95,7 @@ function CollectionDialog({ isOpen, onClose, onRefresh }: { isOpen: boolean, onC
                         { value: "COUPANG", label: "쿠팡 (Coupang)" },
                         { value: "NAVER_SHOPPING", label: "네이버쇼핑 (Naver)" },
                         { value: "GMARKET", label: "G마켓 (Gmarket)" },
+                        { value: "AUCTION", label: "옥션 (Auction)" },
                         { value: "ELEVENST", label: "11번가 (11st)" },
                     ]}
                 />
@@ -133,7 +134,7 @@ export default function BenchmarkPage() {
 
     // Filters
     const [searchQuery, setSearchQuery] = useState("");
-    const [marketFilter, setMarketFilter] = useState("");
+    const [marketFilter, setMarketFilter] = useState("ALL");
     const [sortOrder, setSortOrder] = useState("created");
 
     // Collection State
@@ -234,6 +235,7 @@ export default function BenchmarkPage() {
                             { value: "COUPANG", label: "쿠팡" },
                             { value: "NAVER_SHOPPING", label: "네이버쇼핑" },
                             { value: "GMARKET", label: "G마켓" },
+                            { value: "AUCTION", label: "옥션" },
                             { value: "ELEVENST", label: "11번가" },
                         ]}
                         value={marketFilter}
