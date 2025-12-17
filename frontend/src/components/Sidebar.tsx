@@ -11,6 +11,7 @@ const menuItems = [
     { name: "대시보드", href: "/", icon: LayoutDashboard },
     { name: "상품 관리", href: "/products", icon: ShoppingBag },
     { name: "상품 소싱", href: "/sourcing", icon: Search },
+    { name: "벤치마크", href: "/benchmarks", icon: Search },
     { name: "공급사 상품수집", href: "/suppliers", icon: Search },
     { name: "공급사 상품목록", href: "/suppliers/items", icon: ShoppingBag },
     { name: "에이전트", href: "/agents", icon: Bot },

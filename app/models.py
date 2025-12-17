@@ -8,11 +8,19 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import func
 
 
-class Base(DeclarativeBase):
+
+class SourceBase(DeclarativeBase):
+    pass
+
+class DropshipBase(DeclarativeBase):
+    pass
+
+class MarketBase(DeclarativeBase):
     pass
 
 
-class Embedding(Base):
+
+class Embedding(DropshipBase):
     __tablename__ = "embeddings"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -20,7 +28,7 @@ class Embedding(Base):
     embedding: Mapped[list[float]] = mapped_column(Vector(3), nullable=False)
 
 
-class SupplierAccount(Base):
+class SupplierAccount(SourceBase):
     __tablename__ = "supplier_accounts"
     __table_args__ = (UniqueConstraint("supplier_code", "username", name="uq_supplier_accounts_supplier_username"),)
 
@@ -37,7 +45,7 @@ class SupplierAccount(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
-class BenchmarkCollectJob(Base):
+class BenchmarkCollectJob(MarketBase):
     __tablename__ = "benchmark_collect_jobs"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -55,7 +63,7 @@ class BenchmarkCollectJob(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
-class SupplierSyncJob(Base):
+class SupplierSyncJob(SourceBase):
     __tablename__ = "supplier_sync_jobs"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -71,7 +79,7 @@ class SupplierSyncJob(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
-class SupplierSyncState(Base):
+class SupplierSyncState(SourceBase):
     __tablename__ = "supplier_sync_state"
     __table_args__ = (
         UniqueConstraint("supplier_code", "sync_type", "account_id", name="uq_supplier_sync_state_supplier_type_account"),
@@ -86,7 +94,7 @@ class SupplierSyncState(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
-class SupplierRawFetchLog(Base):
+class SupplierRawFetchLog(SourceBase):
     __tablename__ = "supplier_raw_fetch_log"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -100,7 +108,7 @@ class SupplierRawFetchLog(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class SupplierItemRaw(Base):
+class SupplierItemRaw(SourceBase):
     __tablename__ = "supplier_item_raw"
     __table_args__ = (
         UniqueConstraint("supplier_code", "item_code", name="uq_supplier_item_raw_supplier_item_code"),
@@ -117,7 +125,7 @@ class SupplierItemRaw(Base):
     raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
 
-class SupplierOrderRaw(Base):
+class SupplierOrderRaw(SourceBase):
     __tablename__ = "supplier_order_raw"
     __table_args__ = (
         UniqueConstraint("supplier_code", "account_id", "order_id", name="uq_supplier_order_raw_supplier_account_order"),
@@ -131,7 +139,7 @@ class SupplierOrderRaw(Base):
     raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
 
-class SupplierQnaRaw(Base):
+class SupplierQnaRaw(SourceBase):
     __tablename__ = "supplier_qna_raw"
     __table_args__ = (
         UniqueConstraint("supplier_code", "account_id", "qna_id", name="uq_supplier_qna_raw_supplier_account_qna"),
@@ -145,7 +153,7 @@ class SupplierQnaRaw(Base):
     raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
 
-class SupplierCategoryRaw(Base):
+class SupplierCategoryRaw(SourceBase):
     __tablename__ = "supplier_category_raw"
     __table_args__ = (UniqueConstraint("supplier_code", "category_id", name="uq_supplier_category_raw_supplier_category"),)
 
@@ -160,7 +168,7 @@ class SupplierCategoryRaw(Base):
 # Market Domain (Sales Channels)
 # --------------------------------------------------------------------------
 
-class MarketAccount(Base):
+class MarketAccount(MarketBase):
     __tablename__ = "market_accounts"
     __table_args__ = (UniqueConstraint("market_code", "name", name="uq_market_accounts_code_name"),)
 
@@ -173,7 +181,7 @@ class MarketAccount(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
-class MarketOrderRaw(Base):
+class MarketOrderRaw(MarketBase):
     __tablename__ = "market_order_raw"
     __table_args__ = (
         UniqueConstraint("market_code", "account_id", "order_id", name="uq_market_order_raw_account_order"),
@@ -187,7 +195,7 @@ class MarketOrderRaw(Base):
     raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
 
-class MarketProductRaw(Base):
+class MarketProductRaw(MarketBase):
     __tablename__ = "market_product_raw"
     __table_args__ = (
         UniqueConstraint("market_code", "account_id", "market_item_id", name="uq_market_product_raw_account_item"),
@@ -205,11 +213,11 @@ class MarketProductRaw(Base):
 # Core Business Domain (Unified)
 # --------------------------------------------------------------------------
 
-class Product(Base):
+class Product(DropshipBase):
     __tablename__ = "products"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    supplier_item_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("supplier_item_raw.id"), nullable=True)
+    supplier_item_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     brand: Mapped[str | None] = mapped_column(Text, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -226,21 +234,21 @@ class Product(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
-class MarketListing(Base):
+class MarketListing(MarketBase):
     __tablename__ = "market_listings"
     __table_args__ = (
         UniqueConstraint("market_account_id", "market_item_id", name="uq_market_listings_account_item"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("products.id"), nullable=False)
+    product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     market_account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_accounts.id"), nullable=False)
     market_item_id: Mapped[str] = mapped_column(Text, nullable=False)  # e.g. sellerProductId
     status: Mapped[str] = mapped_column(Text, nullable=False, default="ACTIVE")
     linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class SupplierOrder(Base):
+class SupplierOrder(MarketBase):
     __tablename__ = "supplier_orders"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -251,7 +259,7 @@ class SupplierOrder(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
-class Order(Base):
+class Order(MarketBase):
     __tablename__ = "orders"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -270,7 +278,7 @@ class Order(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
-class BenchmarkProduct(Base):
+class BenchmarkProduct(MarketBase):
     __tablename__ = "benchmark_products"
     __table_args__ = (
         UniqueConstraint("market_code", "product_id", name="uq_benchmark_products_market_product"),
@@ -296,7 +304,7 @@ class BenchmarkProduct(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
-class SourcingCandidate(Base):
+class SourcingCandidate(DropshipBase):
     """
     Potential products found from suppliers (e.g. OwnerClan) that match a sourcing strategy.
     These are transient candidates before being promoted to real 'Products'.
@@ -312,7 +320,7 @@ class SourcingCandidate(Base):
     
     # Sourcing Analysis Data
     source_strategy: Mapped[str] = mapped_column(Text, nullable=False) # e.g. "KEYWORD", "BENCHMARK_GAP", "SPEC_MATCH"
-    benchmark_product_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("benchmark_products.id"), nullable=True)
+    benchmark_product_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     
     similarity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     seasonal_score: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -329,7 +337,7 @@ class SourcingCandidate(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class APIKey(Base):
+class APIKey(DropshipBase):
     __tablename__ = "api_keys"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

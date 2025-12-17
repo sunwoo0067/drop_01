@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -45,12 +45,57 @@ def _enqueue_job(session: Session, supplier_code: str, job_type: str, params: di
     return job
 
 
+def _cleanup_stale_jobs(
+    session: Session,
+    supplier_code: str | None,
+    max_age_minutes: int = 60,
+) -> int:
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=max(1, int(max_age_minutes)))
+
+    stmt = select(SupplierSyncJob).where(SupplierSyncJob.status.in_(["queued", "running"]))
+    if supplier_code:
+        stmt = stmt.where(SupplierSyncJob.supplier_code == supplier_code)
+    stmt = stmt.where(SupplierSyncJob.updated_at < cutoff)
+
+    jobs = session.scalars(stmt).all()
+    if not jobs:
+        return 0
+
+    now = datetime.now(timezone.utc)
+    changed = 0
+    for job in jobs:
+        job.status = "failed"
+        if not job.finished_at:
+            job.finished_at = now
+        if not job.last_error:
+            job.last_error = "서버 재시작/중단으로 작업이 종료되지 않아 자동 실패 처리되었습니다(stale job)"
+        changed += 1
+
+    session.flush()
+    return changed
+
+
+def _ensure_no_running_job(session: Session, supplier_code: str, job_type: str) -> None:
+    existing = (
+        session.query(SupplierSyncJob)
+        .filter(SupplierSyncJob.supplier_code == supplier_code)
+        .filter(SupplierSyncJob.job_type == job_type)
+        .filter(SupplierSyncJob.status.in_(["queued", "running"]))
+        .order_by(SupplierSyncJob.created_at.desc())
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail=f"이미 실행중인 작업이 있습니다(jobId={existing.id})")
+
+
 @router.post("/ownerclan/sync/items")
 def trigger_ownerclan_items(
     payload: OwnerClanSyncRequestIn,
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
 ) -> dict:
+    _cleanup_stale_jobs(session, supplier_code="ownerclan")
+    _ensure_no_running_job(session, supplier_code="ownerclan", job_type="ownerclan_items_raw")
     job = _enqueue_job(session, "ownerclan", "ownerclan_items_raw", payload.params)
     background_tasks.add_task(start_background_ownerclan_job, session_factory, uuid.UUID(str(job.id)))
     return {"jobId": str(job.id)}
@@ -62,6 +107,8 @@ def trigger_ownerclan_orders(
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
 ) -> dict:
+    _cleanup_stale_jobs(session, supplier_code="ownerclan")
+    _ensure_no_running_job(session, supplier_code="ownerclan", job_type="ownerclan_orders_raw")
     job = _enqueue_job(session, "ownerclan", "ownerclan_orders_raw", payload.params)
     background_tasks.add_task(start_background_ownerclan_job, session_factory, uuid.UUID(str(job.id)))
     return {"jobId": str(job.id)}
@@ -73,6 +120,8 @@ def trigger_ownerclan_qna(
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
 ) -> dict:
+    _cleanup_stale_jobs(session, supplier_code="ownerclan")
+    _ensure_no_running_job(session, supplier_code="ownerclan", job_type="ownerclan_qna_raw")
     job = _enqueue_job(session, "ownerclan", "ownerclan_qna_raw", payload.params)
     background_tasks.add_task(start_background_ownerclan_job, session_factory, uuid.UUID(str(job.id)))
     return {"jobId": str(job.id)}
@@ -84,6 +133,8 @@ def trigger_ownerclan_categories(
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
 ) -> dict:
+    _cleanup_stale_jobs(session, supplier_code="ownerclan")
+    _ensure_no_running_job(session, supplier_code="ownerclan", job_type="ownerclan_categories_raw")
     job = _enqueue_job(session, "ownerclan", "ownerclan_categories_raw", payload.params)
     background_tasks.add_task(start_background_ownerclan_job, session_factory, uuid.UUID(str(job.id)))
     return {"jobId": str(job.id)}
@@ -95,6 +146,7 @@ def list_sync_jobs(
     supplier_code: str | None = Query(default=None, alias="supplierCode"),
     limit: int = Query(default=30, ge=1, le=200),
 ) -> list[dict]:
+    _cleanup_stale_jobs(session, supplier_code=supplier_code)
     stmt = select(SupplierSyncJob).order_by(SupplierSyncJob.created_at.desc()).limit(limit)
     if supplier_code:
         stmt = stmt.where(SupplierSyncJob.supplier_code == supplier_code)
