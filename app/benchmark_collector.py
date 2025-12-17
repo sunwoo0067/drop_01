@@ -33,12 +33,7 @@ class BenchmarkCollector:
                 response = await client.get(url, allow_redirects=True)
                 if response.status_code != 200:
                     logger.error(f"Failed to fetch {url}: {response.status_code}")
-                    # Mock Data for testing if blocked
-                    logger.info("Using mock data due to block.")
-                    return [
-                        {"product_id": "12345", "name": "Mock TV", "price": 500000, "product_url": "https://coupang.com/1", "vendor_item_id": "v1"},
-                        {"product_id": "67890", "name": "Mock Fridge", "price": 1200000, "product_url": "https://coupang.com/2", "vendor_item_id": "v2"},
-                    ]
+                    return []
                 
                 soup = BeautifulSoup(response.text, "html.parser")
                 product_list = soup.select("ul#productList > li")
@@ -75,10 +70,7 @@ class BenchmarkCollector:
                     
             except Exception as e:
                 logger.error(f"Error collecting ranking: {e}")
-                # Mock Data on error too
-                return [
-                        {"product_id": "12345", "name": "Mock TV", "price": 500000, "product_url": "https://coupang.com/1", "vendor_item_id": "v1"},
-                ]
+                return []
                 
         return items
 
@@ -89,10 +81,9 @@ class BenchmarkCollector:
         async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
             try:
                 response = await client.get(product_url, allow_redirects=True)
-                # If mock url, response might fail or be 404.
                 if response.status_code != 200:
                     logger.error(f"Failed to fetch detail {product_url}: {response.status_code}")
-                    return {"detail_html": "<div>Mock Detail</div>", "image_urls": ["http://example.com/img.jpg"]}
+                    return {}
 
                 soup = BeautifulSoup(response.text, "html.parser")
                 
@@ -118,7 +109,7 @@ class BenchmarkCollector:
 
             except Exception as e:
                 logger.error(f"Error collecting detail: {e}")
-                return {"detail_html": "<div>Mock Detail Error</div>", "image_urls": []}
+                return {}
 
     async def save_product(self, product_data: Dict[str, Any]):
         """
