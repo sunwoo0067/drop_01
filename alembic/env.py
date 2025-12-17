@@ -8,49 +8,69 @@ _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from app.models import Base
+import os
+import sys
+
+from alembic import context
+from sqlalchemy import engine_from_config, pool, create_engine
+
+_project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+from app.models import SourceBase, DropshipBase, MarketBase
+from app.settings import settings
+
+# Mapping of database name to (Metadata, URL)
+db_info = {
+    "source": {"metadata": SourceBase.metadata, "url": settings.source_database_url},
+    "dropship": {"metadata": DropshipBase.metadata, "url": settings.dropship_database_url},
+    "market": {"metadata": MarketBase.metadata, "url": settings.market_database_url},
+}
 
 config = context.config
 
 
-target_metadata = Base.metadata
-
-
-def get_url() -> str:
-    url = os.getenv("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
-    if not url:
-        raise RuntimeError("DATABASE_URL이 설정되어 있지 않습니다")
-    return url
-
-
 def run_migrations_offline() -> None:
-    url = get_url()
-    context.configure(
-        url=url,
-        target_metadata=target_metadata,
-        literal_binds=True,
-        dialect_opts={"paramstyle": "named"},
-    )
-
-    with context.begin_transaction():
-        context.run_migrations()
+    """Run migrations in 'offline' mode for all configured databases."""
+    # This offline mode implementation iterates over all dbs.
+    # To run for a specific db, one might need CLI args, but here we run all.
+    
+    for name, info in db_info.items():
+        context.configure(
+            url=info["url"],
+            target_metadata=info["metadata"],
+            literal_binds=True,
+            dialect_opts={"paramstyle": "named"},
+            version_table=f"alembic_version_{name}", # Separate version table per DB
+            upgrade_token=f"{name}_upgrades",
+            downgrade_token=f"{name}_downgrades",
+        )
+        
+        with context.begin_transaction():
+            context.run_migrations(engine_name=name)
 
 
 def run_migrations_online() -> None:
-    configuration = config.get_section(config.config_ini_section) or {}
-    configuration["sqlalchemy.url"] = get_url()
+    """Run migrations in 'online' mode."""
+    
+    # We will create engines manually from settings, ignoring .ini urls for simplicity
+    # or we can read from .ini if we populated them. Using settings is safer/consistent.
 
-    connectable = engine_from_config(
-        configuration,
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    for name, info in db_info.items():
+        engine = create_engine(info["url"], poolclass=pool.NullPool)
 
-    with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        with engine.connect() as connection:
+            context.configure(
+                connection=connection,
+                target_metadata=info["metadata"],
+                version_table=f"alembic_version_{name}", # Separate version table per DB
+                upgrade_token=f"{name}_upgrades",
+                downgrade_token=f"{name}_downgrades",
+            )
 
-        with context.begin_transaction():
-            context.run_migrations()
+            with context.begin_transaction():
+                context.run_migrations(engine_name=name)
 
 
 if context.is_offline_mode():
