@@ -10,3 +10,8 @@ ruff_cache/
 .idea/
 .vscode/
 .DS_Store
+
+api.log
+frontend.log
+*.pid
+.cursor/

@@ -23,17 +23,28 @@ class CoupangClient:
         self._vendor_id = vendor_id
         self._base_url = base_url.rstrip("/")
 
-    def _generate_signature(self, method: str, path: str, query: str = "") -> str:
-        timestamp = datetime.now(timezone.utc).strftime("%y%m%dT%H%M%SZ")
-        message = f"{timestamp}{method}{path}{query}"
-        
+    def _build_authorization(self, method: str, path: str, query: str = "") -> str:
+        """
+        Coupang OpenAPI 인증 헤더(CEA) 생성.
+
+        Authorization: CEA algorithm=HmacSHA256, access-key=..., signed-date=yyMMdd'T'HHmmss'Z', signature=...
+        서명 문자열: {signed_date}{method}{path}{query_string}
+        """
+        signed_date = datetime.now(timezone.utc).strftime("%y%m%dT%H%M%SZ")
+        message = f"{signed_date}{method}{path}{query}"
+
         signature = hmac.new(
             self._secret_key.encode("utf-8"),
             message.encode("utf-8"),
-            hashlib.sha256
+            hashlib.sha256,
         ).hexdigest()
 
-        return f"HMAC-SHA256 credential={self._access_key}, signedHeaders=, signature={signature}"
+        return (
+            "CEA algorithm=HmacSHA256, "
+            f"access-key={self._access_key}, "
+            f"signed-date={signed_date}, "
+            f"signature={signature}"
+        )
 
     def _request(
         self,
@@ -50,7 +61,7 @@ class CoupangClient:
             # 값 정의: URL 인코딩
             query_string = urllib.parse.urlencode(sorted_params)
 
-        signature_header = self._generate_signature(method, path, query_string)
+        authorization_header = self._build_authorization(method, path, query_string)
         
         url = f"{self._base_url}{path}"
         if query_string:
@@ -58,7 +69,7 @@ class CoupangClient:
 
         headers = {
             "Content-Type": "application/json;charset=UTF-8",
-            "Authorization": signature_header,
+            "Authorization": authorization_header,
             "X-Requested-By": self._vendor_id,
         }
 
@@ -206,25 +217,46 @@ class CoupangClient:
         created_at_to: str, 
         status: str | None = None,
         next_token: str | None = None,
-        max_per_page: int = 20
+        max_per_page: int = 20,
+        search_type: str = "timeFrame",
     ) -> tuple[int, dict[str, Any]]:
         """발주서 목록 조회"""
+        if not status:
+            # 쿠팡 ordersheets(timeFrame) API는 status가 필수인 경우가 많습니다.
+            raise ValueError("status is required for get_order_sheets (e.g. ACCEPT, INSTRUCT)")
+
+        # 쿠팡 ordersheets(timeFrame)는 ISO-8601(+09:00) 형태를 요구하는 경우가 많습니다.
+        # 예: 2025-07-29T00:00+09:00 ~ 2025-07-29T23:59+09:00 (초 단위 없이 분까지만)
+        def _normalize(value: str, is_to: bool) -> str:
+            s = (value or "").strip()
+            if "T" in s:
+                return s
+            # yyyy-MM-dd → yyyy-MM-ddT00:00+09:00 / yyyy-MM-ddT23:59+09:00
+            return f"{s}T23:59+09:00" if is_to else f"{s}T00:00+09:00"
+
         params: dict[str, Any] = {
-            "createdAtFrom": created_at_from,
-            "createdAtTo": created_at_to,
+            "createdAtFrom": _normalize(created_at_from, is_to=False),
+            "createdAtTo": _normalize(created_at_to, is_to=True),
+            "searchType": search_type,
+            "status": status,
             "maxPerPage": max_per_page,
-            "vendorId": self._vendor_id
         }
-        if status:
-            params["status"] = status
         if next_token:
             params["nextToken"] = next_token
             
-        return self.get(f"/v2/providers/openapi/apis/api/v1/vendors/{self._vendor_id}/ordersheets", params)
+        # timeFrame(분단위) 목록 조회는 v5로 제공되는 경우가 많지만,
+        # 환경에 따라 v4로 동작하는 경우도 있어 5xx 시 fallback 합니다.
+        path_v5 = f"/v2/providers/openapi/apis/api/v5/vendors/{self._vendor_id}/ordersheets"
+        code, data = self.get(path_v5, params)
+        if code >= 500:
+            path_v4 = f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/ordersheets"
+            return self.get(path_v4, params)
+        return code, data
 
-    def get_order_detail(self, order_id: str) -> tuple[int, dict[str, Any]]:
-        """주문 상세 조회"""
-        return self.get(f"/v2/providers/openapi/apis/api/v1/vendors/{self._vendor_id}/orders/{order_id}")
+    def get_order_detail(self, order_sheet_id: str) -> tuple[int, dict[str, Any]]:
+        """발주서(주문) 단건 조회 (orderSheetId 기준)"""
+        # 공식 문서에서 보편적으로 사용되는 단건 조회 패턴.
+        return self.get(f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/ordersheets/{order_sheet_id}")
 
     def stop_delivery(self, invoice_no: str) -> tuple[int, dict[str, Any]]:
         """배송 중지 요청 (송장 번호 기준) - '출고 중지' 개념과 매핑됨"""
@@ -236,18 +268,29 @@ class CoupangClient:
         # 'register_invoice'(송장 등록) 구현에 집중함.
         pass
 
-    def register_invoice(self, order_sheet_id: str, delivery_company_code: str, invoice_no: str) -> tuple[int, dict[str, Any]]:
-        """송장 업로드 (배송지시)"""
-        # POST /v2/providers/openapi/apis/api/v1/vendors/{vendorId}/ordersheets/{orderSheetId}/history
-        # 쿠팡 송장 등록의 일반적인 패턴
-        payload = {
-            "vendorId": self._vendor_id,
-            "orderSheetId": order_sheet_id,
-            "deliveryCompanyCode": delivery_company_code,
-            "invoiceNumber": invoice_no,
-            "splitShipping": False # 기본값
+    def upload_invoices(self, order_sheet_invoice_apply_dtos: list[dict[str, Any]]) -> tuple[int, dict[str, Any]]:
+        """
+        송장 업로드(배송지시) - docs/api_docs/coupang/delivery_api.md 기준(v4).
+
+        Body 예시:
+        {
+          "vendorId": "...",
+          "orderSheetInvoiceApplyDtos": [
+            {
+              "shipmentBoxId": 123,
+              "orderId": 456,
+              "deliveryCompanyCode": "KDEXP",
+              "invoiceNumber": "0000",
+              "vendorItemId": 789,
+              "splitShipping": false,
+              "preSplitShipped": false,
+              "estimatedShippingDate": ""
+            }
+          ]
         }
-        return self.post(f"/v2/providers/openapi/apis/api/v1/vendors/{self._vendor_id}/ordersheets/{order_sheet_id}/history", payload)
+        """
+        payload = {"vendorId": self._vendor_id, "orderSheetInvoiceApplyDtos": order_sheet_invoice_apply_dtos}
+        return self.post(f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/orders/invoices", payload)
 
     # --------------------------------------------------------------------------
     # 4. 반품/교환 API (Return/Exchange API)

@@ -1,10 +1,11 @@
 import os
 import uuid
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from typing import List
 
 from supabase import create_client
 
@@ -14,13 +15,43 @@ from app.ownerclan_client import OwnerClanClient
 from app.ownerclan_sync import start_background_ownerclan_job
 from app.session_factory import session_factory
 from app.settings import settings
-from app.api.endpoints import sourcing, products, coupang
+from app.api.endpoints import sourcing, products, coupang, settings as settings_endpoint, suppliers as suppliers_endpoint, benchmarks
+from app.schemas.product import ProductResponse
 
 app = FastAPI()
 
 app.include_router(sourcing.router, prefix="/api/sourcing", tags=["Sourcing"])
+app.include_router(benchmarks.router, prefix="/api/benchmarks", tags=["Benchmarks"])
 app.include_router(products.router, prefix="/api/products", tags=["Products"]) 
 app.include_router(coupang.router, prefix="/api/coupang", tags=["Coupang"])
+app.include_router(settings_endpoint.router, prefix="/api/settings", tags=["Settings"])
+app.include_router(suppliers_endpoint.router, prefix="/api/suppliers", tags=["Suppliers"])
+
+# Next.js(/api/products) 경로 정규화로 인해 백엔드가 /api/products → /api/products/ 로 307 redirect를 내보내면
+# 브라우저가 8888 오리진으로 따라가며 CORS에 막혀 Axios가 Network Error가 날 수 있다.
+# 따라서 슬래시 없는 엔드포인트를 별칭(alias)로 제공해 redirect 자체를 제거한다.
+@app.get("/api/products", response_model=List[ProductResponse], include_in_schema=False)
+def list_products_alias(session: Session = Depends(get_session)):
+    return products.list_products(session=session)
+
+
+@app.get("/api/benchmarks", include_in_schema=False)
+def list_benchmarks_alias(
+    session: Session = Depends(get_session),
+    q: str | None = Query(default=None),
+    market_code: str | None = Query(default=None, alias="marketCode"),
+    order_by: str | None = Query(default=None, alias="orderBy"),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    return benchmarks.list_benchmarks(
+        session=session,
+        q=q,
+        market_code=market_code,
+        order_by=order_by,
+        limit=limit,
+        offset=offset,
+    )
 
 
 class EmbeddingIn(BaseModel):
@@ -39,7 +70,8 @@ class EmbeddingIn(BaseModel):
 def on_startup() -> None:
     with engine.begin() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-    Base.metadata.create_all(bind=engine)
+    if os.getenv("DB_AUTO_CREATE_TABLES", "").strip() in ("1", "true", "TRUE", "yes", "YES"):
+        Base.metadata.create_all(bind=engine)
 
 
 @app.get("/health")
@@ -128,7 +160,8 @@ def set_ownerclan_primary_account(payload: OwnerClanPrimaryAccountIn, session: S
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"오너클랜 토큰 발급 실패: {e}")
 
-    session.query(SupplierAccount).filter(SupplierAccount.supplier_code == "ownerclan").update({"is_primary": False})
+    # primary는 user_type 별로 유지합니다(seller/vendor 각각 1개씩 가능)
+    session.query(SupplierAccount).filter(SupplierAccount.supplier_code == "ownerclan").filter(SupplierAccount.user_type == user_type).update({"is_primary": False})
 
     existing = (
         session.query(SupplierAccount)
