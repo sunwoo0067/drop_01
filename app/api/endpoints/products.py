@@ -6,7 +6,7 @@ from typing import List
 import uuid
 
 from app.db import get_session
-from app.models import Product, SupplierItemRaw
+from app.models import Product, SupplierItemRaw, SourcingCandidate
 from app.schemas.product import ProductResponse
 from app.settings import settings
 
@@ -27,8 +27,12 @@ class ProductFromOwnerClanRawIn(BaseModel):
 @router.get("/stats")
 def get_product_stats(session: Session = Depends(get_session)):
     """상품 통계를 조회합니다."""
-    total = session.scalar(select(func.count(Product.id))) or 0
-    pending = session.scalar(select(func.count(Product.id)).where(Product.processing_status != "COMPLETED")) or 0
+    # Dashboard "Total" should reflect collected Raw Items
+    total = session.scalar(select(func.count(SupplierItemRaw.id))) or 0
+    
+    # "Pending" should reflect Sourced Candidates waiting for processing (User Request)
+    pending = session.scalar(select(func.count(SourcingCandidate.id)).where(SourcingCandidate.status == "PENDING")) or 0
+    
     completed = session.scalar(select(func.count(Product.id)).where(Product.processing_status == "COMPLETED")) or 0
     
     return {

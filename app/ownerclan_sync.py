@@ -1106,6 +1106,16 @@ def start_background_ownerclan_job(session_factory: Any, job_id: uuid.UUID) -> N
                 job.status = "succeeded"
                 job.finished_at = datetime.now(timezone.utc)
                 session.commit()
+                
+            # Trigger Sourcing Candidate Conversion (Best Effort)
+            try:
+                with session_factory() as session:
+                     from app.services.sourcing_service import SourcingService
+                     service = SourcingService(session)
+                     service.import_from_raw(limit=2000)
+            except Exception as cvt_e:
+                print(f"Warning: Failed to convert raw items to candidates: {cvt_e}")
+
         except Exception as e:
             with session_factory() as session:
                 job = session.get(SupplierSyncJob, job_id)

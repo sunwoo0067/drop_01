@@ -544,3 +544,16 @@ def get_ownerclan_category_raw(category_raw_id: uuid.UUID, session: Session = De
         "fetchedAt": _to_iso(category.fetched_at),
         "raw": category.raw,
     }
+@router.post("/ownerclan/import-raw")
+def trigger_import_raw_to_candidate(
+    limit: int = Query(1000, description="Max items to import"),
+    session: Session = Depends(get_session),
+) -> dict:
+    """
+    Manually triggers conversion of SupplierItemRaw to SourcingCandidate.
+    Useful for testing or recovering missed items.
+    """
+    from app.services.sourcing_service import SourcingService
+    service = SourcingService(session)
+    count = service.import_from_raw(limit=limit)
+    return {"status": "success", "imported_count": count}
