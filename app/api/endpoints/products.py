@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
@@ -25,13 +25,28 @@ class ProductFromOwnerClanRawIn(BaseModel):
     supplierItemRawId: uuid.UUID
 
 @router.get("/stats")
-def get_product_stats(session: Session = Depends(get_session)):
+def get_product_stats(
+    session: Session = Depends(get_session),
+    supplier_code: str = Query(default="ownerclan", alias="supplierCode"),
+):
     """상품 통계를 조회합니다."""
-    # Dashboard "Total" should reflect collected Raw Items
-    total = session.scalar(select(func.count(SupplierItemRaw.id))) or 0
+    # 대시보드 "전체"는 수집된 Raw 데이터 기준으로 집계합니다.
+    total = (
+        session.scalar(
+            select(func.count(SupplierItemRaw.id)).where(SupplierItemRaw.supplier_code == supplier_code)
+        )
+        or 0
+    )
     
-    # "Pending" should reflect Sourced Candidates waiting for processing (User Request)
-    pending = session.scalar(select(func.count(SourcingCandidate.id)).where(SourcingCandidate.status == "PENDING")) or 0
+    # "가공 대기"는 소싱 후보(PENDING) 기준으로 집계합니다.
+    pending = (
+        session.scalar(
+            select(func.count(SourcingCandidate.id))
+            .where(SourcingCandidate.supplier_code == supplier_code)
+            .where(SourcingCandidate.status == "PENDING")
+        )
+        or 0
+    )
     
     completed = session.scalar(select(func.count(Product.id)).where(Product.processing_status == "COMPLETED")) or 0
     
@@ -53,7 +68,7 @@ def get_product(product_id: uuid.UUID, session: Session = Depends(get_session)):
     """단일 상품 정보를 조회합니다."""
     product = session.get(Product, product_id)
     if not product:
-        raise HTTPException(status_code=404, detail="상품을 찾을 수 없습니다.") # Korean Error Message
+        raise HTTPException(status_code=404, detail="상품을 찾을 수 없습니다.") # 한국어 오류 메시지
     return product
 
 

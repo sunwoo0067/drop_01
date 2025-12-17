@@ -3,6 +3,7 @@ from typing import List, Optional
 import uuid
 from sqlalchemy.orm import Session
 from sqlalchemy import select, or_, desc
+from sqlalchemy.dialects.postgresql import insert
 
 from app.models import Product, SourcingCandidate, BenchmarkProduct, SupplierItemRaw, SupplierAccount
 from app.ownerclan_client import OwnerClanClient
@@ -209,7 +210,7 @@ class SourcingService:
             status="PENDING"
         )
         
-        # Optimize SEO immediately? Or lazy load. Let's do lazy for performance.
+        # SEO 최적화는 즉시 수행할지/지연 처리할지 고민 가능하나, 성능을 위해 지연 처리합니다.
         self.db.add(candidate)
         self.db.commit()
         logger.info(f"Created candidate: {candidate.name}")
@@ -220,17 +221,8 @@ class SourcingService:
         Useful for bulk collection where data lands in raw table first.
         """
         logger.info("Starting bulk import from SupplierItemRaw...")
-        
-        # 1. Fetch existing IDs from Dropship DB
-        # Note: Cross-DB joins are not supported, so we fetch existing IDs into memory.
-        existing_ids = set(
-            self.db.scalars(
-                select(SourcingCandidate.supplier_item_id)
-                .where(SourcingCandidate.supplier_code == "ownerclan")
-            ).all()
-        )
-        
-        # 2. Fetch raw items from Source DB
+
+        # 1. Fetch raw items from Source DB
         # We fetch decent amount of latest items and filter in memory
         stmt = (
             select(SupplierItemRaw)
@@ -244,11 +236,10 @@ class SourcingService:
         
         for raw in raw_items:
             try:
-                # Check if already exists (Application-side Join)
-                if not raw.item_code or raw.item_code in existing_ids:
+                if not raw.item_code:
                     continue
 
-                data = raw.raw
+                data = raw.raw if isinstance(raw.raw, dict) else {}
                 name = data.get("item_name") or data.get("name") or data.get("itemName") or "Unknown"
                 
                 supply_price = self._to_int(
@@ -257,28 +248,27 @@ class SourcingService:
                     or data.get("fixedPrice")
                     or data.get("price")
                 ) or 0
-                
-                # Check if we already added it in this transaction context
-                if raw.item_code in existing_ids:
-                    continue
 
-                # Create Candidate
-                candidate = SourcingCandidate(
-                    supplier_code="ownerclan",
-                    supplier_item_id=str(raw.item_code),
-                    name=str(name),
-                    supply_price=int(supply_price),
-                    source_strategy="BULK_COLLECT",
-                    status="PENDING"
+                insert_stmt = (
+                    insert(SourcingCandidate.__table__)
+                    .values(
+                        supplier_code="ownerclan",
+                        supplier_item_id=str(raw.item_code),
+                        name=str(name),
+                        supply_price=int(supply_price),
+                        source_strategy="BULK_COLLECT",
+                        status="PENDING",
+                    )
+                    .on_conflict_do_nothing()
                 )
-                self.db.add(candidate)
-                
-                existing_ids.add(raw.item_code) # Mark as added
-                count += 1
-                
+
+                result = self.db.execute(insert_stmt)
+                if result.rowcount:
+                    count += int(result.rowcount)
+
                 if count >= limit:
                     break
-                    
+
             except Exception as e:
                 logger.error(f"Error converting raw item {raw.id}: {e}")
                 

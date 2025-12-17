@@ -5,6 +5,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import logging
 from typing import Any
 
 from sqlalchemy.dialects.postgresql import insert
@@ -22,6 +23,9 @@ from app.models import (
 )
 from app.ownerclan_client import OwnerClanClient
 from app.settings import settings
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -1110,11 +1114,11 @@ def start_background_ownerclan_job(session_factory: Any, job_id: uuid.UUID) -> N
             # Trigger Sourcing Candidate Conversion (Best Effort)
             try:
                 with session_factory() as session:
-                     from app.services.sourcing_service import SourcingService
-                     service = SourcingService(session)
-                     service.import_from_raw(limit=2000)
+                    from app.services.sourcing_service import SourcingService
+                    service = SourcingService(session)
+                    service.import_from_raw(limit=2000)
             except Exception as cvt_e:
-                print(f"Warning: Failed to convert raw items to candidates: {cvt_e}")
+                logger.warning(f"Raw 데이터를 소싱 후보로 변환하는 중 오류가 발생했습니다: {cvt_e}")
 
         except Exception as e:
             with session_factory() as session:
