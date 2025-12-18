@@ -229,20 +229,28 @@ def sync_coupang_orders_raw(
     return total_processed
 
 
-def _log_fetch(
-    session: Session, 
-    account: MarketAccount, 
-    endpoint: str, 
-    request_payload: Any, 
-    status: int, 
-    response_payload: Any
-) -> None:
-    # 기존 SupplierRawFetchLog를 재사용하거나 MarketRawFetchLog를 새로 생성해야 할까요?
-    # 스키마 계획에서는 SupplierRawFetchLog만 언급되었습니다.
-    # 당장은 DB 로깅을 건너뛰거나 'COUPANG' 코드로 Supplier 테이블을 재사용하는 것이 좋겠습니다.
-    # SupplierRawFetchLog에는 'account_id'가 있지만 SupplierAccount를 의미할 수 있습니다.
-    # 스키마를 고려할 때, MarketRawFetchLog를 추가하기 전까지는 stdout/logger에만 로깅하는 편이 낫습니다.
-    pass
+def _log_fetch(session: Session, account: MarketAccount, endpoint: str, payload: dict, code: int, data: dict):
+    """
+    API 통신 결과를 SupplierRawFetchLog 테이블에 기록합니다.
+    트랜잭션 롤백 시 로그가 소실되지 않도록 새 세션을 사용합니다.
+    """
+    try:
+        from app.db import SessionLocal
+        with SessionLocal() as log_session:
+            log = SupplierRawFetchLog(
+                supplier_code="COUPANG", # 마켓 로그도 일단 여기 기록
+                account_id=account.id,
+                endpoint=endpoint,
+                request_payload=payload if isinstance(payload, dict) else {"_raw": payload},
+                http_status=code,
+                response_payload=data if isinstance(data, dict) else {"_raw": data},
+                error_message=data.get("message") if isinstance(data, dict) else None,
+                fetched_at=datetime.now(timezone.utc)
+            )
+            log_session.add(log)
+            log_session.commit()
+    except Exception as e:
+        logger.warning(f"API 로그 기록 실패: {e}")
 
 
 def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.UUID) -> tuple[bool, str | None]:
@@ -412,6 +420,162 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
     
     logger.info(f"상품 등록 성공 (ID: {product.id}, sellerProductId: {seller_product_id})")
     return True, None
+
+
+def delete_product_from_coupang(session: Session, account_id: uuid.UUID, seller_product_id: str) -> tuple[bool, str | None]:
+    """
+    쿠팡에서 상품을 삭제합니다. 
+    먼저 모든 아이템을 판매중지 처리한 후 삭제를 시도합니다.
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account:
+        return False, "계정을 찾을 수 없습니다"
+    
+    try:
+        client = _get_client_for_account(account)
+        
+        # 1. 현재 상품 정보 조회하여 vendorItemIds 확보
+        code, data = client.get_product(seller_product_id)
+        if code != 200:
+            return False, f"상품 조회 실패: {data.get('message', '알 수 없는 오류')}"
+        
+        items = data.get("data", {}).get("items", [])
+        for item in items:
+            vendor_item_id = item.get("vendorItemId")
+            if vendor_item_id:
+                # 판매 중지 시도 (이미 중지된 경우 무시될 수 있음)
+                client.stop_sales(str(vendor_item_id))
+        
+        # 2. 삭제 시도
+        code, data = client.delete_product(seller_product_id)
+        _log_fetch(session, account, f"delete_product/{seller_product_id}", {}, code, data)
+        
+        if code == 200 and data.get("code") == "SUCCESS":
+            # MarketListing 삭제 처리
+            from sqlalchemy import delete
+            session.execute(
+                delete(MarketListing)
+                .where(MarketListing.market_account_id == account.id)
+                .where(MarketListing.market_item_id == seller_product_id)
+            ) # TODO: DELETE stmt
+            session.commit()
+            return True, None
+        else:
+            return False, f"삭제 실패: {data.get('message', '알 수 없는 오류')}"
+            
+    except Exception as e:
+        session.rollback()
+        logger.error(f"쿠팡 상품 삭제 중 예외 발생: {e}")
+        return False, str(e)
+
+
+def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_id: uuid.UUID) -> tuple[bool, str | None]:
+    """
+    쿠팡에 등록된 상품 정보를 내부 Product 기준으로 업데이트합니다.
+    """
+    account = session.get(MarketAccount, account_id)
+    product = session.get(Product, product_id)
+    if not account or not product:
+        return False, "계정 또는 상품을 찾을 수 없습니다"
+    
+    listing = session.execute(
+        select(MarketListing)
+        .where(MarketListing.market_account_id == account.id)
+        .where(MarketListing.product_id == product.id)
+    ).scalars().first()
+    
+    if not listing:
+        return False, "쿠팡에 등록된 리스팅 정보를 찾을 수 없습니다(먼저 등록 필요)"
+        
+    try:
+        client = _get_client_for_account(account)
+        
+        # 기본 정보 조회 (센터 정보 등)
+        return_center_code, outbound_center_code, delivery_company_code, _debug = _get_default_centers(client, account, session)
+        
+        # TODO: 현재는 _map_product_to_coupang_payload가 create_product용 payload를 생성함.
+        # update_product용으로 path 분기가 필요할 수 있음 (아이템 내에 vendorItemId 포함 등)
+        # 하지만 쿠팡 API 가이드에 따르면 전체 전문을 보내는 것이 일반적임.
+        
+        # 상세 조회를 통해 기존 vendorItemId 확보 필요
+        code, current_data = client.get_product(listing.market_item_id)
+        if code != 200:
+            return False, f"쿠팡 상품 정보 조회 실패: {current_data.get('message')}"
+            
+        current_data_obj = current_data.get("data", {})
+        current_items = current_data_obj.get("items", [])
+        
+        # 반품지 상세 정보 조회 (고시정보/주소 보완용)
+        # register_product 와 동일한 로직 적용
+        r_code, r_data = client.get_return_shipping_center_by_code(str(return_center_code))
+        return_center_detail = None
+        if r_code == 200 and isinstance(r_data, dict) and isinstance(r_data.get("data"), list) and r_data["data"]:
+            item0 = r_data["data"][0] if isinstance(r_data["data"][0], dict) else {}
+            addr0 = None
+            addrs = item0.get("placeAddresses")
+            if isinstance(addrs, list) and addrs and isinstance(addrs[0], dict):
+                addr0 = addrs[0]
+            return_center_detail = {
+                "shippingPlaceName": item0.get("shippingPlaceName"),
+                "returnZipCode": (addr0.get("returnZipCode") if isinstance(addr0, dict) else None),
+                "returnAddress": (addr0.get("returnAddress") if isinstance(addr0, dict) else None),
+                "returnAddressDetail": (addr0.get("returnAddressDetail") if isinstance(addr0, dict) else None),
+                "companyContactNumber": (addr0.get("companyContactNumber") if isinstance(addr0, dict) else None),
+            }
+        
+        # 상품 고시정보(notices)를 위한 메타데이터 조회
+        predicted_category_code = current_data_obj.get("displayCategoryCode", 77800)
+        n_code, n_data = client.get_category_meta(str(predicted_category_code))
+        notice_meta = n_data.get("data") if n_code == 200 else None
+
+        shipping_fee = 0
+        try:
+            if product.supplier_item_id:
+                raw_item = session.get(SupplierItemRaw, product.supplier_item_id)
+                raw = raw_item.raw if raw_item and isinstance(raw_item.raw, dict) else {}
+                v = raw.get("shippingFee")
+                if isinstance(v, (int, float)):
+                    shipping_fee = int(v)
+                elif isinstance(v, str):
+                    s = "".join([c for c in v.strip() if c.isdigit()])
+                    if s:
+                        shipping_fee = int(s)
+        except Exception as e:
+            logger.warning(f"오너클랜 배송비 추출 실패: {e}")
+        
+        # Payload 생성
+        payload = _map_product_to_coupang_payload(
+            product,
+            account,
+            return_center_code,
+            outbound_center_code,
+            predicted_category_code=predicted_category_code,
+            return_center_detail=return_center_detail,
+            notice_meta=notice_meta,
+            shipping_fee=shipping_fee,
+            delivery_company_code=delivery_company_code
+        )
+        
+        payload["sellerProductId"] = int(listing.market_item_id)
+        
+        # 기존 옵션(아이템)의 vendorItemId 매핑
+        if "items" in payload and len(payload["items"]) > 0 and len(current_items) > 0:
+            # Drop01은 단일 옵션 가정
+            payload["items"][0]["vendorItemId"] = current_items[0].get("vendorItemId")
+        
+        code, data = client.update_product(payload)
+        _log_fetch(session, account, "update_product", payload, code, data)
+        
+        if code == 200 and data.get("code") == "SUCCESS":
+            session.commit()
+            return True, None
+        else:
+            return False, f"업데이트 실패: {data.get('message', '알 수 없는 오류')}"
+            
+    except Exception as e:
+        session.rollback()
+        logger.error(f"쿠팡 상품 업데이트 중 예외 발생: {e}")
+        return False, str(e)
 
 
 def register_products_bulk(session: Session, account_id: uuid.UUID, product_ids: list[uuid.UUID] | None = None) -> dict[str, int]:

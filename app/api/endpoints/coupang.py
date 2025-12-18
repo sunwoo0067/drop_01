@@ -355,6 +355,50 @@ async def register_product_endpoint(
     return {"status": "accepted", "message": "쿠팡 상품 등록 작업이 시작되었습니다."}
 
 
+@router.put("/products/{product_id}", status_code=200)
+def update_coupang_product_endpoint(
+    product_id: uuid.UUID,
+    session: Session = Depends(get_session),
+):
+    """
+    내부 Product 정보를 기반으로 쿠팡에 이미 등록된 상품을 업데이트합니다.
+    """
+    stmt = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
+    account = session.scalars(stmt).first()
+    if not account:
+        raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
+
+    from app.coupang_sync import update_product_on_coupang
+    success, reason = update_product_on_coupang(session, account.id, product_id)
+    
+    if not success:
+        raise HTTPException(status_code=400, detail=f"수정 실패: {reason}")
+    
+    return {"status": "success", "message": "상품 정보가 업데이트되었습니다."}
+
+
+@router.delete("/products/{seller_product_id}", status_code=200)
+def delete_coupang_product_endpoint(
+    seller_product_id: str,
+    session: Session = Depends(get_session),
+):
+    """
+    쿠팡에서 상품을 삭제합니다. (모든 아이템 판매중지 후 삭제)
+    """
+    stmt = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
+    account = session.scalars(stmt).first()
+    if not account:
+        raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
+
+    from app.coupang_sync import delete_product_from_coupang
+    success, reason = delete_product_from_coupang(session, account.id, seller_product_id)
+    
+    if not success:
+        raise HTTPException(status_code=400, detail=f"삭제 실패: {reason}")
+    
+    return {"status": "success", "message": "상품이 쿠팡에서 삭제되었습니다."}
+
+
 def execute_bulk_coupang_registration(
     account_id: uuid.UUID,
     product_ids: list[uuid.UUID] | None,
