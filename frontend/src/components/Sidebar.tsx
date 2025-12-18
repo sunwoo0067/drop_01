@@ -8,18 +8,12 @@ import {
     Search,
     Settings,
     Bot,
-    BarChart3,
-    Download,
-    Database,
     ChevronLeft,
     ChevronRight,
-    LogOut,
-    User,
     ShoppingBag
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/Button";
 
 const menuItems = [
     { name: "대시보드", href: "/", icon: LayoutDashboard },

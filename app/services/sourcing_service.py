@@ -213,8 +213,8 @@ class SourcingService:
             benchmark_product_id=benchmark_id,
             seasonal_score=seasonal_score,
             margin_score=margin_score,
-            spec_data: spec_data,
-            thumbnail_url: thumbnail_url,
+            spec_data=spec_data,
+            thumbnail_url=thumbnail_url,
             status="PENDING"
         )
         
