@@ -791,7 +791,7 @@ def _get_default_centers(client: CoupangClient, account: MarketAccount | None = 
                     delivery_company_code = str(first_code_entry)
             
             if not delivery_company_code:
-                logger.warning(f"지원 택배사 목록이 비어있거나 코드를 추출할 수 없습니다. 기본값 {delivery_company_code}를 사용합니다. (outbound_code={outbound_code})")
+                logger.warning(f"지원 택배사 목록이 비어있거나 코드를 추출할 수 없습니다. 기본값 KDEXP를 사용합니다. (outbound_code={outbound_code})")
                 delivery_company_code = "KDEXP"
         else:
             logger.warning(f"출고지 정보에 택배사 데이터가 없습니다. 기본값 {delivery_company_code}를 사용합니다. (outbound_code={outbound_code})")
