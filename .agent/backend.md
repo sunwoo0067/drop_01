@@ -1,23 +1,36 @@
-# Backend Documentation
+# 백엔드 (FastAPI)
 
-## 🛰️ Architecture & Stack
-- **Framework**: FastAPI (Asynchronous)
-- **Database Architecture**:
-  - `Source`: Raw data collection
-  - `Dropship`: Core business logic and processed data
-  - `Market`: Market-specific synchronized data
-- **ORM**: SQLAlchemy 2.0 (with `get_session` dependency)
-- **Logging**: `structlog`을 사용한 구조화된 로깅 (Key-Value 형식)
-- **Authentication**: Supabase Auth & JWT
+`app/` 내 비즈니스 로직과 API 연동을 담당합니다.
 
-## 🛠️ Key Components
-- `app/coupang_client.py`: 쿠팡 API 연동 클라이언트
-- `app/ownerclan_client.py`: 오너클랜 API 연동 클라이언트
-- `app/services/`: 비즈니스 로직 처리 서비스 레이어
-- `app/models.py`: SQLAlchemy 모델 정의
+## 아키텍처 및 스택
+- **Framework**: FastAPI
+- **ORM**: SQLAlchemy 2
+- **DB 구조**: PostgreSQL 3중 분리
+  - **Source**: 공급사 Raw 수집
+  - **Dropship**: Product/가공/비즈니스 도메인
+  - **Market**: 마켓 동기화/리스팅/주문 Raw
 
-## 📝 Backend Guidelines
-- **Logging**: `logger.info("message", key="value")` 형식을 권장합니다.
-- **Transactions**: 데이터 변경 작업 시 `@transactional` 데코레이터 또는 세션 관리에 유의합니다.
-- **Async**: API 엔드포인트는 가급적 `async def`를 사용하고, 블로킹 작업은 `BackgroundTasks`를 활용합니다.
-- **Pydantic**: 모든 요청/응답 모델은 `app/schemas/`에 정의하고 타입을 명시합니다.
+## 멀티 DB 세션 바인딩 규칙
+- `app/db.py`의 `get_session`은 모델 Base(`SourceBase`, `DropshipBase`, `MarketBase`)에 따라 **자동으로 엔진이 바인딩**됩니다.
+- **중요**: 서로 다른 DB의 테이블을 ORM `relationship`로 바로 엮지 않습니다.
+  - 예: Product(Dropship) ↔ MarketListing(Market)은 **별도 조회 후 응답에서 합치기** 방식으로 처리합니다.
+- PR #20 보강: `GET /api/products/` 및 `GET /api/products/{id}`에서 `market_listings`를 별도 조회 후 `ProductResponse`로 합쳐 내려줍니다.
+
+## 외부 API 연동 규칙
+- **클라이언트**: `CoupangClient`, `OwnerClanClient` 사용 시 예외 처리를 필수 적용합니다.
+- **에러 처리/로그**: 실패 시 HTTP 상태 코드와 메시지를 포함해 한국어로 남깁니다.
+
+## PR #20 관련 핵심 기능
+- **MarketListing 필드 추가**: `coupang_status`, `rejection_reason(JSONB)`
+- **상태 동기화 엔드포인트**: `POST /api/coupang/sync-status/{product_id}`
+- **상품 목록 응답 보강**: `ProductResponse.market_listings` 포함
+
+## 로컬/CI 검증 팁
+- 이 환경에서는 `python`이 Windows Python으로 연결될 수 있어, 로컬 검증은 가능하면 `.venv/bin/python ...` 사용을 권장합니다.
+- CI는 아래를 수행합니다.
+  - **Backend**: ruff(F821) + `python -m compileall app scripts`
+  - **Frontend**: `npm run lint` + `npm run build`
+
+## 307 Redirect(Next.js) 주의
+- Next.js 경로 정규화로 `/api/products` → `/api/products/` 리다이렉트가 발생하면 CORS/Network Error가 날 수 있습니다.
+- 따라서 `app/main.py`에 **슬래시 없는 alias 라우트**를 유지합니다.
