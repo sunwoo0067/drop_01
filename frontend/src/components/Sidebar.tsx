@@ -16,7 +16,9 @@ import {
     Wand2,
     BarChart3,
     Download,
-    Database
+    Database,
+    Upload,
+    Store
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -34,6 +36,8 @@ const menuGroups = [
         items: [
             { name: "상품 관리", href: "/products", icon: Package },
             { name: "상품 가공", href: "/processing", icon: Wand2 },
+            { name: "상품 등록", href: "/registration", icon: Upload },
+            { name: "마켓 상품", href: "/market-products", icon: Store },
             { name: "상품 소싱", href: "/sourcing", icon: Search },
             { name: "벤치마크", href: "/benchmarks", icon: BarChart3 },
         ]
@@ -58,6 +62,7 @@ const menuGroups = [
         ]
     }
 ];
+
 
 export default function Sidebar() {
     const pathname = usePathname();
