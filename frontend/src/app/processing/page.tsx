@@ -19,7 +19,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/componen
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
-import { api } from "@/lib/api";
+import api from "@/lib/api";
 import { Product } from "@/types";
 import { cn } from "@/lib/utils";
 

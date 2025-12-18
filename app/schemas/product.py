@@ -11,6 +11,7 @@ class ProductResponse(BaseModel):
     selling_price: int
     processing_status: str
     processed_image_urls: Optional[List[str]] = None
+    processed_keywords: Optional[List[str]] = None
     status: str
     created_at: datetime
     
