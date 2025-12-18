@@ -4,8 +4,10 @@ import logging
 import uuid
 from typing import Any
 from datetime import datetime, timezone
+import os
 
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 
@@ -33,10 +35,14 @@ def _get_client_for_account(account: MarketAccount) -> CoupangClient:
     if not creds:
         raise ValueError(f"Account {account.name} has no credentials")
     
+    access_key = str(creds.get("access_key", "") or "").strip()
+    secret_key = str(creds.get("secret_key", "") or "").strip()
+    vendor_id = str(creds.get("vendor_id", "") or "").strip()
+
     return CoupangClient(
-        access_key=creds.get("access_key", ""),
-        secret_key=creds.get("secret_key", ""),
-        vendor_id=creds.get("vendor_id", "")
+        access_key=access_key,
+        secret_key=secret_key,
+        vendor_id=vendor_id,
     )
 
 
@@ -239,7 +245,7 @@ def _log_fetch(
     pass
 
 
-def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.UUID) -> bool:
+def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.UUID) -> tuple[bool, str | None]:
     """
     쿠팡에 상품을 등록합니다.
     성공 시 True, 실패 시 False를 반환합니다.
@@ -247,52 +253,128 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
     account = session.get(MarketAccount, account_id)
     if not account or account.market_code != "COUPANG":
         logger.error(f"쿠팡 등록을 위한 계정이 유효하지 않습니다: {account_id}")
-        return False
+        return False, "쿠팡 등록을 위한 계정이 유효하지 않습니다"
         
     product = session.get(Product, product_id)
     if not product:
         logger.error(f"상품을 찾을 수 없습니다: {product_id}")
-        return False
+        return False, "상품을 찾을 수 없습니다"
+
+    processed_images = product.processed_image_urls if isinstance(product.processed_image_urls, list) else []
+    if len(processed_images) < 5:
+        logger.error(
+            f"쿠팡 등록을 위해서는 가공 이미지가 최소 5장 필요합니다(productId={product.id}, images={len(processed_images)})"
+        )
+        return False, f"쿠팡 등록을 위해서는 가공 이미지가 최소 5장 필요합니다(images={len(processed_images)})"
 
     try:
         client = _get_client_for_account(account)
     except Exception as e:
         logger.error(f"클라이언트 초기화 실패: {e}")
-        return False
+        return False, f"클라이언트 초기화 실패: {e}"
 
     # 1. 데이터 준비
     # 설정에 제공되지 않은 경우 센터 코드를 자동 감지합니다 (현재는 첫 번째 사용 가능한 센터 조회)
-    return_center_code, outbound_center_code = _get_default_centers(client)
+    return_center_code, outbound_center_code, centers_debug = _get_default_centers(client, account=account, session=session)
     if not return_center_code or not outbound_center_code:
-        logger.error("반품/출고지 센터 코드를 확인할 수 없습니다.")
-        return False
+        logger.error(f"반품/출고지 센터 코드를 확인할 수 없습니다. {centers_debug}")
+        return False, f"반품/출고지 센터 코드 조회 실패: {centers_debug}"
 
     # 기본 매핑
     # 1.5 카테고리 예측
     predicted_category_code = 77800 # 기본값 (기타/미분류 등)
     try:
+        if os.getenv("COUPANG_ENABLE_CATEGORY_PREDICTION", "0") != "1":
+            raise RuntimeError("카테고리 예측 비활성화(COUPANG_ENABLE_CATEGORY_PREDICTION != 1)")
+
+        agreed = False
+        try:
+            agreed_http, agreed_data = client.check_auto_category_agreed(str(account.credentials.get("vendor_id") or "").strip())
+            if agreed_http == 200 and isinstance(agreed_data, dict) and agreed_data.get("code") == "SUCCESS":
+                agreed = bool(agreed_data.get("data"))
+            else:
+                logger.warning(
+                    f"카테고리 자동매칭 동의 여부 확인 실패: HTTP={agreed_http}, 응답={agreed_data}"
+                )
+        except Exception as e:
+            logger.warning(f"카테고리 자동매칭 동의 여부 확인 중 오류 발생: {e}")
+
         # 가공된 이름 명 또는 원본 이름 사용
         pred_name = product.processed_name or product.name
-        code, pred_data = client.predict_category(pred_name)
-        if code == 200 and pred_data.get("code") == "SUCCESS":
-             # 응답 구조: data -> predictedCategoryCode (문서/경험 기반 추정)
-             # 실제 응답이 {"data": {"predictedCategoryCode": "12345", ...}} 형태라고 가정
-             # 혹은 {"data": "12345"} 일 수도 있음. 가장 안전한 파싱 필요.
-             # 보통 쿠팡 응답은 `data` 필드에 결과를 담음.
-             resp_data = pred_data.get("data")
-             if isinstance(resp_data, dict) and "predictedCategoryCode" in resp_data:
-                 predicted_category_code = int(resp_data["predictedCategoryCode"])
-                 logger.info(f"카테고리 예측 성공: {pred_name} -> {predicted_category_code}")
-             elif isinstance(resp_data, (str, int)):
-                 # 만약 data 자체가 코드라면
-                 predicted_category_code = int(resp_data)
-                 logger.info(f"카테고리 예측 성공 (Direct): {pred_name} -> {predicted_category_code}")
+        if not agreed:
+            logger.info("카테고리 자동매칭 서비스 미동의로 예측을 건너뜁니다(기본 카테고리 사용)")
         else:
-            logger.warning(f"카테고리 예측 실패: Code {code}, Msg {pred_data}")
+            code, pred_data = client.predict_category(pred_name)
+            if code == 200 and pred_data.get("code") == "SUCCESS":
+                 # 응답 구조: data -> predictedCategoryCode (문서/경험 기반 추정)
+                 # 실제 응답이 {"data": {"predictedCategoryCode": "12345", ...}} 형태라고 가정
+                 # 혹은 {"data": "12345"} 일 수도 있음. 가장 안전한 파싱 필요.
+                 # 보통 쿠팡 응답은 `data` 필드에 결과를 담음.
+                 resp_data = pred_data.get("data")
+                 if isinstance(resp_data, dict) and "predictedCategoryCode" in resp_data:
+                     predicted_category_code = int(resp_data["predictedCategoryCode"])
+                     logger.info(f"카테고리 예측 성공: {pred_name} -> {predicted_category_code}")
+                 elif isinstance(resp_data, (str, int)):
+                     # 만약 data 자체가 코드라면
+                     predicted_category_code = int(resp_data)
+                     logger.info(f"카테고리 예측 성공 (Direct): {pred_name} -> {predicted_category_code}")
+            else:
+                logger.warning(f"카테고리 예측 실패: Code {code}, Msg {pred_data}")
     except Exception as e:
-        logger.warning(f"카테고리 예측 중 오류 발생: {e}")
+        logger.info(f"카테고리 예측 스킵/실패: {e}")
 
-    payload = _map_product_to_coupang_payload(product, account, return_center_code, outbound_center_code, predicted_category_code)
+    notice_meta: dict[str, Any] | None = None
+    try:
+        meta_http, meta_data = client.get_category_meta(str(predicted_category_code))
+        if meta_http == 200 and isinstance(meta_data, dict) and isinstance(meta_data.get("data"), dict):
+            notice_meta = meta_data["data"]
+    except Exception as e:
+        logger.warning(f"카테고리 메타 조회 중 오류 발생: {e}")
+
+    return_center_detail: dict[str, Any] | None = None
+    try:
+        _rc, _rd = client.get_return_shipping_center_by_code(str(return_center_code))
+        if _rc == 200 and isinstance(_rd, dict) and isinstance(_rd.get("data"), list) and _rd["data"]:
+            item0 = _rd["data"][0] if isinstance(_rd["data"][0], dict) else {}
+            addr0 = None
+            addrs = item0.get("placeAddresses")
+            if isinstance(addrs, list) and addrs and isinstance(addrs[0], dict):
+                addr0 = addrs[0]
+            return_center_detail = {
+                "shippingPlaceName": item0.get("shippingPlaceName"),
+                "returnZipCode": (addr0.get("returnZipCode") if isinstance(addr0, dict) else None),
+                "returnAddress": (addr0.get("returnAddress") if isinstance(addr0, dict) else None),
+                "returnAddressDetail": (addr0.get("returnAddressDetail") if isinstance(addr0, dict) else None),
+                "companyContactNumber": (addr0.get("companyContactNumber") if isinstance(addr0, dict) else None),
+            }
+    except Exception as e:
+        logger.warning(f"반품지 상세 조회 중 오류 발생: {e}")
+
+    shipping_fee = 0
+    try:
+        if product.supplier_item_id:
+            raw_item = session.get(SupplierItemRaw, product.supplier_item_id)
+            raw = raw_item.raw if raw_item and isinstance(raw_item.raw, dict) else {}
+            v = raw.get("shippingFee")
+            if isinstance(v, (int, float)):
+                shipping_fee = int(v)
+            elif isinstance(v, str):
+                s = "".join([c for c in v.strip() if c.isdigit()])
+                if s:
+                    shipping_fee = int(s)
+    except Exception as e:
+        logger.warning(f"오너클랜 배송비 추출 실패: {e}")
+
+    payload = _map_product_to_coupang_payload(
+        product,
+        account,
+        return_center_code,
+        outbound_center_code,
+        predicted_category_code,
+        return_center_detail,
+        notice_meta,
+        shipping_fee,
+    )
     
     # 2. API 호출
     code, data = client.create_product(payload)
@@ -301,10 +383,12 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
     # 성공 조건: HTTP 200 이면서 body의 code가 SUCCESS
     if code != 200 or data.get("code") != "SUCCESS":
         logger.error(f"상품 생성 실패 (ID: {product.id}). HTTP: {code}, Msg: {data}")
-        # 처리 상태 업데이트
-        product.processing_status = "FAILED"
-        session.commit()
-        return False
+        msg = None
+        if isinstance(data, dict):
+            msg = data.get("message")
+        msg_s = str(msg) if msg is not None else ""
+        msg_s = msg_s.replace("\n", " ")
+        return False, f"상품 생성 실패(HTTP={code}, code={data.get('code')}, message={msg_s[:300]})"
 
     # 3. 성공 처리
     # data['data']에 sellerProductId (등록상품ID)가 포함됨
@@ -327,7 +411,60 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
     session.commit()
     
     logger.info(f"상품 등록 성공 (ID: {product.id}, sellerProductId: {seller_product_id})")
-    return True
+    return True, None
+
+
+def register_products_bulk(session: Session, account_id: uuid.UUID, product_ids: list[uuid.UUID] | None = None) -> dict[str, int]:
+    """
+    Register multiple products to Coupang.
+    If product_ids is None, processes all candidates (DRAFT status + COMPLETED processing).
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account or account.market_code != "COUPANG":
+        logger.error(f"Invalid account for bulk registration: {account_id}")
+        return {"total": 0, "success": 0, "failed": 0}
+
+    # Select candidates
+    stmt = select(Product).where(Product.status == "DRAFT").where(Product.processing_status == "COMPLETED")
+    
+    if product_ids:
+        stmt = stmt.where(Product.id.in_(product_ids))
+        
+    products = session.scalars(stmt).all()
+    
+    total = len(products)
+    success = 0
+    failed = 0
+    
+    logger.info(f"Starting bulk registration for {total} products on account {account.name}")
+    
+    for p in products:
+        # Check if already listed (defensive)
+        listing = session.execute(
+            select(MarketListing)
+            .where(MarketListing.market_account_id == account.id)
+            .where(MarketListing.product_id == p.id)
+        ).scalars().first()
+        
+        if listing:
+            logger.info(f"Product {p.id} already linked to {listing.market_item_id}, skipping.")
+            # Optionally update status to ACTIVE if stuck in DRAFT
+            if p.status == "DRAFT":
+                p.status = "ACTIVE"
+                session.commit()
+            continue
+
+        ok, _reason = register_product(session, account.id, p.id)
+        if ok:
+            success += 1
+            # Update status to ACTIVE after successful registration
+            p.status = "ACTIVE" 
+            session.commit()
+        else:
+            failed += 1
+            
+    logger.info(f"Bulk registration finished. Total: {total}, Success: {success}, Failed: {failed}")
+    return {"total": total, "success": success, "failed": failed}
 
 
 def fulfill_coupang_orders_via_ownerclan(
@@ -584,24 +721,70 @@ def fulfill_coupang_orders_via_ownerclan(
     }
 
 
-def _get_default_centers(client: CoupangClient) -> tuple[str | None, str | None]:
+def _get_default_centers(client: CoupangClient, account: MarketAccount | None = None, session: Session | None = None) -> tuple[str | None, str | None, str]:
     """
     첫 번째로 사용 가능한 반품지 및 출고지 센터 코드를 조회합니다.
     Returns (return_center_code, outbound_center_code)
     """
+    if account is not None and isinstance(account.credentials, dict):
+        cached_return = account.credentials.get("default_return_center_code")
+        cached_outbound = account.credentials.get("default_outbound_shipping_place_code")
+        if cached_return and cached_outbound:
+            return str(cached_return), str(cached_outbound), "cached(사용)"
+
+    def _extract_msg(rc: int, data: dict[str, Any]) -> str:
+        code = None
+        msg = None
+        if isinstance(data, dict):
+            code = data.get("code")
+            msg = data.get("message") or data.get("msg")
+        return f"http={rc}, code={code}, message={msg}"
+
+    def _extract_first_code(data: dict[str, Any], keys: list[str]) -> str | None:
+        if not isinstance(data, dict):
+            return None
+
+        data_obj = data.get("data") if isinstance(data.get("data"), dict) else None
+        if isinstance(data_obj, dict):
+            content = data_obj.get("content") if isinstance(data_obj.get("content"), list) else None
+            if content and isinstance(content[0], dict):
+                for k in keys:
+                    v = content[0].get(k)
+                    if v is not None:
+                        return str(v)
+
+        content2 = data.get("content") if isinstance(data.get("content"), list) else None
+        if content2 and isinstance(content2[0], dict):
+            for k in keys:
+                v = content2[0].get(k)
+                if v is not None:
+                    return str(v)
+
+        return None
+
     # 출고지 (Outbound)
-    rc, data = client.get_outbound_shipping_centers(page_size=1)
-    outbound_code = None
-    if rc == 200 and data.get("data") and data["data"].get("content"):
-        outbound_code = str(data["data"]["content"][0]["outboundShippingPlaceCode"])
+    outbound_rc, outbound_data = client.get_outbound_shipping_centers(page_size=10)
+    outbound_code = _extract_first_code(outbound_data, ["outboundShippingPlaceCode", "outbound_shipping_place_code", "shippingPlaceCode", "placeCode"])
+    outbound_debug = _extract_msg(outbound_rc, outbound_data)
         
     # 반품지 (Return)
-    rc, data = client.get_return_shipping_centers(page_size=1)
-    return_code = None
-    if rc == 200 and data.get("data") and data["data"].get("content"):
-        return_code = str(data["data"]["content"][0]["returnCenterCode"])
+    return_rc, return_data = client.get_return_shipping_centers(page_size=10)
+    return_code = _extract_first_code(return_data, ["returnCenterCode", "return_center_code"])
+    return_debug = _extract_msg(return_rc, return_data)
         
-    return return_code, outbound_code
+    debug = f"outbound({outbound_debug}), return({return_debug})"
+
+    if return_code and outbound_code and account is not None and session is not None and isinstance(account.credentials, dict):
+        try:
+            creds = dict(account.credentials)
+            creds["default_return_center_code"] = str(return_code)
+            creds["default_outbound_shipping_place_code"] = str(outbound_code)
+            account.credentials = creds
+            session.commit()
+        except Exception as e:
+            logger.warning(f"센터 코드 캐시 저장 실패: {e}")
+
+    return return_code, outbound_code, debug
 
 
 def _map_product_to_coupang_payload(
@@ -609,7 +792,10 @@ def _map_product_to_coupang_payload(
     account: MarketAccount, 
     return_center_code: str, 
     outbound_center_code: str,
-    predicted_category_code: int = 77800
+    predicted_category_code: int = 77800,
+    return_center_detail: dict[str, Any] | None = None,
+    notice_meta: dict[str, Any] | None = None,
+    shipping_fee: int = 0,
 ) -> dict[str, Any]:
     """
     내부 Product 모델을 쿠팡 API Payload로 매핑합니다.
@@ -640,11 +826,78 @@ def _map_product_to_coupang_payload(
     # 아이템 (옵션)
     # 현재는 단일 옵션 매핑 (Drop 01 범위)
     # 변형 상품(옵션)이 있다면 반복문 필요
+    def _normalize_phone(value: object) -> str | None:
+        if value is None:
+            return None
+        s = str(value).strip()
+        if not s:
+            return None
+
+        if s.startswith("+82"):
+            s = "0" + s[3:]
+
+        digits = "".join([c for c in s if c.isdigit()])
+        if not digits:
+            return None
+
+        if len(digits) == 11:
+            return f"{digits[:3]}-{digits[3:7]}-{digits[7:]}"
+        if len(digits) == 10:
+            return f"{digits[:3]}-{digits[3:6]}-{digits[6:]}"
+        return digits
+
+    notices: list[dict[str, Any]] = []
+    try:
+        if isinstance(notice_meta, dict) and isinstance(notice_meta.get("noticeCategories"), list):
+            cats = [c for c in notice_meta["noticeCategories"] if isinstance(c, dict)]
+            selected = None
+            for c in cats:
+                if c.get("noticeCategoryName") == "기타 재화":
+                    selected = c
+                    break
+            if not selected and cats:
+                selected = cats[0]
+            if selected and isinstance(selected.get("noticeCategoryDetailNames"), list):
+                for d in selected["noticeCategoryDetailNames"]:
+                    if not isinstance(d, dict):
+                        continue
+                    if d.get("required") != "MANDATORY":
+                        continue
+                    dn = d.get("noticeCategoryDetailName")
+                    if not dn:
+                        continue
+                    notices.append(
+                        {
+                            "noticeCategoryName": selected.get("noticeCategoryName"),
+                            "noticeCategoryDetailName": dn,
+                            "content": "상세페이지 참조",
+                        }
+                    )
+    except Exception:
+        notices = []
+
+    base_price = int(product.selling_price or 0)
+    ship_fee = int(shipping_fee or 0)
+    if ship_fee < 0:
+        ship_fee = 0
+    total_price = base_price + ship_fee
+    if total_price < 3000:
+        total_price = 3000
+
     item_payload = {
         "itemName": name_to_use[:150], # 최대 150자
-        "originalPrice": product.selling_price, # 할인가 적용 시 정가를 높게 설정 가능
-        "salePrice": product.selling_price,
-        "maximumBuyCount": 100, # 기본값
+        "originalPrice": total_price, # 무료배송 정책: 배송비를 상품가에 포함
+        "salePrice": total_price,
+        "maximumBuyCount": 9999,
+        "maximumBuyForPerson": 0,
+        "maximumBuyForPersonPeriod": 1,
+        "outboundShippingTimeDay": 3,
+        "taxType": "TAX",
+        "adultOnly": "EVERYONE",
+        "parallelImported": "NOT_PARALLEL_IMPORTED",
+        "overseasPurchased": "NOT_OVERSEAS_PURCHASED",
+        "pccNeeded": False,
+        "unitCount": 1,
         "images": images,
         "attributes": [], # TODO: 카테고리 속성 매핑 필요 (예측된 카테고리에 따라 필수 속성이 다름)
         "contents": [
@@ -653,17 +906,27 @@ def _map_product_to_coupang_payload(
                 "contentDetails": [{"content": description_html, "detailType": "TEXT"}] 
             }
         ],
-        "noticeCategories": [
-             {"noticeCategoryName": "기타 재화", "noticeCategoryDetailName": "제품소재", "content": "상세페이지 참조"},
-             {"noticeCategoryName": "기타 재화", "noticeCategoryDetailName": "색상", "content": "상세페이지 참조"},
-             {"noticeCategoryName": "기타 재화", "noticeCategoryDetailName": "치수", "content": "상세페이지 참조"},
-             {"noticeCategoryName": "기타 재화", "noticeCategoryDetailName": "제조자(수입자)", "content": "상세페이지 참조"},
-             {"noticeCategoryName": "기타 재화", "noticeCategoryDetailName": "제조국", "content": "상세페이지 참조"},
-             {"noticeCategoryName": "기타 재화", "noticeCategoryDetailName": "취급시 주의사항", "content": "상세페이지 참조"},
-             {"noticeCategoryName": "기타 재화", "noticeCategoryDetailName": "품질보증기준", "content": "상세페이지 참조"},
-             {"noticeCategoryName": "기타 재화", "noticeCategoryDetailName": "A/S 책임자와 전화번호", "content": "상세페이지 참조"},
-        ] # 위탁판매 특성상 안전하게 '기타 재화'로 기본 설정
+        "notices": notices,
     }
+
+    return_zip = None
+    return_addr = None
+    return_addr_detail = None
+    return_phone = None
+    return_name = None
+    if isinstance(return_center_detail, dict):
+        return_zip = return_center_detail.get("returnZipCode")
+        return_addr = return_center_detail.get("returnAddress")
+        return_addr_detail = return_center_detail.get("returnAddressDetail")
+        return_phone = _normalize_phone(return_center_detail.get("companyContactNumber"))
+        return_name = return_center_detail.get("shippingPlaceName")
+
+    if not return_name:
+        return_name = "반품지"
+
+    now = datetime.now(timezone.utc)
+    sale_started_at = now.strftime("%Y-%m-%dT%H:%M:%S")
+    sale_ended_at = "2099-01-01T23:59:59"
 
     payload = {
         "displayCategoryCode": predicted_category_code, 
@@ -671,7 +934,9 @@ def _map_product_to_coupang_payload(
         # 주의: 일부 카테고리는 필수 속성(attributes)이 없으면 등록 실패할 수 있음.
         # 향후 predict_category 응답에 포함된 attributes 메타데이터를 활용하여 자동 매핑 고도화 필요.
         "sellerProductName": name_to_use[:100],
-        "vendorId": account.credentials.get("vendor_id"),
+        "vendorId": str(account.credentials.get("vendor_id") or "").strip(),
+        "saleStartedAt": sale_started_at,
+        "saleEndedAt": sale_ended_at,
         "displayProductName": name_to_use[:100],
         "brand": product.brand or "Detailed Page",
         "generalProductName": name_to_use, # 보통 노출명과 동일
@@ -679,8 +944,18 @@ def _map_product_to_coupang_payload(
         "deliveryMethod": "SEQUENCIAL", # 일반 배송
         "deliveryCompanyCode": "KDEXP", # 기본 택배사 (경동? 설정값 확인 필요)
         "deliveryChargeType": "FREE", # 일단 무료배송으로 시작
+        "deliveryCharge": 0,
+        "freeShipOverAmount": 0,
+        "unionDeliveryType": "NOT_UNION_DELIVERY",
+        "remoteAreaDeliverable": "Y",
         "returnCenterCode": return_center_code,
+        "returnChargeName": return_name,
+        "companyContactNumber": return_phone,
+        "returnZipCode": return_zip,
+        "returnAddress": return_addr,
+        "returnAddressDetail": return_addr_detail,
         "returnCharge": 5000, # 기본 반품비
+        "deliveryChargeOnReturn": 5000,
         "outboundShippingPlaceCode": outbound_center_code,
         "vendorUserId": account.credentials.get("vendor_user_id", "user"), # Wing ID
         "requested": True, # 자동 승인 요청

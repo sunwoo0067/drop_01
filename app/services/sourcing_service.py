@@ -3,6 +3,7 @@ from typing import List, Optional
 import uuid
 from sqlalchemy.orm import Session
 from sqlalchemy import select, or_, desc
+from sqlalchemy.dialects.postgresql import insert
 
 from app.models import Product, SourcingCandidate, BenchmarkProduct, SupplierItemRaw, SupplierAccount
 from app.ownerclan_client import OwnerClanClient
@@ -209,7 +210,68 @@ class SourcingService:
             status="PENDING"
         )
         
-        # Optimize SEO immediately? Or lazy load. Let's do lazy for performance.
+        # SEO 최적화는 즉시 수행할지/지연 처리할지 고민 가능하나, 성능을 위해 지연 처리합니다.
         self.db.add(candidate)
         self.db.commit()
         logger.info(f"Created candidate: {candidate.name}")
+
+    def import_from_raw(self, limit: int = 1000) -> int:
+        """
+        Converts available SupplierItemRaw data into SourcingCandidate.
+        Useful for bulk collection where data lands in raw table first.
+        """
+        logger.info("Starting bulk import from SupplierItemRaw...")
+
+        # 1. Fetch raw items from Source DB
+        # We fetch decent amount of latest items and filter in memory
+        stmt = (
+            select(SupplierItemRaw)
+            .where(SupplierItemRaw.supplier_code == "ownerclan")
+            .order_by(desc(SupplierItemRaw.fetched_at))
+            .limit(limit * 5)  # Fetch more to find new ones
+        )
+        
+        raw_items = self.db.scalars(stmt).all()
+        count = 0
+        
+        for raw in raw_items:
+            try:
+                if not raw.item_code:
+                    continue
+
+                data = raw.raw if isinstance(raw.raw, dict) else {}
+                name = data.get("item_name") or data.get("name") or data.get("itemName") or "Unknown"
+                
+                supply_price = self._to_int(
+                    data.get("supply_price")
+                    or data.get("supplyPrice")
+                    or data.get("fixedPrice")
+                    or data.get("price")
+                ) or 0
+
+                insert_stmt = (
+                    insert(SourcingCandidate.__table__)
+                    .values(
+                        supplier_code="ownerclan",
+                        supplier_item_id=str(raw.item_code),
+                        name=str(name),
+                        supply_price=int(supply_price),
+                        source_strategy="BULK_COLLECT",
+                        status="PENDING",
+                    )
+                    .on_conflict_do_nothing()
+                )
+
+                result = self.db.execute(insert_stmt)
+                if result.rowcount:
+                    count += int(result.rowcount)
+
+                if count >= limit:
+                    break
+
+            except Exception as e:
+                logger.error(f"Error converting raw item {raw.id}: {e}")
+                
+        self.db.commit()
+        logger.info(f"Imported {count} candidates from raw data.")
+        return count

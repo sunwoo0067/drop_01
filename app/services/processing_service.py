@@ -14,12 +14,12 @@ class ProcessingService:
     def __init__(self, db: Session):
         self.db = db
 
-    def process_product(self, product_id: uuid.UUID) -> bool:
+    def process_product(self, product_id: uuid.UUID, min_images_required: int = 5) -> bool:
         """
         Orchestrates the processing of a single product.
         1. Fetch Product details (and related raw data for HTML).
         2. Optimize Name (SEO) using Detail analysis.
-        3. Process Images (Hash Breaking + Supabase Upload + Min count 5).
+        3. Process Images (Hash Breaking + Supabase Upload + Min count).
         4. Update Product record.
         """
         try:
@@ -30,6 +30,9 @@ class ProcessingService:
             if not product:
                 logger.error(f"Product {product_id} not found.")
                 return False
+
+            product.processing_status = "PROCESSING"
+            self.db.commit()
                 
             # We need detail_html and raw images. 
             # In current schema, Product links to SupplierItemRaw via supplier_item_id.
@@ -82,10 +85,10 @@ class ProcessingService:
             product.processed_keywords = new_tags
             product.processed_image_urls = processed_urls
             
-            if processed_urls and new_title:
+            if processed_urls and len(processed_urls) >= max(1, int(min_images_required)) and new_title:
                 product.processing_status = "COMPLETED"
             else:
-                product.processing_status = "PARTIAL_FAILURE" # Or keep pending?
+                product.processing_status = "FAILED"
                 
             self.db.commit()
             logger.info(f"Successfully processed product {product_id}. Status: {product.processing_status}")
@@ -102,7 +105,7 @@ class ProcessingService:
                 pass
             return False
 
-    def process_pending_products(self, limit: int = 10):
+    def process_pending_products(self, limit: int = 10, min_images_required: int = 5):
         """
         Finds pending products and processes them.
         """
@@ -111,6 +114,6 @@ class ProcessingService:
         
         count = 0
         for p in products:
-            if self.process_product(p.id):
+            if self.process_product(p.id, min_images_required=min_images_required):
                 count += 1
         return count

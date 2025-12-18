@@ -25,5 +25,8 @@ SessionLocal = sessionmaker(
 
 def get_session() -> Iterator[Session]:
     with SessionLocal() as session:
-        with session.begin():
+        try:
             yield session
+        except Exception:
+            session.rollback()
+            raise

@@ -310,7 +310,10 @@ class SourcingCandidate(DropshipBase):
     These are transient candidates before being promoted to real 'Products'.
     """
     __tablename__ = "sourcing_candidates"
-
+    __table_args__ = (
+        UniqueConstraint("supplier_code", "supplier_item_id", name="uq_sourcing_candidates_supplier_item"),
+    )
+ 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     supplier_code: Mapped[str] = mapped_column(Text, nullable=False)
     supplier_item_id: Mapped[str] = mapped_column(Text, nullable=False)
