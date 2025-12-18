@@ -12,8 +12,8 @@ from sqlalchemy.dialects.postgresql import insert
 from datetime import datetime, timezone
 
 from app.db import get_session
-from app.models import Product, SupplierAccount, SupplierItemRaw, SourcingCandidate
-from app.schemas.product import ProductResponse
+from app.models import MarketListing, Product, SupplierAccount, SupplierItemRaw, SourcingCandidate
+from app.schemas.product import MarketListingResponse, ProductResponse
 from app.settings import settings
 
 router = APIRouter()
@@ -48,6 +48,42 @@ class ProductProcessFailedIn(BaseModel):
     minImagesRequired: int = Field(default=5, ge=1, le=20)
     forceFetchOwnerClan: bool = True
     augmentImages: bool = True
+
+
+def _build_product_responses(session: Session, products: list[Product]) -> list[ProductResponse]:
+    if not products:
+        return []
+
+    product_ids = [p.id for p in products]
+    listings = session.scalars(
+        select(MarketListing).where(MarketListing.product_id.in_(product_ids))
+    ).all()
+
+    listings_by_product: dict[uuid.UUID, list[MarketListingResponse]] = {}
+    for row in listings:
+        listings_by_product.setdefault(row.product_id, []).append(
+            MarketListingResponse.model_validate(row, from_attributes=True)
+        )
+
+    out: list[ProductResponse] = []
+    for p in products:
+        out.append(
+            ProductResponse(
+                id=p.id,
+                name=p.name,
+                processed_name=p.processed_name,
+                brand=p.brand,
+                selling_price=p.selling_price,
+                processing_status=p.processing_status,
+                processed_image_urls=p.processed_image_urls,
+                processed_keywords=p.processed_keywords,
+                status=p.status,
+                created_at=p.created_at,
+                market_listings=listings_by_product.get(p.id, []),
+            )
+        )
+
+    return out
 
 @router.get("/stats")
 def get_product_stats(
@@ -98,7 +134,7 @@ def list_products(
 
     stmt = stmt.order_by(Product.created_at.desc())
     products = session.scalars(stmt).all()
-    return products
+    return _build_product_responses(session, products)
 
 @router.get("/{product_id}", response_model=ProductResponse)
 def get_product(product_id: uuid.UUID, session: Session = Depends(get_session)):
@@ -106,7 +142,8 @@ def get_product(product_id: uuid.UUID, session: Session = Depends(get_session)):
     product = session.get(Product, product_id)
     if not product:
         raise HTTPException(status_code=404, detail="상품을 찾을 수 없습니다.") # 한국어 오류 메시지
-    return product
+    items = _build_product_responses(session, [product])
+    return items[0]
 
 
 @router.post("/from-ownerclan-raw", status_code=200)

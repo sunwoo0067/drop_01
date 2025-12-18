@@ -9,6 +9,7 @@ export interface Product {
     processed_keywords?: string[];
     created_at: string;
     status: string;
+    market_listings?: MarketListing[];
 }
 
 export interface SourcingCandidate {
@@ -36,4 +37,11 @@ export interface MarketListing {
     product_id: string;
     market_item_id: string;
     status: string;
+    coupang_status?: string | null;
+    rejection_reason?: {
+        statusName?: string;
+        reason?: string;
+        approvalDate?: string;
+        [key: string]: any;
+    } | null;
 }
