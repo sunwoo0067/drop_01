@@ -82,9 +82,21 @@ def get_product_stats(
     }
 
 @router.get("/", response_model=List[ProductResponse])
-def list_products(session: Session = Depends(get_session)):
+def list_products(
+    session: Session = Depends(get_session),
+    processing_status: str | None = Query(default=None, alias="processingStatus"),
+    status: str | None = Query(default=None),
+):
     """모든 상품 목록을 조회합니다."""
-    stmt = select(Product).order_by(Product.created_at.desc())
+    stmt = select(Product)
+
+    if processing_status:
+        stmt = stmt.where(Product.processing_status == processing_status)
+
+    if status:
+        stmt = stmt.where(Product.status == status)
+
+    stmt = stmt.order_by(Product.created_at.desc())
     products = session.scalars(stmt).all()
     return products
 
