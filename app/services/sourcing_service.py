@@ -102,7 +102,12 @@ class SourcingService:
                 margin = (selling_price - supply_price) / selling_price
 
             if margin is None or margin >= min_margin:
-                self._create_candidate(item, strategy="KEYWORD", margin_score=margin)
+                self._create_candidate(
+                    item, 
+                    strategy="KEYWORD", 
+                    margin_score=margin,
+                    thumbnail_url=item.get("thumbnail_url") or (item.get("images")[0] if item.get("images") else None)
+                )
 
     def execute_benchmark_sourcing(self, benchmark_id: uuid.UUID):
         """
@@ -153,7 +158,8 @@ class SourcingService:
                 strategy="BENCHMARK", 
                 benchmark_id=benchmark.id,
                 seasonal_score=current_month_score,
-                spec_data=specs
+                spec_data=specs,
+                thumbnail_url=candidate_item.get("thumbnail_url") or (candidate_item.get("images")[0] if candidate_item.get("images") else None)
             )
 
     def _create_candidate(
@@ -164,6 +170,7 @@ class SourcingService:
         seasonal_score: float | None = None,
         margin_score: float | None = None,
         spec_data: dict | None = None,
+        thumbnail_url: str | None = None,
     ):
         
         # Check if already exists
@@ -206,7 +213,8 @@ class SourcingService:
             benchmark_product_id=benchmark_id,
             seasonal_score=seasonal_score,
             margin_score=margin_score,
-            spec_data=spec_data,
+            spec_data: spec_data,
+            thumbnail_url: thumbnail_url,
             status="PENDING"
         )
         
@@ -256,6 +264,7 @@ class SourcingService:
                         supplier_item_id=str(raw.item_code),
                         name=str(name),
                         supply_price=int(supply_price),
+                        thumbnail_url=data.get("thumbnail_url") or (data.get("images")[0] if data.get("images") else None),
                         source_strategy="BULK_COLLECT",
                         status="PENDING",
                     )

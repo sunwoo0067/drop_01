@@ -81,41 +81,96 @@ export default function SourcingPage() {
                 </CardContent>
             </Card>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                 {loading ? (
-                    <div className="col-span-full h-40 flex items-center justify-center">
-                        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    <div className="col-span-full h-80 flex flex-col items-center justify-center space-y-4">
+                        <Loader2 className="h-10 w-10 animate-spin text-primary" />
+                        <p className="text-muted-foreground animate-pulse">상품 데이터를 불러오는 중...</p>
                     </div>
                 ) : error ? (
-                    <div className="col-span-full h-40 flex items-center justify-center text-muted-foreground">
+                    <div className="col-span-full h-80 flex items-center justify-center text-destructive bg-destructive/5 rounded-xl border border-destructive/20">
                         {error}
                     </div>
                 ) : items.length === 0 ? (
-                    <div className="col-span-full h-40 flex items-center justify-center text-muted-foreground">
-                        소싱 후보가 없습니다.
+                    <div className="col-span-full h-80 flex flex-col items-center justify-center text-muted-foreground bg-muted/30 rounded-xl border border-dashed">
+                        <Search className="h-12 w-12 mb-4 opacity-20" />
+                        <p>소싱 후보가 없습니다.</p>
                     </div>
                 ) : (
-                    items.map((item) => (
-                        <Card key={item.id} className="overflow-hidden">
-                            <div className="aspect-square bg-muted flex items-center justify-center text-muted-foreground relative">
-                                <span className="text-sm">No Image</span>
-                                <Badge className="absolute top-2 right-2" variant="secondary">{item.supplierCode}</Badge>
-                            </div>
-                            <CardContent className="p-4 space-y-1">
-                                <h3 className="font-semibold truncate">{item.name}</h3>
-                                <p className="text-sm text-muted-foreground">공급가 {item.supplyPrice?.toLocaleString()} 원</p>
-                                <div className="flex flex-wrap gap-1 pt-1">
-                                    <Badge variant="outline">{item.sourceStrategy}</Badge>
-                                    <Badge variant="secondary">{item.status}</Badge>
+                    items.map((item) => {
+                        const margin = item.marginScore ? (item.marginScore * 100).toFixed(1) : "0.0";
+                        const isHighMargin = item.marginScore && item.marginScore >= 0.2;
+
+                        return (
+                            <Card key={item.id} className="group overflow-hidden border-none shadow-md hover:shadow-xl transition-all duration-300 hover:-translate-y-1 bg-card/50 backdrop-blur-sm">
+                                <div className="aspect-[4/3] relative overflow-hidden bg-muted">
+                                    {item.thumbnailUrl ? (
+                                        <img
+                                            src={item.thumbnailUrl}
+                                            alt={item.name}
+                                            className="object-cover w-full h-full transition-transform duration-500 group-hover:scale-110"
+                                        />
+                                    ) : (
+                                        <div className="w-full h-full flex items-center justify-center text-muted-foreground/30">
+                                            <Search className="h-12 w-12" />
+                                        </div>
+                                    )}
+                                    <div className="absolute top-2 left-2 flex gap-1">
+                                        <Badge className="bg-black/50 backdrop-blur-md border-none text-white hover:bg-black/60">
+                                            {item.supplierCode.toUpperCase()}
+                                        </Badge>
+                                        {isHighMargin && (
+                                            <Badge className="bg-emerald-500/80 backdrop-blur-md border-none text-white">
+                                                고수익
+                                            </Badge>
+                                        )}
+                                    </div>
+                                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-4">
+                                        <p className="text-white text-xs font-medium line-clamp-2">{item.name}</p>
+                                    </div>
                                 </div>
-                            </CardContent>
-                            <CardFooter className="p-4 pt-0">
-                                <Button className="w-full" variant="outline" size="sm" disabled>
-                                    상세 보기
-                                </Button>
-                            </CardFooter>
-                        </Card>
-                    ))
+                                <CardContent className="p-5 space-y-3">
+                                    <h3 className="font-bold text-lg leading-tight line-clamp-1 group-hover:text-primary transition-colors">
+                                        {item.name}
+                                    </h3>
+                                    <div className="flex items-baseline justify-between">
+                                        <div className="space-y-0.5">
+                                            <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">공급가</p>
+                                            <p className="text-xl font-black">{item.supplyPrice?.toLocaleString()}<span className="text-sm font-normal ml-0.5">원</span></p>
+                                        </div>
+                                        <div className="text-right space-y-0.5">
+                                            <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">수익률</p>
+                                            <p className={`text-lg font-bold ${isHighMargin ? 'text-emerald-500' : 'text-blue-500'}`}>
+                                                {margin}%
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-wrap gap-1.5 pt-1">
+                                        <Badge variant="secondary" className="text-[10px] uppercase font-bold tracking-tighter px-1.5 py-0">
+                                            {item.sourceStrategy}
+                                        </Badge>
+                                        <Badge
+                                            variant="outline"
+                                            className={`text-[10px] uppercase font-bold tracking-tighter px-1.5 py-0 ${item.status === 'PENDING' ? 'border-yellow-500/50 text-yellow-600 bg-yellow-50' :
+                                                    item.status === 'APPROVED' ? 'border-emerald-500/50 text-emerald-600 bg-emerald-50' :
+                                                        'border-muted text-muted-foreground'
+                                                }`}
+                                        >
+                                            {item.status}
+                                        </Badge>
+                                    </div>
+                                </CardContent>
+                                <CardFooter className="px-5 pb-5 pt-0 grid grid-cols-2 gap-2">
+                                    <Button className="w-full bg-primary/10 hover:bg-primary/20 text-primary border-none" variant="outline" size="sm">
+                                        상세 정보
+                                    </Button>
+                                    <Button className="w-full shadow-lg shadow-primary/20" size="sm">
+                                        소싱 승인
+                                    </Button>
+                                </CardFooter>
+                            </Card>
+                        );
+                    })
                 )}
             </div>
         </div>

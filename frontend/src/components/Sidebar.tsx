@@ -2,7 +2,21 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, ShoppingBag, Search, Settings, Bot, Menu, X } from "lucide-react";
+import {
+    LayoutDashboard,
+    Package,
+    Search,
+    Settings,
+    Bot,
+    BarChart3,
+    Download,
+    Database,
+    ChevronLeft,
+    ChevronRight,
+    LogOut,
+    User,
+    ShoppingBag
+} from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
@@ -24,19 +38,30 @@ export default function Sidebar() {
 
     return (
         <div className={cn(
-            "flex flex-col border-r bg-card h-screen transition-all duration-300 ease-in-out",
+            "flex flex-col border-r bg-card h-screen transition-all duration-300 ease-in-out relative",
             collapsed ? "w-16" : "w-64"
         )}>
-            <div className="flex h-16 items-center border-b px-4 justify-between">
-                {!collapsed && <h1 className="text-xl font-bold text-primary">DropAutomata</h1>}
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setCollapsed(!collapsed)}
-                    className="ml-auto"
-                >
-                    {collapsed ? <Menu className="h-4 w-4" /> : <X className="h-4 w-4" />}
-                </Button>
+            {/* Collapse Toggle Button */}
+            <button
+                onClick={() => setCollapsed(!collapsed)}
+                aria-label={collapsed ? "사이드바 펼치기" : "사이드바 접기"}
+                className="absolute -right-3 top-20 flex h-6 w-6 items-center justify-center rounded-full border bg-background shadow-sm hover:bg-accent transition-colors z-10"
+            >
+                {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+            </button>
+
+            {/* Logo Section */}
+            <div className="flex h-16 items-center border-b px-6">
+                <div className="flex items-center gap-3">
+                    <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center shrink-0">
+                        <Package className="h-5 w-5 text-primary-foreground" />
+                    </div>
+                    {!collapsed && (
+                        <span className="text-xl font-bold bg-gradient-to-r from-primary to-blue-400 bg-clip-text text-transparent transition-all">
+                            DropAutomata
+                        </span>
+                    )}
+                </div>
             </div>
 
             <nav className="flex-1 space-y-1 p-2">
