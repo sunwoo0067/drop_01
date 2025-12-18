@@ -8,15 +8,15 @@ import {
     Search,
     Settings,
     Bot,
-    BarChart3,
-    Download,
-    Database,
     ChevronLeft,
     ChevronRight,
     LogOut,
     User,
     ShoppingBag,
-    Wand2
+    Wand2,
+    BarChart3,
+    Download,
+    Database
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
