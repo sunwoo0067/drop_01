@@ -6,7 +6,12 @@ from pydantic import BaseModel, Field
 
 from app.db import get_session
 from app.models import Product, MarketAccount, MarketOrderRaw, MarketListing, MarketProductRaw
-from app.coupang_sync import register_product, sync_coupang_orders_raw, fulfill_coupang_orders_via_ownerclan
+from app.coupang_sync import (
+    register_product,
+    sync_coupang_orders_raw,
+    fulfill_coupang_orders_via_ownerclan,
+    sync_market_listing_status,
+)
 from app.coupang_client import CoupangClient
 from sqlalchemy.dialects.postgresql import insert
 
@@ -353,6 +358,26 @@ async def register_product_endpoint(
 
     background_tasks.add_task(execute_coupang_registration, account.id, product.id, False, False, False)
     return {"status": "accepted", "message": "쿠팡 상품 등록 작업이 시작되었습니다."}
+
+
+@router.post("/sync-status/{product_id}", status_code=200)
+async def sync_coupang_status_endpoint(
+    product_id: uuid.UUID,
+    session: Session = Depends(get_session),
+):
+    """
+    특정 상품의 쿠팡 마켓 상태를 명시적으로 동기화합니다.
+    """
+    stmt = select(MarketListing).where(MarketListing.product_id == product_id)
+    listing = session.scalars(stmt).first()
+    if not listing:
+        raise HTTPException(status_code=404, detail="마켓 등록 정보를 찾을 수 없습니다.")
+
+    success, result = sync_market_listing_status(session, listing.id)
+    if not success:
+        raise HTTPException(status_code=400, detail=result)
+
+    return {"status": "success", "coupangStatus": result}
 
 
 @router.put("/products/{product_id}", status_code=200)

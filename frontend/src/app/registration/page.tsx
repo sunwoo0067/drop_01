@@ -14,7 +14,9 @@ import {
     ExternalLink,
     Sparkles,
     ShoppingCart,
-    ArrowRight
+    ArrowRight,
+    RefreshCcw,
+    AlertTriangle
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -26,6 +28,8 @@ import { cn } from "@/lib/utils";
 
 interface RegistrationProduct extends Product {
     imagesCount: number;
+    coupangStatus?: string | null;
+    rejectionReason?: any;
 }
 
 export default function RegistrationPage() {
@@ -42,21 +46,27 @@ export default function RegistrationPage() {
         setLoading(true);
         setError(null);
         try {
+            // DRAFT 상품 중 COMPLETED 가공 상태인 것 + MarketListing의 coupang_status가 DENIED인 것 조회
             const response = await api.get("/products/", {
                 params: {
                     processingStatus: "COMPLETED",
+                    // status 필터는 백엔드에서 DRAFT만 가져오도록 되어있을 수 있으므로 
+                    // 모든 DRAFT 상품을 가져온 후 프론트엔드에서 추가 필터링
                     status: "DRAFT"
                 }
             });
             const products = Array.isArray(response.data) ? response.data : [];
-            // 필터: processing_status가 COMPLETED이고 status가 DRAFT인 상품
-            const filtered = products.filter((p: Product) =>
-                p.processing_status === "COMPLETED" && p.status === "DRAFT"
-            ).map((p: Product) => ({
-                ...p,
-                imagesCount: p.processed_image_urls?.length || 0
-            }));
-            setItems(filtered);
+
+            const processed = products.map((p: Product) => {
+                const coupangListing = p.market_listings?.find(l => l.market_item_id);
+                return {
+                    ...p,
+                    imagesCount: p.processed_image_urls?.length || 0,
+                    coupangStatus: coupangListing?.coupang_status,
+                    rejectionReason: coupangListing?.rejection_reason
+                };
+            });
+            setItems(processed);
         } catch (e) {
             console.error("Failed to fetch products", e);
             setError("상품 목록을 불러오지 못했습니다.");
@@ -122,6 +132,32 @@ export default function RegistrationPage() {
             alert("일괄 등록 중 오류가 발생했습니다.");
         } finally {
             setBulkRegistering(false);
+        }
+    };
+
+    const handleSyncStatus = async (productId: string) => {
+        try {
+            const resp = await api.post(`/coupang/sync-status/${productId}`);
+            const newStatus = resp.data.coupangStatus;
+
+            // 상태 업데이트 후, 만약 DENIED가 아니게 되었다면 목록 유지 또는 변경
+            // 여기서는 단순히 상태값만 업데이트해서 리렌더링 유도
+            setItems(prev => prev.map(item => {
+                if (item.id === productId) {
+                    return { ...item, coupangStatus: newStatus };
+                }
+                return item;
+            }));
+
+            if (newStatus === 'APPROVED') {
+                alert("상품이 승인되었습니다! 목록에서 제거합니다.");
+                setItems(prev => prev.filter(item => item.id !== productId));
+            } else {
+                alert(`동기화 완료: ${newStatus}`);
+            }
+        } catch (e: any) {
+            console.error("Sync failed", e);
+            alert("상태 동기화에 실패했습니다.");
         }
     };
 
@@ -373,40 +409,80 @@ export default function RegistrationPage() {
                                             <span className="font-bold text-base text-primary">{item.selling_price.toLocaleString()}원</span>
                                         </div>
                                         <div className="flex flex-col items-end">
-                                            <span className="text-muted-foreground text-[10px] uppercase font-bold tracking-tighter">상태</span>
-                                            <Badge variant="secondary" className="text-xs">
-                                                {isReady ? "등록 가능" : "이미지 부족"}
-                                            </Badge>
+                                            <span className="text-muted-foreground text-[10px] uppercase font-bold tracking-tighter">마켓 상태</span>
+                                            {item.coupangStatus === 'DENIED' ? (
+                                                <Badge variant="destructive" className="text-[10px] animate-pulse">
+                                                    승인 반려
+                                                </Badge>
+                                            ) : item.coupangStatus === 'IN_REVIEW' ? (
+                                                <Badge variant="secondary" className="text-[10px] bg-blue-100 text-blue-700">
+                                                    심사 중
+                                                </Badge>
+                                            ) : (
+                                                <Badge variant="secondary" className="text-[10px]">
+                                                    {isReady ? "등록 가능" : "이미지 부족"}
+                                                </Badge>
+                                            )}
                                         </div>
                                     </div>
+
+                                    {item.coupangStatus === 'DENIED' && item.rejectionReason && (
+                                        <div className="p-3 rounded-xl bg-destructive/5 border border-destructive/10 space-y-2">
+                                            <div className="flex items-center gap-2 text-destructive">
+                                                <AlertTriangle className="h-4 w-4" />
+                                                <span className="text-xs font-bold">반려 사유</span>
+                                            </div>
+                                            <p className="text-xs text-destructive/80 leading-relaxed line-clamp-3">
+                                                {item.rejectionReason.reason || "상세 사유 없음"}
+                                            </p>
+                                        </div>
+                                    )}
                                 </CardContent>
 
                                 <CardFooter className="px-5 pb-5 pt-0">
-                                    <Button
-                                        className={cn(
-                                            "w-full rounded-2xl font-bold transition-all shadow-lg",
-                                            isReady
-                                                ? "bg-primary hover:bg-primary/90 shadow-primary/20"
-                                                : "bg-muted text-muted-foreground cursor-not-allowed"
+                                    <div className="flex flex-col gap-2 w-full">
+                                        <Button
+                                            className={cn(
+                                                "w-full rounded-2xl font-bold transition-all shadow-lg",
+                                                isReady
+                                                    ? "bg-primary hover:bg-primary/90 shadow-primary/20"
+                                                    : "bg-muted text-muted-foreground cursor-not-allowed"
+                                            )}
+                                            size="sm"
+                                            onClick={() => handleRegister(item.id)}
+                                            disabled={!isReady || isRegistering}
+                                        >
+                                            {isRegistering ? (
+                                                <>
+                                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                                    처리 중...
+                                                </>
+                                            ) : item.coupangStatus === 'DENIED' ? (
+                                                <>
+                                                    <RotateCw className="mr-2 h-4 w-4" />
+                                                    수정 및 재등록
+                                                </>
+                                            ) : isReady ? (
+                                                <>
+                                                    <Upload className="mr-2 h-4 w-4" />
+                                                    쿠팡 등록
+                                                </>
+                                            ) : (
+                                                "이미지 추가 필요"
+                                            )}
+                                        </Button>
+
+                                        {item.coupangStatus && (
+                                            <Button
+                                                variant="outline"
+                                                className="w-full rounded-2xl text-xs h-8 border-dashed"
+                                                onClick={() => handleSyncStatus(item.id)}
+                                            >
+                                                <RefreshCcw className="mr-2 h-3 w-3" />
+                                                상태 동기화
+                                            </Button>
                                         )}
-                                        size="sm"
-                                        onClick={() => handleRegister(item.id)}
-                                        disabled={!isReady || isRegistering}
-                                    >
-                                        {isRegistering ? (
-                                            <>
-                                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                                등록 중...
-                                            </>
-                                        ) : isReady ? (
-                                            <>
-                                                <Upload className="mr-2 h-4 w-4" />
-                                                쿠팡 등록
-                                            </>
-                                        ) : (
-                                            "이미지 추가 필요"
-                                        )}
-                                    </Button>
+                                    </div>
                                 </CardFooter>
                             </Card>
                         );

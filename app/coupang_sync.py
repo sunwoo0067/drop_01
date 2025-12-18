@@ -253,6 +253,49 @@ def _log_fetch(session: Session, account: MarketAccount, endpoint: str, payload:
         logger.warning(f"API 로그 기록 실패: {e}")
 
 
+def sync_market_listing_status(session: Session, listing_id: uuid.UUID) -> tuple[bool, str | None]:
+    """
+    쿠팡 API를 통해 MarketListing의 최신 상태를 동기화하고 반려 사유가 있다면 저장합니다.
+    """
+    listing = session.get(MarketListing, listing_id)
+    if not listing:
+        return False, "MarketListing not found"
+
+    account = session.get(MarketAccount, listing.market_account_id)
+    if not account:
+        return False, "MarketAccount not found"
+
+    try:
+        client = _get_client_for_account(account)
+        code, data = client.get_product(listing.market_item_id)
+        
+        if code != 200:
+            return False, f"쿠팡 상품 조회 실패: {data.get('message', '알 수 없는 오류')}"
+
+        data_obj = data.get("data", {})
+        status_name = data_obj.get("statusName")
+        
+        # 상태 업데이트
+        listing.coupang_status = status_name
+        
+        # 반려 사유 확인 (approvalStatusHistory)
+        history = data_obj.get("approvalStatusHistory", [])
+        if status_name == "DENIED" and history:
+            # 가장 최근의 DENIED 히스토리를 찾음
+            denied_history = next((h for h in history if h.get("statusName") == "DENIED"), history[0])
+            listing.rejection_reason = denied_history
+        elif status_name != "DENIED":
+            listing.rejection_reason = None
+
+        session.commit()
+        return True, status_name
+
+    except Exception as e:
+        session.rollback()
+        logger.error(f"상태 동기화 중 예외 발생: {e}")
+        return False, str(e)
+
+
 def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.UUID) -> tuple[bool, str | None]:
     """
     쿠팡에 상품을 등록합니다.
@@ -407,11 +450,12 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
         product_id=product.id,
         market_account_id=account.id,
         market_item_id=seller_product_id,
-        status="ACTIVE" # 'requested' 플래그에 따라 IN_REVIEW 상태일 수도 있음
+        status="ACTIVE", 
+        coupang_status="IN_REVIEW" # 등록 직후 보통 심사 중
     )
     stmt = stmt.on_conflict_do_update(
         index_elements=["market_account_id", "market_item_id"],
-        set_={"status": "ACTIVE", "linked_at": func.now()}
+        set_={"status": "ACTIVE", "linked_at": func.now(), "coupang_status": "IN_REVIEW"}
     )
     session.execute(stmt)
     
@@ -567,6 +611,8 @@ def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_i
         _log_fetch(session, account, "update_product", payload, code, data)
         
         if code == 200 and data.get("code") == "SUCCESS":
+            # 업데이트 후 상태 동기화 트리거 (비동기로 하면 좋으나 여기서는 단순하게 처리)
+            listing.coupang_status = "IN_REVIEW" 
             session.commit()
             return True, None
         else:

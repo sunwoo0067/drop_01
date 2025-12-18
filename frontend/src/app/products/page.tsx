@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
 import { Product } from "@/types";
-import { Loader2, RefreshCw } from "lucide-react";
+import { Loader2, RefreshCw, RefreshCcw, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
@@ -68,6 +68,17 @@ export default function ProductListPage() {
         }
     };
 
+    const handleSyncStatus = async (productId: string) => {
+        try {
+            await api.post(`/coupang/sync-status/${productId}`);
+            alert("상태 동기화 완료");
+            fetchProducts();
+        } catch (error) {
+            console.error("Sync failed", error);
+            alert("상태 동기화 실패");
+        }
+    };
+
     const toggleSelectAll = (checked: boolean) => {
         if (checked) {
             setSelectedIds(products.map(p => p.id));
@@ -84,14 +95,19 @@ export default function ProductListPage() {
         }
     };
 
-    const getStatusBadge = (status: string) => {
-        switch (status) {
+    const getStatusBadge = (product: Product) => {
+        const coupangListing = product.market_listings?.find(l => l.market_item_id);
+        const cpStatus = coupangListing?.coupang_status;
+
+        if (cpStatus === 'DENIED') return <Badge variant="destructive">반려</Badge>;
+        if (cpStatus === 'IN_REVIEW') return <Badge variant="secondary" className="bg-blue-100 text-blue-700 border-none">심사중</Badge>;
+        if (cpStatus === 'APPROVED') return <Badge variant="success">승인</Badge>;
+
+        switch (product.processing_status) {
             case 'COMPLETED': return <Badge variant="success">완료</Badge>;
             case 'FAILED': return <Badge variant="destructive">실패</Badge>;
             case 'PROCESSING': return <Badge variant="warning">처리중</Badge>;
-            case 'ACTIVE': return <Badge variant="success">등록됨</Badge>;
-            case 'DRAFT': return <Badge variant="secondary">대기</Badge>;
-            default: return <Badge variant="secondary">{status}</Badge>;
+            default: return <Badge variant="secondary">{product.processing_status}</Badge>;
         }
     };
 
@@ -174,14 +190,20 @@ export default function ProductListPage() {
                                                 {product.selling_price?.toLocaleString()} 원
                                             </td>
                                             <td className="p-4 align-middle">
-                                                {getStatusBadge(product.processing_status)}
-                                                {product.status === 'ACTIVE' && <Badge variant="outline" className="ml-1">Coupang</Badge>}
+                                                <div className="flex flex-col gap-1">
+                                                    {getStatusBadge(product)}
+                                                    {product.market_listings && product.market_listings.length > 0 && (
+                                                        <span className="text-[10px] text-muted-foreground">Coupang Linked</span>
+                                                    )}
+                                                </div>
                                             </td>
                                             <td className="p-4 align-middle text-right">
                                                 <div className="flex justify-end gap-2">
-                                                    <Button size="sm" variant="ghost" onClick={() => handleRegister(product.id)}>
-                                                        등록
-                                                    </Button>
+                                                    {product.market_listings && product.market_listings.length > 0 && (
+                                                        <Button size="icon" variant="ghost" onClick={() => handleSyncStatus(product.id)} title="상태 동기화">
+                                                            <RefreshCcw className="h-4 w-4" />
+                                                        </Button>
+                                                    )}
                                                     <Button size="sm" variant="outline" onClick={() => router.push(`/products/${product.id}`)}>
                                                         수정
                                                     </Button>
