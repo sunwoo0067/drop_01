@@ -14,7 +14,9 @@ import {
     ChevronLeft,
     ChevronRight,
     LogOut,
-    User
+    User,
+    ShoppingBag,
+    Wand2
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -31,6 +33,7 @@ const menuGroups = [
         title: "Market Management",
         items: [
             { name: "상품 관리", href: "/products", icon: Package },
+            { name: "상품 가공", href: "/processing", icon: Wand2 },
             { name: "상품 소싱", href: "/sourcing", icon: Search },
             { name: "벤치마크", href: "/benchmarks", icon: BarChart3 },
         ]
@@ -62,8 +65,8 @@ export default function Sidebar() {
 
     return (
         <div className={cn(
-            "flex flex-col border-r bg-card/80 backdrop-blur-md h-screen transition-all duration-300 ease-in-out relative",
-            collapsed ? "w-20" : "w-64"
+            "flex flex-col border-r bg-card h-screen transition-all duration-300 ease-in-out relative",
+            collapsed ? "w-16" : "w-64"
         )}>
             {/* Collapse Toggle Button */}
             <button
