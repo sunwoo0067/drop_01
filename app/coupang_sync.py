@@ -235,7 +235,7 @@ def _log_fetch(session: Session, account: MarketAccount, endpoint: str, payload:
     트랜잭션 롤백 시 로그가 소실되지 않도록 새 세션을 사용합니다.
     """
     try:
-        from app.session_factory import SessionLocal
+        from app.db import SessionLocal
         with SessionLocal() as log_session:
             log = SupplierRawFetchLog(
                 supplier_code="COUPANG", # 마켓 로그도 일단 여기 기록
@@ -452,23 +452,19 @@ def delete_product_from_coupang(session: Session, account_id: uuid.UUID, seller_
         
         if code == 200 and data.get("code") == "SUCCESS":
             # MarketListing 삭제 처리
-            session.execute(
-                select(MarketListing)
-                .where(MarketListing.market_account_id == account.id)
-                .where(MarketListing.market_item_id == seller_product_id)
-            ) # TODO: DELETE stmt
             from sqlalchemy import delete
             session.execute(
                 delete(MarketListing)
                 .where(MarketListing.market_account_id == account.id)
                 .where(MarketListing.market_item_id == seller_product_id)
-            )
+            ) # TODO: DELETE stmt
             session.commit()
             return True, None
         else:
             return False, f"삭제 실패: {data.get('message', '알 수 없는 오류')}"
             
     except Exception as e:
+        session.rollback()
         logger.error(f"쿠팡 상품 삭제 중 예외 발생: {e}")
         return False, str(e)
 
@@ -531,6 +527,21 @@ def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_i
         predicted_category_code = current_data_obj.get("displayCategoryCode", 77800)
         n_code, n_data = client.get_category_meta(str(predicted_category_code))
         notice_meta = n_data.get("data") if n_code == 200 else None
+
+        shipping_fee = 0
+        try:
+            if product.supplier_item_id:
+                raw_item = session.get(SupplierItemRaw, product.supplier_item_id)
+                raw = raw_item.raw if raw_item and isinstance(raw_item.raw, dict) else {}
+                v = raw.get("shippingFee")
+                if isinstance(v, (int, float)):
+                    shipping_fee = int(v)
+                elif isinstance(v, str):
+                    s = "".join([c for c in v.strip() if c.isdigit()])
+                    if s:
+                        shipping_fee = int(s)
+        except Exception as e:
+            logger.warning(f"오너클랜 배송비 추출 실패: {e}")
         
         # Payload 생성
         payload = _map_product_to_coupang_payload(
@@ -541,7 +552,7 @@ def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_i
             predicted_category_code=predicted_category_code,
             return_center_detail=return_center_detail,
             notice_meta=notice_meta,
-            shipping_fee=0,
+            shipping_fee=shipping_fee,
             delivery_company_code=delivery_company_code
         )
         
@@ -562,6 +573,7 @@ def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_i
             return False, f"업데이트 실패: {data.get('message', '알 수 없는 오류')}"
             
     except Exception as e:
+        session.rollback()
         logger.error(f"쿠팡 상품 업데이트 중 예외 발생: {e}")
         return False, str(e)
 

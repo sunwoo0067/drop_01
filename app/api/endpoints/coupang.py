@@ -356,7 +356,7 @@ async def register_product_endpoint(
 
 
 @router.put("/products/{product_id}", status_code=200)
-async def update_coupang_product_endpoint(
+def update_coupang_product_endpoint(
     product_id: uuid.UUID,
     session: Session = Depends(get_session),
 ):
@@ -378,7 +378,7 @@ async def update_coupang_product_endpoint(
 
 
 @router.delete("/products/{seller_product_id}", status_code=200)
-async def delete_coupang_product_endpoint(
+def delete_coupang_product_endpoint(
     seller_product_id: str,
     session: Session = Depends(get_session),
 ):
