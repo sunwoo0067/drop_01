@@ -5,6 +5,7 @@ import requests
 from bs4 import BeautifulSoup
 from typing import List, Optional
 import random
+import math
 
 from app.services.storage_service import storage_service
 
@@ -96,6 +97,18 @@ class ImageProcessingService:
         """
         target_count = 5
         processed_urls = []
+        stats = {
+            "target_count": target_count,
+            "input_count": len(image_urls or []),
+            "supplemented_from_html": 0,
+            "unique_candidates": 0,
+            "download_ok": 0,
+            "download_fail": 0,
+            "hash_break_fail": 0,
+            "upload_ok": 0,
+            "upload_fail": 0,
+            "exceptions": 0,
+        }
         
         # 1. Supplement Images
         candidates = image_urls[:]
@@ -103,6 +116,7 @@ class ImageProcessingService:
             logger.info(f"Not enough images ({len(candidates)}), extracting from detail HTML...")
             extra_images = self.extract_images_from_html(detail_html, limit=target_count - len(candidates) + 5) # Get a few more to be safe
             candidates.extend(extra_images)
+            stats["supplemented_from_html"] = len(extra_images or [])
             
         # Deduplicate
         seen = set()
@@ -111,6 +125,8 @@ class ImageProcessingService:
             if url not in seen:
                 unique_candidates.append(url)
                 seen.add(url)
+
+        stats["unique_candidates"] = len(unique_candidates)
         
         # 2. Process
         logger.info(f"Processing {len(unique_candidates)} images for product {product_id}...")
@@ -118,32 +134,89 @@ class ImageProcessingService:
         for i, url in enumerate(unique_candidates):
             if len(processed_urls) >= 10: # Safety cap
                 break
-                
             try:
                 # Download
                 resp = requests.get(url, timeout=10)
                 if resp.status_code != 200:
+                    stats["download_fail"] += 1
                     continue
-                
-                # Hash Breaking
-                processed_bytes = self.hash_breaking(resp.content)
-                if not processed_bytes:
-                    # Fallback to original if processing fails (e.g. invalid format)
-                    logger.warning(f"Hash breaking failed for {url}, using original.")
-                    processed_bytes = resp.content
-                
-                # Upload
-                new_url = storage_service.upload_image(
-                    processed_bytes, 
-                    path_prefix=f"market_processing/{product_id}"
-                )
-                
-                if new_url:
-                    processed_urls.append(new_url)
+
+                stats["download_ok"] += 1
+
+                original_bytes = resp.content
+
+                remaining_needed = max(0, target_count - len(processed_urls))
+                remaining_sources = max(1, len(unique_candidates) - i)
+                variants_to_make = max(1, int(math.ceil(remaining_needed / remaining_sources)))
+                variants_to_make = min(variants_to_make, 5)
+
+                for _ in range(variants_to_make):
+                    if len(processed_urls) >= 10:
+                        break
+                    if len(processed_urls) >= target_count:
+                        break
+
+                    # Hash Breaking
+                    processed_bytes = self.hash_breaking(original_bytes)
+                    if not processed_bytes:
+                        logger.warning(f"Hash breaking failed for {url}, using original.")
+                        stats["hash_break_fail"] += 1
+                        processed_bytes = original_bytes
+
+                    # Upload
+                    new_url = storage_service.upload_image(
+                        processed_bytes,
+                        path_prefix=f"market_processing/{product_id}"
+                    )
+
+                    if new_url:
+                        processed_urls.append(new_url)
+                        stats["upload_ok"] += 1
+                    else:
+                        stats["upload_fail"] += 1
                     
             except Exception as e:
-                logger.error(f"Failed to process image {url}: {e}")
+                stats["exceptions"] += 1
+                logger.error(f"이미지 처리 실패(url={url}): {e}")
                 
+        logger.info(
+            "이미지 처리 요약(productId=%s, target=%s, input=%s, unique=%s, fromHtml=%s, downloadOk=%s, downloadFail=%s, hashFail=%s, uploadOk=%s, uploadFail=%s, exceptions=%s, result=%s)",
+            product_id,
+            stats["target_count"],
+            stats["input_count"],
+            stats["unique_candidates"],
+            stats["supplemented_from_html"],
+            stats["download_ok"],
+            stats["download_fail"],
+            stats["hash_break_fail"],
+            stats["upload_ok"],
+            stats["upload_fail"],
+            stats["exceptions"],
+            len(processed_urls),
+        )
+
+        if (
+            len(processed_urls) < target_count
+            or stats["download_fail"] > 0
+            or stats["upload_fail"] > 0
+            or stats["exceptions"] > 0
+        ):
+            logger.warning(
+                "이미지 처리 경고(productId=%s, target=%s, input=%s, unique=%s, fromHtml=%s, downloadOk=%s, downloadFail=%s, hashFail=%s, uploadOk=%s, uploadFail=%s, exceptions=%s, result=%s)",
+                product_id,
+                stats["target_count"],
+                stats["input_count"],
+                stats["unique_candidates"],
+                stats["supplemented_from_html"],
+                stats["download_ok"],
+                stats["download_fail"],
+                stats["hash_break_fail"],
+                stats["upload_ok"],
+                stats["upload_fail"],
+                stats["exceptions"],
+                len(processed_urls),
+            )
+
         return processed_urls
 
 image_processing_service = ImageProcessingService()

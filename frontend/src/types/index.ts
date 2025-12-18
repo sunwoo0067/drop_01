@@ -7,6 +7,7 @@ export interface Product {
     processing_status: string;
     processed_image_urls?: string[];
     created_at: string;
+    status: string;
 }
 
 export interface SourcingCandidate {
