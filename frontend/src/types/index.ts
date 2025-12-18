@@ -25,6 +25,7 @@ export interface SourcingCandidate {
     specData?: Record<string, any> | null;
     seoKeywords?: string[] | null;
     targetEvent?: string | null;
+    thumbnailUrl?: string | null;
     status: string;
     createdAt?: string | null;
 }

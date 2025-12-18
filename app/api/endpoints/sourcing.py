@@ -247,6 +247,7 @@ def list_sourcing_candidates(
                 "specData": row.spec_data,
                 "seoKeywords": row.seo_keywords,
                 "targetEvent": row.target_event,
+                "thumbnailUrl": row.thumbnail_url,
                 "status": row.status,
                 "createdAt": row.created_at.isoformat() if row.created_at else None,
             }
@@ -274,6 +275,7 @@ def get_sourcing_candidate(candidate_id: uuid.UUID, session: Session = Depends(g
         "specData": row.spec_data,
         "seoKeywords": row.seo_keywords,
         "targetEvent": row.target_event,
+        "thumbnailUrl": row.thumbnail_url,
         "status": row.status,
         "createdAt": row.created_at.isoformat() if row.created_at else None,
     }

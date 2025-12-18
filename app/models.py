@@ -333,6 +333,7 @@ class SourcingCandidate(DropshipBase):
     spec_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True) # Extracted specs
     seo_keywords: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True) # High value keywords
     target_event: Mapped[str | None] = mapped_column(Text, nullable=True) # e.g. "Christmas"
+    thumbnail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
     
