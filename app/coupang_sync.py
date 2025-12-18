@@ -276,6 +276,7 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
     # 1. 메타 데이터 준비
     return_center_code, outbound_center_code, delivery_company_code, _debug = _get_default_centers(client, account, session)
     if not return_center_code or not outbound_center_code:
+        logger.error(f"기본 센터 정보 조회 실패: {_debug}")
         return False, f"기본 센터 정보 조회 실패: {_debug}"
 
     # 기본 매핑
@@ -767,7 +768,7 @@ def _get_default_centers(client: CoupangClient, account: MarketAccount | None = 
     outbound_code = _extract_first_code(outbound_data, ["outboundShippingPlaceCode", "outbound_shipping_place_code", "shippingPlaceCode", "placeCode"])
     
     # 택배사 코드 추출
-    delivery_company_code = "KDEXP" # Default fallback
+    delivery_company_code = "KDEXP"  # 기본값 (경동택배)
     if isinstance(outbound_data, dict):
         # v2 API Response check
         data_obj = outbound_data.get("data") if isinstance(outbound_data.get("data"), dict) else None
@@ -776,8 +777,25 @@ def _get_default_centers(client: CoupangClient, account: MarketAccount | None = 
             # Typical keys: deliveryCompanyCodes (list) or usableDeliveryCompanies
             codes = content[0].get("deliveryCompanyCodes") or content[0].get("usableDeliveryCompanies")
             if isinstance(codes, list) and codes:
-                delivery_company_code = str(codes[0])
-
+                first_code_entry = codes[0]
+                if isinstance(first_code_entry, dict):
+                    # dict 형태인 경우 (예: {'deliveryCompanyCode': '...', 'deliveryCompanyName': '...'})
+                    # 문서상 여러 키 가능성 대비
+                    delivery_company_code = (
+                        first_code_entry.get("deliveryCompanyCode") or 
+                        first_code_entry.get("code") or 
+                        first_code_entry.get("id")
+                    )
+                else:
+                    # str 형태인 경우
+                    delivery_company_code = str(first_code_entry)
+            
+            if not delivery_company_code:
+                logger.warning(f"지원 택배사 목록이 비어있거나 코드를 추출할 수 없습니다. 기본값 {delivery_company_code}를 사용합니다. (outbound_code={outbound_code})")
+                delivery_company_code = "KDEXP"
+        else:
+            logger.warning(f"출고지 정보에 택배사 데이터가 없습니다. 기본값 {delivery_company_code}를 사용합니다. (outbound_code={outbound_code})")
+    
     outbound_debug = _extract_msg(outbound_rc, outbound_data)
         
     # 반품지 (Return)
@@ -827,12 +845,12 @@ def _map_product_to_coupang_payload(
     # 가공된 이미지 우선 사용
     images = []
     if product.processed_image_urls:
-         # processed_image_urls는 JSONB 리스트
-         img_list = product.processed_image_urls
-         if isinstance(img_list, list):
-             for url in img_list:
-                  image_type = "REPRESENTATION" if len(images) == 0 else "DETAIL"
-                  images.append({"imageOrder": len(images), "imageType": image_type, "vendorPath": url})
+        # processed_image_urls는 JSONB 리스트
+        img_list = product.processed_image_urls
+        if isinstance(img_list, list):
+            for url in img_list:
+                image_type = "REPRESENTATION" if len(images) == 0 else "DETAIL"
+                images.append({"imageOrder": len(images), "imageType": image_type, "vendorPath": url})
     
     # 가공된 이미지가 없을 경우 처리 방안 필요
     # 현재는 선행 단계에서 처리되었다고 가정함.

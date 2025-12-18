@@ -2,55 +2,49 @@ import cv2
 import numpy as np
 import sys
 import os
-import random
 
-# Mocking ImageProcessingService logic
-def mock_hash_breaking(image_bytes):
-    nparr = np.frombuffer(image_bytes, np.uint8)
-    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    if img is None:
-        return None
-    
-    height, width = img.shape[:2]
-    scale = random.uniform(1.01, 1.02)
-    new_height, new_width = int(height * scale), int(width * scale)
-    
-    MIN_DIM = 500
-    MAX_DIM = 5000
-    
-    if new_width < MIN_DIM or new_height < MIN_DIM:
-        ratio = max(MIN_DIM / new_width, MIN_DIM / new_height)
-        new_width = int(new_width * ratio)
-        new_height = int(new_height * ratio)
-    
-    if new_width > MAX_DIM or new_height > MAX_DIM:
-        ratio = min(MAX_DIM / new_width, MAX_DIM / new_height)
-        new_width = int(new_width * ratio)
-        new_height = int(new_height * ratio)
+# 프로젝트 루트 경로 추가
+sys.path.append(os.getcwd())
 
-    img_resized = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
-    return img_resized
+from app.services.image_processing import image_processing_service
 
 def test_image_resize():
-    # 1. Create a small image (100x100)
+    print("이미지 리사이징 테스트 시작...")
+    
+    # 1. 작은 이미지 테스트 (100x100)
+    print("- 작은 이미지(100x100) 테스트 중...")
     small_img = np.zeros((100, 100, 3), dtype=np.uint8)
     _, encoded = cv2.imencode(".jpg", small_img)
     
-    processed = mock_hash_breaking(encoded.tobytes())
-    h, w = processed.shape[:2]
-    print(f"Original: 100x100 -> Processed: {w}x{h}")
-    assert w >= 500 and h >= 500, "Should be at least 500x500"
+    # 실제 서비스의 hash_breaking 호출
+    processed_bytes = image_processing_service.hash_breaking(encoded.tobytes())
+    assert processed_bytes is not None, "이미지 가공 실패"
+    
+    nparr = np.frombuffer(processed_bytes, np.uint8)
+    processed_img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    h, w = processed_img.shape[:2]
+    print(f"  원본: 100x100 -> 가공 후: {w}x{h}")
+    assert w >= 500 and h >= 500, "최소 규격(500x500) 미달"
 
-    # 2. Create a large image (6000x4000)
-    # Actually 6000x4000 might consume much memory, let's try something large but safe
+    # 2. 큰 이미지 테스트 (6000x4000)
+    print("- 큰 이미지(6000x4000) 테스트 중...")
     large_img = np.zeros((4000, 6000, 3), dtype=np.uint8)
     _, encoded = cv2.imencode(".jpg", large_img)
-    processed = mock_hash_breaking(encoded.tobytes())
-    h, w = processed.shape[:2]
-    print(f"Original: 6000x4000 -> Processed: {w}x{h}")
-    assert w <= 5000 and h <= 5000, "Should be at most 5000x5000"
+    
+    processed_bytes = image_processing_service.hash_breaking(encoded.tobytes())
+    assert processed_bytes is not None, "이미지 가공 실패"
+    
+    nparr = np.frombuffer(processed_bytes, np.uint8)
+    processed_img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    h, w = processed_img.shape[:2]
+    print(f"  원본: 6000x4000 -> 가공 후: {w}x{h}")
+    assert w <= 5000 and h <= 5000, "최대 규격(5000x5000) 초과"
 
-    print("Image resize test passed!")
+    print("이미지 리사이징 테스트 완료!")
 
 if __name__ == "__main__":
-    test_image_resize()
+    try:
+        test_image_resize()
+    except Exception as e:
+        print(f"테스트 실패: {e}")
+        sys.exit(1)
