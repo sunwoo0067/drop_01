@@ -58,26 +58,38 @@ class ImageProcessingService:
             if img is None:
                 return None
             
-            # 2. Resize (Zoom in/Scale up slightly)
-            scale = random.uniform(1.01, 1.02) # 1% ~ 2%
+            # 2. Resize Control (Coupang requirements: 500x500 ~ 5000x5000)
             height, width = img.shape[:2]
+            
+            # 해시 브레이킹을 위한 미세 조정 (기존 로직 유지)
+            scale = random.uniform(1.01, 1.02)
             new_height, new_width = int(height * scale), int(width * scale)
+            
+            # 최소/최대 규격 준수 강제 조정
+            MIN_DIM = 500
+            MAX_DIM = 5000
+            
+            if new_width < MIN_DIM or new_height < MIN_DIM:
+                # 500x500 미만인 경우 비율을 유지하며 최소 크기로 조정
+                ratio = max(MIN_DIM / new_width, MIN_DIM / new_height)
+                new_width = int(new_width * ratio)
+                new_height = int(new_height * ratio)
+            
+            if new_width > MAX_DIM or new_height > MAX_DIM:
+                # 5000x5000을 초과하는 경우 비율을 유지하며 최대 크기로 조정
+                ratio = min(MAX_DIM / new_width, MAX_DIM / new_height)
+                new_width = int(new_width * ratio)
+                new_height = int(new_height * ratio)
+
             img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
             
-            # Crop back to roughly original or keep scaled (Keeping scaled is fine for now, usually better quality)
-            # Let's crop center to remove potential border artifacts if we want original size, 
-            # but usually just resizing is enough to break hash. 
-            # To be safe, let's crop the center to original size to avoid weird aspect ratios if we just stretched.
-            # start_h = (new_height - height) // 2
-            # start_w = (new_width - width) // 2
-            # img = img[start_h:start_h+height, start_w:start_w+width]
-
             # 3. Brightness/Contrast Adjustment (Random minimal)
             alpha = random.uniform(0.98, 1.02) # Contrast
             beta = random.randint(-5, 5)       # Brightness
             img = cv2.convertScaleAbs(img, alpha=alpha, beta=beta)
             
             # 4. Strip Metadata (Implicit by decoding/encoding) & Encode
+            # Coupang suggests JPG quality around 90 is good. Max size 10MB.
             success, encoded_img = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
             if not success:
                 return None

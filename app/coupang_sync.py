@@ -273,12 +273,10 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
         logger.error(f"클라이언트 초기화 실패: {e}")
         return False, f"클라이언트 초기화 실패: {e}"
 
-    # 1. 데이터 준비
-    # 설정에 제공되지 않은 경우 센터 코드를 자동 감지합니다 (현재는 첫 번째 사용 가능한 센터 조회)
-    return_center_code, outbound_center_code, centers_debug = _get_default_centers(client, account=account, session=session)
+    # 1. 메타 데이터 준비
+    return_center_code, outbound_center_code, delivery_company_code, _debug = _get_default_centers(client, account, session)
     if not return_center_code or not outbound_center_code:
-        logger.error(f"반품/출고지 센터 코드를 확인할 수 없습니다. {centers_debug}")
-        return False, f"반품/출고지 센터 코드 조회 실패: {centers_debug}"
+        return False, f"기본 센터 정보 조회 실패: {_debug}"
 
     # 기본 매핑
     # 1.5 카테고리 예측
@@ -374,6 +372,7 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
         return_center_detail,
         notice_meta,
         shipping_fee,
+        delivery_company_code,
     )
     
     # 2. API 호출
@@ -721,16 +720,17 @@ def fulfill_coupang_orders_via_ownerclan(
     }
 
 
-def _get_default_centers(client: CoupangClient, account: MarketAccount | None = None, session: Session | None = None) -> tuple[str | None, str | None, str]:
+def _get_default_centers(client: CoupangClient, account: MarketAccount | None = None, session: Session | None = None) -> tuple[str | None, str | None, str | None, str]:
     """
-    첫 번째로 사용 가능한 반품지 및 출고지 센터 코드를 조회합니다.
-    Returns (return_center_code, outbound_center_code)
+    첫 번째로 사용 가능한 반품지, 출고지 센터 코드 및 해당 출고지의 기본 택배사 코드를 조회합니다.
+    Returns (return_center_code, outbound_center_code, delivery_company_code, debug_msg)
     """
     if account is not None and isinstance(account.credentials, dict):
         cached_return = account.credentials.get("default_return_center_code")
         cached_outbound = account.credentials.get("default_outbound_shipping_place_code")
-        if cached_return and cached_outbound:
-            return str(cached_return), str(cached_outbound), "cached(사용)"
+        cached_delivery = account.credentials.get("default_delivery_company_code")
+        if cached_return and cached_outbound and cached_delivery:
+            return str(cached_return), str(cached_outbound), str(cached_delivery), "cached(사용)"
 
     def _extract_msg(rc: int, data: dict[str, Any]) -> str:
         code = None
@@ -762,9 +762,22 @@ def _get_default_centers(client: CoupangClient, account: MarketAccount | None = 
 
         return None
 
-    # 출고지 (Outbound)
+    # 출고지 (Outbound) 및 택배사 (Delivery Company)
     outbound_rc, outbound_data = client.get_outbound_shipping_centers(page_size=10)
     outbound_code = _extract_first_code(outbound_data, ["outboundShippingPlaceCode", "outbound_shipping_place_code", "shippingPlaceCode", "placeCode"])
+    
+    # 택배사 코드 추출
+    delivery_company_code = "KDEXP" # Default fallback
+    if isinstance(outbound_data, dict):
+        # v2 API Response check
+        data_obj = outbound_data.get("data") if isinstance(outbound_data.get("data"), dict) else None
+        content = (data_obj.get("content") if data_obj else outbound_data.get("content")) or []
+        if content and isinstance(content[0], dict):
+            # Typical keys: deliveryCompanyCodes (list) or usableDeliveryCompanies
+            codes = content[0].get("deliveryCompanyCodes") or content[0].get("usableDeliveryCompanies")
+            if isinstance(codes, list) and codes:
+                delivery_company_code = str(codes[0])
+
     outbound_debug = _extract_msg(outbound_rc, outbound_data)
         
     # 반품지 (Return)
@@ -779,12 +792,13 @@ def _get_default_centers(client: CoupangClient, account: MarketAccount | None = 
             creds = dict(account.credentials)
             creds["default_return_center_code"] = str(return_code)
             creds["default_outbound_shipping_place_code"] = str(outbound_code)
+            creds["default_delivery_company_code"] = delivery_company_code
             account.credentials = creds
             session.commit()
         except Exception as e:
             logger.warning(f"센터 코드 캐시 저장 실패: {e}")
 
-    return return_code, outbound_code, debug
+    return return_code, outbound_code, delivery_company_code, debug
 
 
 def _map_product_to_coupang_payload(
@@ -796,6 +810,7 @@ def _map_product_to_coupang_payload(
     return_center_detail: dict[str, Any] | None = None,
     notice_meta: dict[str, Any] | None = None,
     shipping_fee: int = 0,
+    delivery_company_code: str = "KDEXP",
 ) -> dict[str, Any]:
     """
     내부 Product 모델을 쿠팡 API Payload로 매핑합니다.
@@ -816,7 +831,8 @@ def _map_product_to_coupang_payload(
          img_list = product.processed_image_urls
          if isinstance(img_list, list):
              for url in img_list:
-                 images.append({"imageOrder": len(images), "imageType": "REPRESENTATION", "vendorPath": url})
+                  image_type = "REPRESENTATION" if len(images) == 0 else "DETAIL"
+                  images.append({"imageOrder": len(images), "imageType": image_type, "vendorPath": url})
     
     # 가공된 이미지가 없을 경우 처리 방안 필요
     # 현재는 선행 단계에서 처리되었다고 가정함.
@@ -942,7 +958,7 @@ def _map_product_to_coupang_payload(
         "generalProductName": name_to_use, # 보통 노출명과 동일
         "productOrigin": "수입산", # 위탁판매 기본
         "deliveryMethod": "SEQUENCIAL", # 일반 배송
-        "deliveryCompanyCode": "KDEXP", # 기본 택배사 (경동? 설정값 확인 필요)
+        "deliveryCompanyCode": delivery_company_code,
         "deliveryChargeType": "FREE", # 일단 무료배송으로 시작
         "deliveryCharge": 0,
         "freeShipOverAmount": 0,
