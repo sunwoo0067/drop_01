@@ -1,19 +1,33 @@
-# Frontend Documentation
+# 프론트엔드 (Next.js)
 
-## 🎨 UI/UX & Stack
-- **Framework**: Next.js 15+ (App Router)
-- **Styling**: Tailwind CSS 4
-- **Typography**: Inter (English), Noto Sans KR (Korean)
+`frontend/`의 UI/UX와 백엔드 API 연동을 담당합니다.
+
+## UI/UX & 스택
+- **Framework**: Next.js (App Router)
+- **Styling**: Tailwind CSS
 - **Icons**: `lucide-react`
-- **State Management**: React Hooks (useState, useEffect) & API integration
+- **HTTP Client**: Axios 기반 `frontend/src/lib/api`
+- **상태 관리**: 기본은 React Hooks(`useState`, `useEffect`)
 
-## 🏗️ Structure
-- `frontend/src/app/`: App Router 기반 페이지 구성
-- `frontend/src/components/`: 재사용 가능한 UI 컴포넌트 (Button, Card, Badge 등)
-- `frontend/src/lib/`: 공통 유틸리티 및 API 클라이언트 (`api.ts`)
+## 구조
+- `frontend/src/app/`: 페이지 라우팅(App Router)
+- `frontend/src/components/`: UI 컴포넌트(`Button`, `Card`, `Badge` 등)
+- `frontend/src/lib/`: API 클라이언트/유틸
+- `frontend/src/types/`: 백엔드 응답과 맞춘 타입 정의
 
-## 💅 Design Principles
-- **Aesthetics**: 다크 모드 지원, 부드러운 그라데이션, 마이크로 애니메이션을 통한 프리미엄 느낌 강조
-- **Consistency**: 정의된 CSS 변수와 `Card`, `Button` 컴포넌트를 일관되게 사용
-- **Responsiveness**: 모든 페이지는 모바일/데스크탑 반응형 대응 필수
-- **Type Safety**: `any` 타입 사용을 지양하고 인터페이스를 명확히 정의
+## 백엔드 연동 규칙
+- **응답 필드 이름은 백엔드 스키마를 우선**으로 맞춥니다.
+- Next.js 환경에서 `/api/products` → `/api/products/` 307 리다이렉트가 CORS/Network Error로 이어질 수 있어, 백엔드가 alias를 제공하는지 확인합니다.
+
+## PR #20 관련 화면/타입
+- 등록 페이지: `frontend/src/app/registration/page.tsx`
+  - `market_listings`에서 쿠팡 리스팅을 찾아 `coupang_status`가 `DENIED`이면 반려 사유를 노출합니다.
+  - `POST /api/coupang/sync-status/{productId}` 호출로 상태를 수동 갱신할 수 있습니다.
+- 타입: `frontend/src/types/index.ts`
+  - `Product.market_listings?: MarketListing[]`
+  - `MarketListing.coupang_status?: string | null`
+  - `MarketListing.rejection_reason?: object | null`
+
+## 프론트 린트/빌드 주의
+- CI에서 `npm run lint` + `npm run build`가 실행됩니다.
+- 사용하지 않는 import(특히 아이콘 import)는 eslint 실패의 원인이 되므로 주기적으로 정리합니다.
