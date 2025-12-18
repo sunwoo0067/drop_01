@@ -8,8 +8,6 @@ import {
     Search,
     Settings,
     Bot,
-    Menu,
-    X,
     BarChart3,
     Download,
     Database,
@@ -70,6 +68,7 @@ export default function Sidebar() {
             {/* Collapse Toggle Button */}
             <button
                 onClick={() => setCollapsed(!collapsed)}
+                aria-label={collapsed ? "사이드바 펼치기" : "사이드바 접기"}
                 className="absolute -right-3 top-20 flex h-6 w-6 items-center justify-center rounded-full border bg-background shadow-sm hover:bg-accent transition-colors z-10"
             >
                 {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
