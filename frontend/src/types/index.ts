@@ -6,6 +6,7 @@ export interface Product {
     selling_price: number;
     processing_status: string;
     processed_image_urls?: string[];
+    processed_keywords?: string[];
     created_at: string;
     status: string;
 }

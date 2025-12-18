@@ -16,6 +16,8 @@ export default function SourcingPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
+    const [promotingIds, setPromotingIds] = useState<Set<string>>(new Set());
+
     const fetchCandidates = async (q?: string) => {
         setLoading(true);
         setError(null);
@@ -34,6 +36,34 @@ export default function SourcingPage() {
             setItems([]);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handlePromote = async (candidateId: string) => {
+        if (promotingIds.has(candidateId)) return;
+
+        setPromotingIds(prev => new Set(prev).add(candidateId));
+        try {
+            // 1. Mark as APPROVED
+            await api.patch(`/sourcing/candidates/${candidateId}`, { status: "APPROVED" });
+
+            // 2. Promote to Product
+            await api.post(`/sourcing/candidates/${candidateId}/promote`, {
+                autoProcess: true,
+                minImagesRequired: 3
+            });
+
+            // 3. Remove from list or refresh
+            setItems(prev => prev.filter(item => item.id !== candidateId));
+        } catch (e) {
+            console.error("Promotion failed", e);
+            alert("상품 승격에 실패했습니다.");
+        } finally {
+            setPromotingIds(prev => {
+                const next = new Set(prev);
+                next.delete(candidateId);
+                return next;
+            });
         }
     };
 
@@ -152,8 +182,8 @@ export default function SourcingPage() {
                                         <Badge
                                             variant="outline"
                                             className={`text-[10px] uppercase font-bold tracking-tighter px-1.5 py-0 ${item.status === 'PENDING' ? 'border-yellow-500/50 text-yellow-600 bg-yellow-50' :
-                                                    item.status === 'APPROVED' ? 'border-emerald-500/50 text-emerald-600 bg-emerald-50' :
-                                                        'border-muted text-muted-foreground'
+                                                item.status === 'APPROVED' ? 'border-emerald-500/50 text-emerald-600 bg-emerald-50' :
+                                                    'border-muted text-muted-foreground'
                                                 }`}
                                         >
                                             {item.status}
@@ -164,8 +194,18 @@ export default function SourcingPage() {
                                     <Button className="w-full bg-primary/10 hover:bg-primary/20 text-primary border-none" variant="outline" size="sm">
                                         상세 정보
                                     </Button>
-                                    <Button className="w-full shadow-lg shadow-primary/20" size="sm">
-                                        소싱 승인
+                                    <Button
+                                        className="flex-1 rounded-xl"
+                                        variant="primary"
+                                        size="sm"
+                                        onClick={() => handlePromote(item.id)}
+                                        disabled={promotingIds.has(item.id)}
+                                    >
+                                        {promotingIds.has(item.id) ? (
+                                            <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                            "소싱 승인"
+                                        )}
                                     </Button>
                                 </CardFooter>
                             </Card>
