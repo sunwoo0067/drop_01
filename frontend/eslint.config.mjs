@@ -8,6 +8,7 @@ const eslintConfig = defineConfig([
   {
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
+      "react/no-unescaped-entities": "off",
     },
   },
   // Override default ignores of eslint-config-next.
