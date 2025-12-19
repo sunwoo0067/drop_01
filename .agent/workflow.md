@@ -10,6 +10,7 @@
 - **쿠팡 등록/동기화**: `app/api/endpoints/coupang.py` 및 `app/coupang_sync.py`
 - **쿠팡 상태 동기화(PR #20)**: `/api/coupang/sync-status/{product_id}` (POST)
 - **백그라운드 작업**: FastAPI `BackgroundTasks`를 사용합니다.
+- **AI 오케스트레이션 (PR #31)**: `SourcingAgent.run()` 또는 `ProcessingAgent.run()`을 통해 비동기 그래프 워크플로우 실행.
 
 ## 테스트 및 검증
 - **Scripts**: `scripts/` 디렉토리에 개별 테스트 및 배치 스크립트 위치

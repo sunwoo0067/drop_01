@@ -16,9 +16,21 @@
   - 예: Product(Dropship) ↔ MarketListing(Market)은 **별도 조회 후 응답에서 합치기** 방식으로 처리합니다.
 - PR #20 보강: `GET /api/products/` 및 `GET /api/products/{id}`에서 `market_listings`를 별도 조회 후 `ProductResponse`로 합쳐 내려줍니다.
 
-## 외부 API 연동 규칙
 - **클라이언트**: `CoupangClient`, `OwnerClanClient` 사용 시 예외 처리를 필수 적용합니다.
+- **AI/LLM**: `AIService`를 통해 Gemini, OpenAI, Ollama를 추상화하여 사용합니다.
 - **에러 처리/로그**: 실패 시 HTTP 상태 코드와 메시지를 포함해 한국어로 남깁니다.
+
+## AI 오케스트레이션 (LangGraph)
+- **위치**: `app/services/ai/agents/`
+- **핵심 에이전트**:
+  - `SourcingAgent`: 벤치마크 분석 및 공급처 매칭 오케스트레이션
+  - `ProcessingAgent`: 상품 정보 추출 및 가공 프로세스 관리
+- **상태 관리**: `AgentState` (TypedDict)를 통해 노드 간 데이터를 공유합니다.
+
+## PR #31 관련 핵심 기능
+- **LangGraph 에이전트**: 그래프 기반의 비동기 마이크로 워크플로우 도입
+- **EmbeddingService**: 배치 임베딩 생성(`generate_batch_embeddings`) 및 유사도 계산
+- **서비스 리팩토링**: `SourcingService`, `ProcessingService`의 에이전트 연동 및 비동기화
 
 ## PR #20 관련 핵심 기능
 - **MarketListing 필드 추가**: `coupang_status`, `rejection_reason(JSONB)`

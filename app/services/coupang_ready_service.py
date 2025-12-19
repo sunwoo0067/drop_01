@@ -355,7 +355,7 @@ def augment_product_images_best_effort(session: Session, product: Product, raw: 
     return len(merged) > before_count
 
 
-def ensure_product_ready_for_coupang(
+async def ensure_product_ready_for_coupang(
     session: Session,
     product_id: str,
     min_images_required: int = 5,
@@ -384,7 +384,7 @@ def ensure_product_ready_for_coupang(
             from app.services.processing_service import ProcessingService
 
             service = ProcessingService(session)
-            service.process_product(product.id, min_images_required=int(min_images_required))
+            await service.process_product(product.id, min_images_required=int(min_images_required))
             processed = True
         except Exception as e:
             logger.error(f"상품 가공 실패(productId={product.id}): {e}")

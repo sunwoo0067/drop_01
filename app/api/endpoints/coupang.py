@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import select
+import asyncio
 import uuid
 from pydantic import BaseModel, Field
 
@@ -152,7 +153,7 @@ async def register_products_bulk_endpoint(
                 continue
 
             if auto_fix:
-                ready = ensure_product_ready_for_coupang(
+                ready = await ensure_product_ready_for_coupang(
                     session,
                     str(p.id),
                     min_images_required=5,
@@ -312,7 +313,7 @@ async def register_product_endpoint(
     if auto_fix:
         from app.services.coupang_ready_service import ensure_product_ready_for_coupang
 
-        ready = ensure_product_ready_for_coupang(
+        ready = await ensure_product_ready_for_coupang(
             session,
             str(product.id),
             min_images_required=5,
@@ -475,12 +476,14 @@ def execute_bulk_coupang_registration(
 
         for p in products:
             total += 1
-            ready = ensure_product_ready_for_coupang(
-                session,
-                str(p.id),
-                min_images_required=5,
-                force_fetch_ownerclan=bool(force_fetch_ownerclan),
-                augment_images=bool(augment_images),
+            ready = asyncio.run(
+                ensure_product_ready_for_coupang(
+                    session,
+                    str(p.id),
+                    min_images_required=5,
+                    force_fetch_ownerclan=bool(force_fetch_ownerclan),
+                    augment_images=bool(augment_images),
+                )
             )
             if not ready.get("ok"):
                 continue
@@ -520,12 +523,14 @@ def execute_coupang_registration(
     
     with session_factory() as session:
         if auto_fix:
-            ready = ensure_product_ready_for_coupang(
-                session,
-                str(product_id),
-                min_images_required=5,
-                force_fetch_ownerclan=bool(force_fetch_ownerclan),
-                augment_images=bool(augment_images),
+            ready = asyncio.run(
+                ensure_product_ready_for_coupang(
+                    session,
+                    str(product_id),
+                    min_images_required=5,
+                    force_fetch_ownerclan=bool(force_fetch_ownerclan),
+                    augment_images=bool(augment_images),
+                )
             )
             if not ready.get("ok"):
                 return

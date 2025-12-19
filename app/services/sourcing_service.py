@@ -9,6 +9,7 @@ from app.models import Product, SourcingCandidate, BenchmarkProduct, SupplierIte
 from app.ownerclan_client import OwnerClanClient
 from app.settings import settings
 from app.services.ai import AIService
+from app.services.ai.agents.sourcing_agent import SourcingAgent
 from app.embedding_service import EmbeddingService
 
 logger = logging.getLogger(__name__)
@@ -16,13 +17,9 @@ logger = logging.getLogger(__name__)
 class SourcingService:
     def __init__(self, db: Session):
         self.db = db
-        self.clant = OwnerClanClient(
-            auth_url=settings.ownerclan_auth_url,
-            api_base_url=settings.ownerclan_api_base_url,
-            graphql_url=settings.ownerclan_graphql_url
-        )
         self.embedding_service = EmbeddingService()
         self.ai_service = AIService()
+        self.sourcing_agent = SourcingAgent(db)
 
     def _get_ownerclan_primary_client(self, user_type: str = "seller") -> OwnerClanClient:
         account = (
@@ -109,58 +106,36 @@ class SourcingService:
                     thumbnail_url=item.get("thumbnail_url") or (item.get("images")[0] if item.get("images") else None)
                 )
 
-    def execute_benchmark_sourcing(self, benchmark_id: uuid.UUID):
+    async def execute_benchmark_sourcing(self, benchmark_id: uuid.UUID):
         """
-        Strategy 2: Benchmark Sourcing (Gap Analysis & Spec Match)
+        Strategy 2: Benchmark Sourcing (LangGraph 기반 에이전트 오케스트레이션)
         """
         benchmark = self.db.execute(select(BenchmarkProduct).where(BenchmarkProduct.id == benchmark_id)).scalar_one_or_none()
         if not benchmark:
             logger.error(f"Benchmark product {benchmark_id} not found")
             return
 
-        client = self._get_ownerclan_primary_client(user_type="seller")
-
-        # 1. Analyze Benchmark (if not already)
-        if not benchmark.pain_points:
-            # Use Tier 1 (Gemini) for complex reasoning like Pain Point Analysis
-            benchmark.pain_points = self.ai_service.analyze_pain_points(benchmark.detail_html or benchmark.name, provider="gemini")
-            self.db.commit()
-            
-        search_terms = [benchmark.name] 
-        # 3. Search OwnerClan
-        found_items = []
-        status_code, data = client.get_products(keyword=benchmark.name, limit=50)
-        if status_code == 200:
-            found_items = self._extract_items(data)
-        else:
-            logger.warning(f"오너클랜 상품 검색 실패: HTTP {status_code} (keyword={benchmark.name})")
-
-        # 4. Score and Filter
-        for item in found_items:
-            candidate_item = item 
-            
-            # A. Spec Matching
-            # Use 'auto' (Tier 2/Ollama typically sufficient for extraction)
-            specs = self.ai_service.extract_specs(str(candidate_item), provider="auto")
-            
-            # B. Gap Analysis skipped for brevity in this step
-            
-            # C. Seasonality & Event Scoring
-            season_data = self.ai_service.predict_seasonality(
-                (candidate_item.get("item_name") or candidate_item.get("name") or ""),
-                provider="auto"
-            )
-            current_month_score = season_data.get("current_month_score", 0.0)
-            
-            # D. Create Candidate
+        # LangGraph 에이전트 실행
+        input_data = {
+            "name": benchmark.name,
+            "detail_html": benchmark.detail_html,
+            "price": benchmark.price
+        }
+        
+        result = await self.sourcing_agent.run(str(benchmark_id), input_data)
+        
+        # 에이전트 결과를 바탕으로 기존 _create_candidate 호출 로직 유지가능
+        for candidate_data in result.get("candidate_results", []):
             self._create_candidate(
-                candidate_item, 
-                strategy="BENCHMARK", 
+                candidate_data,
+                strategy="BENCHMARK_AGENT",
                 benchmark_id=benchmark.id,
-                seasonal_score=current_month_score,
-                spec_data=specs,
-                thumbnail_url=candidate_item.get("thumbnail_url") or (candidate_item.get("images")[0] if candidate_item.get("images") else None)
+                seasonal_score=candidate_data.get("seasonal_score"),
+                spec_data=result.get("specs"),
+                thumbnail_url=candidate_data.get("thumbnail_url")
             )
+        
+        logger.info(f"LangGraph Agent sourcing finished for {benchmark.name}")
 
     def _create_candidate(
         self,
