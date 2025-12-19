@@ -287,29 +287,39 @@ def _refresh_ownerclan_raw_if_needed(session: Session, product: Product) -> bool
 
 
 async def _execute_product_processing(product_id: uuid.UUID, min_images_required: int, force_fetch_ownerclan: bool) -> None:
+    import traceback
     from app.session_factory import session_factory
     from app.services.processing_service import ProcessingService
 
-    with session_factory() as processing_session:
-        product = processing_session.get(Product, product_id)
-        if not product:
-            return
+    try:
+        with session_factory() as processing_session:
+            product = processing_session.get(Product, product_id)
+            if not product:
+                return
 
-        if force_fetch_ownerclan:
-            _refresh_ownerclan_raw_if_needed(processing_session, product)
+            if force_fetch_ownerclan:
+                _refresh_ownerclan_raw_if_needed(processing_session, product)
 
-        service = ProcessingService(processing_session)
-        # async def로 변경된 process_product를 await 함
-        await service.process_product(product_id, min_images_required=min_images_required)
+            service = ProcessingService(processing_session)
+            await service.process_product(product_id, min_images_required=min_images_required)
+    except Exception as e:
+        error_trace = traceback.format_exc()
+        logger.error(f"Error in executing product processing for {product_id}:\n{error_trace}")
+        # Product.processing_status = "FAILED"는 ProcessingService.process_product 내부에서 처리됨
 
 
 async def _execute_pending_product_processing(limit: int, min_images_required: int) -> None:
+    import traceback
     from app.session_factory import session_factory
     from app.services.processing_service import ProcessingService
 
-    with session_factory() as processing_session:
-        service = ProcessingService(processing_session)
-        await service.process_pending_products(limit=limit, min_images_required=min_images_required)
+    try:
+        with session_factory() as processing_session:
+            service = ProcessingService(processing_session)
+            await service.process_pending_products(limit=limit, min_images_required=min_images_required)
+    except Exception as e:
+        error_trace = traceback.format_exc()
+        logger.error(f"Error in executing pending product processing (limit={limit}):\n{error_trace}")
 
 
 def _augment_product_images_best_effort(session: Session, product: Product, raw: dict, target_count: int) -> bool:
@@ -475,25 +485,30 @@ async def _run_failed_product_processing(
 
 
 async def _execute_failed_product_processing(limit: int, min_images_required: int, force_fetch_ownerclan: bool, augment_images: bool) -> None:
+    import traceback
     from app.session_factory import session_factory
 
-    with session_factory() as session:
-        summary = await _run_failed_product_processing(
-            session,
-            limit=limit,
-            min_images_required=min_images_required,
-            force_fetch_ownerclan=force_fetch_ownerclan,
-            augment_images=augment_images,
-        )
-        logger.info(
-            "failed 제품 재가공 요약(processed=%s, refreshedRaw=%s, augmentedImages=%s, completed=%s, failed=%s, minImagesRequired=%s)",
-            summary.get("processed"),
-            summary.get("refreshedRaw"),
-            summary.get("augmentedImages"),
-            summary.get("completed"),
-            summary.get("failed"),
-            summary.get("minImagesRequired"),
-        )
+    try:
+        with session_factory() as session:
+            summary = await _run_failed_product_processing(
+                session,
+                limit=limit,
+                min_images_required=min_images_required,
+                force_fetch_ownerclan=force_fetch_ownerclan,
+                augment_images=augment_images,
+            )
+            logger.info(
+                "failed 제품 재가공 요약(processed=%s, refreshedRaw=%s, augmentedImages=%s, completed=%s, failed=%s, minImagesRequired=%s)",
+                summary.get("processed"),
+                summary.get("refreshedRaw"),
+                summary.get("augmentedImages"),
+                summary.get("completed"),
+                summary.get("failed"),
+                summary.get("minImagesRequired"),
+            )
+    except Exception as e:
+        error_trace = traceback.format_exc()
+        logger.error(f"Error in executing failed product processing (limit={limit}):\n{error_trace}")
 
 
 def _is_safe_public_http_url(url: str) -> bool:
@@ -589,41 +604,46 @@ def _collect_image_urls_from_raw(raw: dict) -> list[str]:
 
 
 def _execute_augment_images_from_image_urls(product_id: uuid.UUID, image_urls: list[str], target_count: int) -> None:
+    import traceback
     from app.session_factory import session_factory
     from app.services.image_processing import image_processing_service
 
-    with session_factory() as session:
-        product = session.get(Product, product_id)
-        if not product:
-            return
+    try:
+        with session_factory() as session:
+            product = session.get(Product, product_id)
+            if not product:
+                return
 
-        existing = product.processed_image_urls if isinstance(product.processed_image_urls, list) else []
-        if len(existing) >= int(target_count):
-            return
+            existing = product.processed_image_urls if isinstance(product.processed_image_urls, list) else []
+            if len(existing) >= int(target_count):
+                return
 
-        new_urls = image_processing_service.process_and_upload_images(
-            image_urls=image_urls,
-            detail_html="",
-            product_id=str(product.id),
-        )
+            new_urls = image_processing_service.process_and_upload_images(
+                image_urls=image_urls,
+                detail_html="",
+                product_id=str(product.id),
+            )
 
-        merged: list[str] = []
-        seen: set[str] = set()
-        for u in (existing + (new_urls or [])):
-            if not u:
-                continue
-            su = str(u)
-            if su in seen:
-                continue
-            seen.add(su)
-            merged.append(su)
-            if len(merged) >= 20:
-                break
+            merged: list[str] = []
+            seen: set[str] = set()
+            for u in (existing + (new_urls or [])):
+                if not u:
+                    continue
+                su = str(u)
+                if su in seen:
+                    continue
+                seen.add(su)
+                merged.append(su)
+                if len(merged) >= 20:
+                    break
 
-        product.processed_image_urls = merged
-        if product.processed_name and len(merged) >= int(target_count):
-            product.processing_status = "COMPLETED"
-        session.commit()
+            product.processed_image_urls = merged
+            if product.processed_name and len(merged) >= int(target_count):
+                product.processing_status = "COMPLETED"
+            session.commit()
+    except Exception as e:
+        error_trace = traceback.format_exc()
+        logger.error(f"Error in augment_images_from_image_urls for {product_id}:\n{error_trace}")
 
 
 def _collect_string_urls(value: object, path: str, out: list[tuple[str, str]], depth: int = 0, max_depth: int = 6) -> None:
@@ -709,58 +729,63 @@ def _find_best_detail_url_from_raw(raw: dict) -> str | None:
 
 
 def _execute_augment_images_from_detail_url(product_id: uuid.UUID, detail_url: str, target_count: int) -> None:
+    import traceback
     from app.session_factory import session_factory
     import httpx
     from app.services.image_processing import image_processing_service
 
-    with session_factory() as session:
-        product = session.get(Product, product_id)
-        if not product:
-            return
-
-        existing = product.processed_image_urls if isinstance(product.processed_image_urls, list) else []
-        if len(existing) >= int(target_count):
-            return
-
-        try:
-            with httpx.Client(timeout=30.0, follow_redirects=True) as client:
-                resp = client.get(
-                    str(detail_url),
-                    headers={"User-Agent": "Mozilla/5.0"},
-                )
-            if resp.status_code >= 400:
+    try:
+        with session_factory() as session:
+            product = session.get(Product, product_id)
+            if not product:
                 return
-            html = resp.text or ""
-        except Exception:
-            return
 
-        extracted = image_processing_service.extract_images_from_html(html, limit=50)
-        if not extracted:
-            return
+            existing = product.processed_image_urls if isinstance(product.processed_image_urls, list) else []
+            if len(existing) >= int(target_count):
+                return
 
-        new_urls = image_processing_service.process_and_upload_images(
-            image_urls=extracted,
-            detail_html="",
-            product_id=str(product.id),
-        )
+            try:
+                with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+                    resp = client.get(
+                        str(detail_url),
+                        headers={"User-Agent": "Mozilla/5.0"},
+                    )
+                if resp.status_code >= 400:
+                    return
+                html = resp.text or ""
+            except Exception:
+                return
 
-        merged: list[str] = []
-        seen: set[str] = set()
-        for u in (existing + (new_urls or [])):
-            if not u:
-                continue
-            su = str(u)
-            if su in seen:
-                continue
-            seen.add(su)
-            merged.append(su)
-            if len(merged) >= 20:
-                break
+            extracted = image_processing_service.extract_images_from_html(html, limit=50)
+            if not extracted:
+                return
 
-        product.processed_image_urls = merged
-        if product.processed_name and len(merged) >= int(target_count):
-            product.processing_status = "COMPLETED"
-        session.commit()
+            new_urls = image_processing_service.process_and_upload_images(
+                image_urls=extracted,
+                detail_html="",
+                product_id=str(product.id),
+            )
+
+            merged: list[str] = []
+            seen: set[str] = set()
+            for u in (existing + (new_urls or [])):
+                if not u:
+                    continue
+                su = str(u)
+                if su in seen:
+                    continue
+                seen.add(su)
+                merged.append(su)
+                if len(merged) >= 20:
+                    break
+
+            product.processed_image_urls = merged
+            if product.processed_name and len(merged) >= int(target_count):
+                product.processing_status = "COMPLETED"
+            session.commit()
+    except Exception as e:
+        error_trace = traceback.format_exc()
+        logger.error(f"Error in augment_images_from_detail_url for {product_id}:\n{error_trace}")
 
 
 @router.post("/{product_id}/process", status_code=202)
@@ -780,22 +805,46 @@ def trigger_process_product(
     product.processing_status = "PROCESSING"
     session.flush()
 
-    background_tasks.add_task(
-        _execute_product_processing,
-        product.id,
-        int(payload.minImagesRequired),
-        bool(payload.forceFetchOwnerClan),
-    )
+    import threading
+    import asyncio
+
+    def _run_task():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_execute_product_processing(
+                product.id,
+                int(payload.minImagesRequired),
+                bool(payload.forceFetchOwnerClan),
+            ))
+        finally:
+            loop.close()
+
+    thread = threading.Thread(target=_run_task, daemon=True)
+    thread.start()
+
     return {"status": "accepted", "productId": str(product.id), "minImagesRequired": int(payload.minImagesRequired)}
 
 
 @router.post("/process/pending", status_code=202)
 def trigger_process_pending_products(
-    background_tasks: BackgroundTasks,
     limit: int = Query(default=10, ge=1, le=200),
     min_images_required: int = Query(default=3, ge=1, le=20, alias="minImagesRequired"),
 ):
-    background_tasks.add_task(_execute_pending_product_processing, int(limit), int(min_images_required))
+    import threading
+    import asyncio
+
+    def _run_task():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_execute_pending_product_processing(int(limit), int(min_images_required)))
+        finally:
+            loop.close()
+
+    thread = threading.Thread(target=_run_task, daemon=True)
+    thread.start()
+
     return {"status": "accepted", "limit": int(limit), "minImagesRequired": int(min_images_required)}
 
 
@@ -818,13 +867,25 @@ async def trigger_process_failed_products(
             )
             return {"status": "completed", "summary": summary}
 
-    background_tasks.add_task(
-        _execute_failed_product_processing,
-        int(payload.limit),
-        int(payload.minImagesRequired),
-        bool(payload.forceFetchOwnerClan),
-        bool(payload.augmentImages),
-    )
+    import threading
+    import asyncio
+
+    def _run_task():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_execute_failed_product_processing(
+                int(payload.limit),
+                int(payload.minImagesRequired),
+                bool(payload.forceFetchOwnerClan),
+                bool(payload.augmentImages),
+            ))
+        finally:
+            loop.close()
+
+    thread = threading.Thread(target=_run_task, daemon=True)
+    thread.start()
+
     return {
         "status": "accepted",
         "limit": int(payload.limit),
@@ -868,9 +929,10 @@ def preview_process_failed_products(
 def augment_images_from_detail_url(
     product_id: uuid.UUID,
     payload: ProductAugmentImagesFromDetailUrlIn,
-    background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
 ):
+    import threading
+    import asyncio
     product = session.get(Product, product_id)
     if not product:
         raise HTTPException(status_code=404, detail="상품을 찾을 수 없습니다.")
@@ -885,12 +947,14 @@ def augment_images_from_detail_url(
             raise HTTPException(status_code=400, detail="허용되지 않는 상세페이지 URL 입니다.")
 
         if _is_image_url(detail_url):
-            background_tasks.add_task(
-                _execute_augment_images_from_image_urls,
-                product.id,
-                [detail_url],
-                int(payload.targetCount),
-            )
+            def _run_augment_img():
+                _execute_augment_images_from_image_urls(
+                    product.id,
+                    [detail_url],
+                    int(payload.targetCount),
+                )
+            threading.Thread(target=_run_augment_img, daemon=True).start()
+            
             return {
                 "status": "accepted",
                 "productId": str(product.id),
@@ -898,12 +962,14 @@ def augment_images_from_detail_url(
                 "targetCount": int(payload.targetCount),
             }
 
-        background_tasks.add_task(
-            _execute_augment_images_from_detail_url,
-            product.id,
-            detail_url,
-            int(payload.targetCount),
-        )
+        def _run_augment_detail():
+            _execute_augment_images_from_detail_url(
+                product.id,
+                detail_url,
+                int(payload.targetCount),
+            )
+        threading.Thread(target=_run_augment_detail, daemon=True).start()
+
         return {
             "status": "accepted",
             "productId": str(product.id),
@@ -917,12 +983,15 @@ def augment_images_from_detail_url(
             image_urls = _collect_image_urls_from_raw(raw)
             if not image_urls:
                 image_urls = [html_url]
-            background_tasks.add_task(
-                _execute_augment_images_from_image_urls,
-                product.id,
-                image_urls,
-                int(payload.targetCount),
-            )
+            
+            def _run_augment_img_raw():
+                _execute_augment_images_from_image_urls(
+                    product.id,
+                    image_urls,
+                    int(payload.targetCount),
+                )
+            threading.Thread(target=_run_augment_img_raw, daemon=True).start()
+
             return {
                 "status": "accepted",
                 "productId": str(product.id),
@@ -932,12 +1001,14 @@ def augment_images_from_detail_url(
                 "candidateImages": len(image_urls),
             }
 
-        background_tasks.add_task(
-            _execute_augment_images_from_detail_url,
-            product.id,
-            html_url,
-            int(payload.targetCount),
-        )
+        def _run_augment_detail_raw():
+            _execute_augment_images_from_detail_url(
+                product.id,
+                html_url,
+                int(payload.targetCount),
+            )
+        threading.Thread(target=_run_augment_detail_raw, daemon=True).start()
+
         return {
             "status": "accepted",
             "productId": str(product.id),
@@ -949,12 +1020,13 @@ def augment_images_from_detail_url(
     if not image_urls:
         raise HTTPException(status_code=400, detail="원본 데이터에서 상세페이지/이미지 URL을 찾을 수 없습니다.")
 
-    background_tasks.add_task(
-        _execute_augment_images_from_image_urls,
-        product.id,
-        image_urls,
-        int(payload.targetCount),
-    )
+    def _run_augment_img_fallback():
+        _execute_augment_images_from_image_urls(
+            product.id,
+            image_urls,
+            int(payload.targetCount),
+        )
+    threading.Thread(target=_run_augment_img_fallback, daemon=True).start()
 
     return {
         "status": "accepted",

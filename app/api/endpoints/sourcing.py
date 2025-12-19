@@ -283,19 +283,43 @@ def get_sourcing_candidate(candidate_id: uuid.UUID, session: Session = Depends(g
 @router.post("/keyword")
 async def trigger_keyword_sourcing(
     payload: KeywordSourceIn,
-    background_tasks: BackgroundTasks,
     session: Session = Depends(get_session)
 ):
     """
     Triggers sourcing based on a list of keywords.
-    Runs in background.
+    Runs in a dedicated background thread to minimize operational risk.
     """
-    service = SourcingService(session)
-    # We run it in background to avoid blocking
-    background_tasks.add_task(service.execute_keyword_sourcing, payload.keywords, payload.min_margin)
+    import threading
+    import asyncio
+
+    def _run_task():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_execute_global_keyword_sourcing(payload.keywords, payload.min_margin))
+        finally:
+            loop.close()
+
+    thread = threading.Thread(target=_run_task, daemon=True)
+    thread.start()
+    
     return {"status": "accepted", "message": f"Global keyword sourcing started for {len(payload.keywords)} keywords"}
 
+async def _execute_global_keyword_sourcing(keywords: list[str], min_margin: int) -> None:
+    import traceback
+    from app.session_factory import session_factory
+    from app.services.sourcing_service import SourcingService
+
+    try:
+        with session_factory() as session:
+            service = SourcingService(session)
+            await service.execute_keyword_sourcing(keywords, min_margin)
+    except Exception as e:
+        error_trace = traceback.format_exc()
+        logger.error(f"Error in global keyword sourcing:\n{error_trace}")
+
 async def _execute_benchmark_sourcing(benchmark_id: uuid.UUID, job_id: uuid.UUID) -> None:
+    import traceback
     from app.session_factory import session_factory
     from app.services.sourcing_service import SourcingService
     from app.models import SupplierSyncJob
@@ -311,6 +335,7 @@ async def _execute_benchmark_sourcing(benchmark_id: uuid.UUID, job_id: uuid.UUID
 
     try:
         # 2. Execute Sourcing
+        logger.info(f"Starting long-running sourcing job {job_id} for benchmark {benchmark_id}")
         with session_factory() as session:
             service = SourcingService(session)
             await service.execute_benchmark_sourcing(benchmark_id)
@@ -323,28 +348,36 @@ async def _execute_benchmark_sourcing(benchmark_id: uuid.UUID, job_id: uuid.UUID
                 job.finished_at = datetime.now(timezone.utc)
                 job.progress = 100
                 session.commit()
+        logger.info(f"Successfully completed sourcing job {job_id}")
+
     except Exception as e:
-        # 4. Failure
+        # 4. Failure - 전체 Traceback 기록
+        error_trace = traceback.format_exc()
+        logger.error(f"Error in sourcing job {job_id} (benchmark: {benchmark_id}):\n{error_trace}")
+        
         with session_factory() as session:
             job = session.get(SupplierSyncJob, job_id)
             if job:
                 job.status = "failed"
-                job.last_error = str(e)
+                # 상세 컨텍스트를 포함한 에러 메시지 저장
+                job.last_error = f"Benchmark[{benchmark_id}]: {str(e)}\n\n{error_trace}"
                 job.finished_at = datetime.now(timezone.utc)
                 session.commit()
-        raise
+        # 이미 로깅 및 상태 기록을 완료했으므로 상위로 전파하지 않거나, 필요 시 로깅 후 조용히 종료 가능
+        # 여기서는 백그라운드 스레드이므로 raise 해도 앱 전체에 영향 없음
 
 
 @router.post("/benchmark/{benchmark_id}")
 async def trigger_benchmark_sourcing(
     benchmark_id: uuid.UUID,
-    background_tasks: BackgroundTasks,
     session: Session = Depends(get_session)
 ):
     """
     Triggers smart sourcing based on a Benchmark Product (Gap Analysis, Spec Matching).
-    Runs in background with SupplierSyncJob tracking.
+    Runs in a dedicated background thread with SupplierSyncJob tracking to minimize operational risk.
     """
+    import threading
+    import asyncio
     from app.models import SupplierSyncJob
     
     # 1. Create Job Entry
@@ -359,8 +392,18 @@ async def trigger_benchmark_sourcing(
     session.commit()
     session.refresh(job)
 
-    # 2. Add Task to Background
-    background_tasks.add_task(_execute_benchmark_sourcing, benchmark_id, job.id)
+    # 2. Start Task in a separate thread to isolate from FastAPI's event loop
+    def _run_task():
+        # 별도의 스레드에서 새 이벤트 루프 생성 및 실행
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_execute_benchmark_sourcing(benchmark_id, job.id))
+        finally:
+            loop.close()
+
+    thread = threading.Thread(target=_run_task, daemon=True)
+    thread.start()
     
     return {
         "status": "accepted", 
