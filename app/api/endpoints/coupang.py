@@ -368,16 +368,39 @@ async def sync_coupang_status_endpoint(
     """
     특정 상품의 쿠팡 마켓 상태를 명시적으로 동기화합니다.
     """
-    stmt = select(MarketListing).where(MarketListing.product_id == product_id)
+    stmt_acct = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
+    account = session.scalars(stmt_acct).first()
+    if not account:
+        raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
+
+    stmt = (
+        select(MarketListing)
+        .where(MarketListing.product_id == product_id)
+        .where(MarketListing.market_account_id == account.id)
+        .order_by(MarketListing.linked_at.desc())
+    )
     listing = session.scalars(stmt).first()
     if not listing:
         raise HTTPException(status_code=404, detail="마켓 등록 정보를 찾을 수 없습니다.")
+
+    previous_rejection_reason = listing.rejection_reason
 
     success, result = sync_market_listing_status(session, listing.id)
     if not success:
         raise HTTPException(status_code=400, detail=result)
 
-    return {"status": "success", "coupangStatus": result}
+    try:
+        session.refresh(listing)
+    except Exception:
+        pass
+
+    return {
+        "status": "success",
+        "coupangStatus": result,
+        "sellerProductId": str(listing.market_item_id),
+        "previousRejectionReason": previous_rejection_reason,
+        "rejectionReason": listing.rejection_reason,
+    }
 
 
 @router.put("/products/{product_id}", status_code=200)

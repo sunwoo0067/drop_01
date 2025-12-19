@@ -69,17 +69,21 @@ class ImageProcessingService:
             MIN_DIM = 500
             MAX_DIM = 5000
             
+            # 1) 비율을 최대한 유지하면서 min/max 범위로 맞춤
             if new_width < MIN_DIM or new_height < MIN_DIM:
-                # 500x500 미만인 경우 비율을 유지하며 최소 크기로 조정
                 ratio = max(MIN_DIM / new_width, MIN_DIM / new_height)
-                new_width = int(new_width * ratio)
-                new_height = int(new_height * ratio)
-            
+                new_width = int(math.ceil(new_width * ratio))
+                new_height = int(math.ceil(new_height * ratio))
+
             if new_width > MAX_DIM or new_height > MAX_DIM:
-                # 5000x5000을 초과하는 경우 비율을 유지하며 최대 크기로 조정
                 ratio = min(MAX_DIM / new_width, MAX_DIM / new_height)
-                new_width = int(new_width * ratio)
-                new_height = int(new_height * ratio)
+                new_width = int(math.floor(new_width * ratio))
+                new_height = int(math.floor(new_height * ratio))
+
+            # 2) max clamp 과정에서 반대 축이 500 미만으로 내려갈 수 있어(예: 세로 5000 제한으로 가로가 <500),
+            #    최종적으로 각 축을 독립적으로 [500, 5000]에 맞춥니다(비율이 약간 변형될 수 있음).
+            new_width = max(MIN_DIM, min(MAX_DIM, int(new_width)))
+            new_height = max(MIN_DIM, min(MAX_DIM, int(new_height)))
 
             img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
             
