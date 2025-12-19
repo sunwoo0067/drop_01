@@ -88,13 +88,61 @@ class ImageProcessingService:
             beta = random.randint(-5, 5)       # Brightness
             img = cv2.convertScaleAbs(img, alpha=alpha, beta=beta)
             
-            # 4. Strip Metadata (Implicit by decoding/encoding) & Encode
-            # Coupang suggests JPG quality around 90 is good. Max size 10MB.
-            success, encoded_img = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
-            if not success:
-                return None
-                
-            return encoded_img.tobytes()
+            # 4. Strip Metadata (decode/encode로 제거) & Encode
+            # - 쿠팡 기타이미지(DETAIL) 규격: 최대 10MB, 최소 500x500, 최대 5000x5000
+            MAX_BYTES = 10 * 1024 * 1024
+
+            quality = 90
+            while quality >= 30:
+                success, encoded_img = cv2.imencode(
+                    ".jpg",
+                    img,
+                    [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)],
+                )
+                if not success:
+                    return None
+
+                out = encoded_img.tobytes()
+                if len(out) <= MAX_BYTES:
+                    return out
+
+                quality -= 10
+
+            # 품질을 최저로 낮춰도 10MB 초과하면 다운스케일 시도
+            MIN_DIM = 500
+            MAX_DIM = 5000
+            for _ in range(6):
+                h, w = img.shape[:2]
+                if h <= MIN_DIM or w <= MIN_DIM:
+                    break
+
+                scale2 = 0.9
+                nh = max(MIN_DIM, int(h * scale2))
+                nw = max(MIN_DIM, int(w * scale2))
+                nh = min(nh, MAX_DIM)
+                nw = min(nw, MAX_DIM)
+
+                if nh == h and nw == w:
+                    break
+
+                img = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LANCZOS4)
+
+                quality = 80
+                while quality >= 30:
+                    success, encoded_img = cv2.imencode(
+                        ".jpg",
+                        img,
+                        [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)],
+                    )
+                    if not success:
+                        return None
+
+                    out = encoded_img.tobytes()
+                    if len(out) <= MAX_BYTES:
+                        return out
+                    quality -= 10
+
+            return None
             
         except Exception as e:
             logger.error(f"Error in hash breaking: {e}")
@@ -171,9 +219,9 @@ class ImageProcessingService:
                     # Hash Breaking
                     processed_bytes = self.hash_breaking(original_bytes)
                     if not processed_bytes:
-                        logger.warning(f"Hash breaking failed for {url}, using original.")
+                        logger.warning(f"해시 브레이킹/규격 변환 실패(url={url})")
                         stats["hash_break_fail"] += 1
-                        processed_bytes = original_bytes
+                        continue
 
                     # Upload
                     new_url = storage_service.upload_image(

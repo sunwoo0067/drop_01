@@ -522,11 +522,16 @@ def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_i
     if not account or not product:
         return False, "계정 또는 상품을 찾을 수 없습니다"
     
-    listing = session.execute(
-        select(MarketListing)
-        .where(MarketListing.market_account_id == account.id)
-        .where(MarketListing.product_id == product.id)
-    ).scalars().first()
+    listing = (
+        session.execute(
+            select(MarketListing)
+            .where(MarketListing.market_account_id == account.id)
+            .where(MarketListing.product_id == product.id)
+            .order_by(MarketListing.linked_at.desc())
+        )
+        .scalars()
+        .first()
+    )
     
     if not listing:
         return False, "쿠팡에 등록된 리스팅 정보를 찾을 수 없습니다(먼저 등록 필요)"
