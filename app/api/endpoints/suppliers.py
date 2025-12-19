@@ -97,6 +97,7 @@ def trigger_ownerclan_items(
     _cleanup_stale_jobs(session, supplier_code="ownerclan")
     _ensure_no_running_job(session, supplier_code="ownerclan", job_type="ownerclan_items_raw")
     job = _enqueue_job(session, "ownerclan", "ownerclan_items_raw", payload.params)
+    session.commit()
     background_tasks.add_task(start_background_ownerclan_job, session_factory, uuid.UUID(str(job.id)))
     return {"jobId": str(job.id)}
 
@@ -110,6 +111,7 @@ def trigger_ownerclan_orders(
     _cleanup_stale_jobs(session, supplier_code="ownerclan")
     _ensure_no_running_job(session, supplier_code="ownerclan", job_type="ownerclan_orders_raw")
     job = _enqueue_job(session, "ownerclan", "ownerclan_orders_raw", payload.params)
+    session.commit()
     background_tasks.add_task(start_background_ownerclan_job, session_factory, uuid.UUID(str(job.id)))
     return {"jobId": str(job.id)}
 
@@ -123,6 +125,7 @@ def trigger_ownerclan_qna(
     _cleanup_stale_jobs(session, supplier_code="ownerclan")
     _ensure_no_running_job(session, supplier_code="ownerclan", job_type="ownerclan_qna_raw")
     job = _enqueue_job(session, "ownerclan", "ownerclan_qna_raw", payload.params)
+    session.commit()
     background_tasks.add_task(start_background_ownerclan_job, session_factory, uuid.UUID(str(job.id)))
     return {"jobId": str(job.id)}
 
@@ -136,6 +139,7 @@ def trigger_ownerclan_categories(
     _cleanup_stale_jobs(session, supplier_code="ownerclan")
     _ensure_no_running_job(session, supplier_code="ownerclan", job_type="ownerclan_categories_raw")
     job = _enqueue_job(session, "ownerclan", "ownerclan_categories_raw", payload.params)
+    session.commit()
     background_tasks.add_task(start_background_ownerclan_job, session_factory, uuid.UUID(str(job.id)))
     return {"jobId": str(job.id)}
 

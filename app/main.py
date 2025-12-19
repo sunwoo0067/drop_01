@@ -34,8 +34,12 @@ app.include_router(market.router, prefix="/api/market", tags=["Market"])
 # 브라우저가 8888 오리진으로 따라가며 CORS에 막혀 Axios가 Network Error가 날 수 있다.
 # 따라서 슬래시 없는 엔드포인트를 별칭(alias)로 제공해 redirect 자체를 제거한다.
 @app.get("/api/products", response_model=List[ProductResponse], include_in_schema=False)
-def list_products_alias(session: Session = Depends(get_session)):
-    return products.list_products(session=session)
+def list_products_alias(
+    session: Session = Depends(get_session),
+    processing_status: str | None = Query(default=None, alias="processingStatus"),
+    status: str | None = Query(default=None),
+):
+    return products.list_products(session=session, processing_status=processing_status, status=status)
 
 
 @app.get("/api/benchmarks", include_in_schema=False)
