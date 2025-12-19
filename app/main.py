@@ -68,8 +68,8 @@ class EmbeddingIn(BaseModel):
     @field_validator("embedding")
     @classmethod
     def validate_embedding(cls, v: list[float]) -> list[float]:
-        if len(v) != 3:
-            raise ValueError("embedding 길이는 3이어야 합니다")
+        if len(v) != 768:
+            raise ValueError("embedding 길이는 768이어야 합니다")
         return v
 
 
