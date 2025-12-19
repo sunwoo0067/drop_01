@@ -18,12 +18,29 @@ class SourcingAgent:
         self.workflow = self._create_workflow()
 
     def _get_client(self):
-        # Implementation similar to SourcingService._get_ownerclan_primary_client
-        # For simplicity in this prototype, we'll use a placeholder or assume setup
+        from app.models import SupplierAccount
+        
+        account = (
+            self.db.query(SupplierAccount)
+            .filter(SupplierAccount.supplier_code == "ownerclan")
+            .filter(SupplierAccount.user_type == "seller")
+            .filter(SupplierAccount.is_primary.is_(True))
+            .filter(SupplierAccount.is_active.is_(True))
+            .one_or_none()
+        )
+        if not account:
+            logger.warning("오너클랜 대표 계정이 설정되어 있지 않아 서비스 계정 없이 클라이언트를 초기화합니다.")
+            return OwnerClanClient(
+                auth_url=settings.ownerclan_auth_url,
+                api_base_url=settings.ownerclan_api_base_url,
+                graphql_url=settings.ownerclan_graphql_url
+            )
+
         return OwnerClanClient(
             auth_url=settings.ownerclan_auth_url,
             api_base_url=settings.ownerclan_api_base_url,
-            graphql_url=settings.ownerclan_graphql_url
+            graphql_url=settings.ownerclan_graphql_url,
+            access_token=account.access_token,
         )
 
     def _create_workflow(self):
@@ -68,13 +85,22 @@ class SourcingAgent:
         query = benchmark.get("name")
         
         # 실제 검색 로직 (OwnerClanClient 호출)
-        # 1-shot prototype에서는 Mock 처리하거나 간단히 구현
-        # status, data = self.client.get_products(keyword=query, limit=20)
-        items = [] # Assume we call client here
+        status_code, data = self.client.get_products(keyword=query, limit=20)
+        
+        items = []
+        if status_code == 200:
+            # SourcingService._extract_items와 유사한 파싱 로직
+            data_obj = data.get("data")
+            if isinstance(data_obj, dict):
+                items_obj = data_obj.get("items")
+                if items_obj is None and isinstance(data_obj.get("data"), dict):
+                    items_obj = data_obj.get("data").get("items")
+                if isinstance(items_obj, list):
+                    items = [it for it in items_obj if isinstance(it, dict)]
         
         return {
             "collected_items": items,
-            "logs": [f"Found {len(items)} items from supplier"]
+            "logs": [f"Found {len(items)} items from supplier (status={status_code})"]
         }
 
     def score_candidates(self, state: AgentState) -> Dict[str, Any]:
@@ -104,12 +130,16 @@ class SourcingAgent:
         }
 
     async def run(self, benchmark_id: str, input_data: Dict[str, Any]):
-        # DB에서 벤치마크 데이터 로드 (실제 구현 시)
+        # 초기 상태에 벤치마크 상세 정보 포함
         initial_state: AgentState = {
-            "job_id": "test_job",
+            "job_id": f"sourcing_{benchmark_id}",
             "target_id": benchmark_id,
             "input_data": input_data,
-            "benchmark_data": {"name": input_data.get("name")}, # Placeholder
+            "benchmark_data": {
+                "name": input_data.get("name"),
+                "detail_html": input_data.get("detail_html"),
+                "price": input_data.get("price")
+            },
             "collected_items": [],
             "candidate_results": [],
             "pain_points": [],
