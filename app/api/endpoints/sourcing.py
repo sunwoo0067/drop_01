@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 from typing import List
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
+import logging
 import uuid
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -14,6 +15,8 @@ from app.ownerclan_client import OwnerClanClient
 from app.settings import settings
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 class KeywordSourceIn(BaseModel):
     keywords: List[str]
@@ -207,6 +210,18 @@ async def _execute_post_promote_actions(product_id: uuid.UUID, auto_register_cou
             product.status = "ACTIVE"
             bg_session.commit()
 
+
+def _execute_post_promote_actions_bg(product_id: uuid.UUID, auto_register_coupang: bool, min_images_required: int) -> None:
+    import asyncio
+
+    asyncio.run(
+        _execute_post_promote_actions(
+            product_id,
+            bool(auto_register_coupang),
+            int(min_images_required),
+        )
+    )
+
 @router.get("/candidates")
 def list_sourcing_candidates(
     session: Session = Depends(get_session),
@@ -283,29 +298,17 @@ def get_sourcing_candidate(candidate_id: uuid.UUID, session: Session = Depends(g
 @router.post("/keyword")
 async def trigger_keyword_sourcing(
     payload: KeywordSourceIn,
-    session: Session = Depends(get_session)
+    background_tasks: BackgroundTasks,
 ):
     """
     Triggers sourcing based on a list of keywords.
     Runs in a dedicated background thread to minimize operational risk.
     """
-    import threading
-    import asyncio
-
-    def _run_task():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(_execute_global_keyword_sourcing(payload.keywords, payload.min_margin))
-        finally:
-            loop.close()
-
-    thread = threading.Thread(target=_run_task, daemon=True)
-    thread.start()
+    background_tasks.add_task(_execute_global_keyword_sourcing, payload.keywords, float(payload.min_margin))
     
     return {"status": "accepted", "message": f"Global keyword sourcing started for {len(payload.keywords)} keywords"}
 
-async def _execute_global_keyword_sourcing(keywords: list[str], min_margin: int) -> None:
+def _execute_global_keyword_sourcing(keywords: list[str], min_margin: float) -> None:
     import traceback
     from app.session_factory import session_factory
     from app.services.sourcing_service import SourcingService
@@ -313,7 +316,7 @@ async def _execute_global_keyword_sourcing(keywords: list[str], min_margin: int)
     try:
         with session_factory() as session:
             service = SourcingService(session)
-            await service.execute_keyword_sourcing(keywords, min_margin)
+            service.execute_keyword_sourcing(keywords, float(min_margin))
     except Exception as e:
         error_trace = traceback.format_exc()
         logger.error(f"Error in global keyword sourcing:\n{error_trace}")
@@ -370,14 +373,13 @@ async def _execute_benchmark_sourcing(benchmark_id: uuid.UUID, job_id: uuid.UUID
 @router.post("/benchmark/{benchmark_id}")
 async def trigger_benchmark_sourcing(
     benchmark_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
     session: Session = Depends(get_session)
 ):
     """
     Triggers smart sourcing based on a Benchmark Product (Gap Analysis, Spec Matching).
     Runs in a dedicated background thread with SupplierSyncJob tracking to minimize operational risk.
     """
-    import threading
-    import asyncio
     from app.models import SupplierSyncJob
     
     # 1. Create Job Entry
@@ -392,24 +394,19 @@ async def trigger_benchmark_sourcing(
     session.commit()
     session.refresh(job)
 
-    # 2. Start Task in a separate thread to isolate from FastAPI's event loop
-    def _run_task():
-        # 별도의 스레드에서 새 이벤트 루프 생성 및 실행
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(_execute_benchmark_sourcing(benchmark_id, job.id))
-        finally:
-            loop.close()
-
-    thread = threading.Thread(target=_run_task, daemon=True)
-    thread.start()
+    background_tasks.add_task(_execute_benchmark_sourcing_bg, benchmark_id, job.id)
     
     return {
         "status": "accepted", 
         "message": f"Benchmark sourcing started for {benchmark_id}",
         "jobId": str(job.id)
     }
+
+
+def _execute_benchmark_sourcing_bg(benchmark_id: uuid.UUID, job_id: uuid.UUID) -> None:
+    import asyncio
+
+    asyncio.run(_execute_benchmark_sourcing(benchmark_id, job_id))
 
 
 @router.patch("/candidates/{candidate_id}")
@@ -469,7 +466,7 @@ def promote_sourcing_candidate(
 
     if effective_auto_process:
         background_tasks.add_task(
-            _execute_post_promote_actions,
+            _execute_post_promote_actions_bg,
             product.id,
             bool(payload.autoRegisterCoupang),
             int(payload.minImagesRequired),

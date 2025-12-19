@@ -308,6 +308,18 @@ async def _execute_product_processing(product_id: uuid.UUID, min_images_required
         # Product.processing_status = "FAILED"는 ProcessingService.process_product 내부에서 처리됨
 
 
+def _execute_product_processing_bg(product_id: uuid.UUID, min_images_required: int, force_fetch_ownerclan: bool) -> None:
+    import asyncio
+
+    asyncio.run(
+        _execute_product_processing(
+            product_id,
+            int(min_images_required),
+            bool(force_fetch_ownerclan),
+        )
+    )
+
+
 async def _execute_pending_product_processing(limit: int, min_images_required: int) -> None:
     import traceback
     from app.session_factory import session_factory
@@ -320,6 +332,12 @@ async def _execute_pending_product_processing(limit: int, min_images_required: i
     except Exception as e:
         error_trace = traceback.format_exc()
         logger.error(f"Error in executing pending product processing (limit={limit}):\n{error_trace}")
+
+
+def _execute_pending_product_processing_bg(limit: int, min_images_required: int) -> None:
+    import asyncio
+
+    asyncio.run(_execute_pending_product_processing(int(limit), int(min_images_required)))
 
 
 def _augment_product_images_best_effort(session: Session, product: Product, raw: dict, target_count: int) -> bool:
@@ -803,47 +821,25 @@ def trigger_process_product(
         payload = ProductProcessIn()
 
     product.processing_status = "PROCESSING"
-    session.flush()
+    session.commit()
 
-    import threading
-    import asyncio
-
-    def _run_task():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(_execute_product_processing(
-                product.id,
-                int(payload.minImagesRequired),
-                bool(payload.forceFetchOwnerClan),
-            ))
-        finally:
-            loop.close()
-
-    thread = threading.Thread(target=_run_task, daemon=True)
-    thread.start()
+    background_tasks.add_task(
+        _execute_product_processing_bg,
+        product.id,
+        int(payload.minImagesRequired),
+        bool(payload.forceFetchOwnerClan),
+    )
 
     return {"status": "accepted", "productId": str(product.id), "minImagesRequired": int(payload.minImagesRequired)}
 
 
 @router.post("/process/pending", status_code=202)
 def trigger_process_pending_products(
+    background_tasks: BackgroundTasks,
     limit: int = Query(default=10, ge=1, le=200),
     min_images_required: int = Query(default=3, ge=1, le=20, alias="minImagesRequired"),
 ):
-    import threading
-    import asyncio
-
-    def _run_task():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(_execute_pending_product_processing(int(limit), int(min_images_required)))
-        finally:
-            loop.close()
-
-    thread = threading.Thread(target=_run_task, daemon=True)
-    thread.start()
+    background_tasks.add_task(_execute_pending_product_processing_bg, int(limit), int(min_images_required))
 
     return {"status": "accepted", "limit": int(limit), "minImagesRequired": int(min_images_required)}
 
@@ -867,24 +863,13 @@ async def trigger_process_failed_products(
             )
             return {"status": "completed", "summary": summary}
 
-    import threading
-    import asyncio
-
-    def _run_task():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(_execute_failed_product_processing(
-                int(payload.limit),
-                int(payload.minImagesRequired),
-                bool(payload.forceFetchOwnerClan),
-                bool(payload.augmentImages),
-            ))
-        finally:
-            loop.close()
-
-    thread = threading.Thread(target=_run_task, daemon=True)
-    thread.start()
+    background_tasks.add_task(
+        _execute_failed_product_processing_bg,
+        int(payload.limit),
+        int(payload.minImagesRequired),
+        bool(payload.forceFetchOwnerClan),
+        bool(payload.augmentImages),
+    )
 
     return {
         "status": "accepted",
@@ -894,6 +879,19 @@ async def trigger_process_failed_products(
         "augmentImages": bool(payload.augmentImages),
         "wait": False,
     }
+
+
+def _execute_failed_product_processing_bg(limit: int, min_images_required: int, force_fetch_ownerclan: bool, augment_images: bool) -> None:
+    import asyncio
+
+    asyncio.run(
+        _execute_failed_product_processing(
+            int(limit),
+            int(min_images_required),
+            bool(force_fetch_ownerclan),
+            bool(augment_images),
+        )
+    )
 
 
 @router.get("/process/failed/preview", status_code=200)
@@ -929,10 +927,9 @@ def preview_process_failed_products(
 def augment_images_from_detail_url(
     product_id: uuid.UUID,
     payload: ProductAugmentImagesFromDetailUrlIn,
+    background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
 ):
-    import threading
-    import asyncio
     product = session.get(Product, product_id)
     if not product:
         raise HTTPException(status_code=404, detail="상품을 찾을 수 없습니다.")
@@ -947,13 +944,12 @@ def augment_images_from_detail_url(
             raise HTTPException(status_code=400, detail="허용되지 않는 상세페이지 URL 입니다.")
 
         if _is_image_url(detail_url):
-            def _run_augment_img():
-                _execute_augment_images_from_image_urls(
-                    product.id,
-                    [detail_url],
-                    int(payload.targetCount),
-                )
-            threading.Thread(target=_run_augment_img, daemon=True).start()
+            background_tasks.add_task(
+                _execute_augment_images_from_image_urls,
+                product.id,
+                [detail_url],
+                int(payload.targetCount),
+            )
             
             return {
                 "status": "accepted",
@@ -962,13 +958,12 @@ def augment_images_from_detail_url(
                 "targetCount": int(payload.targetCount),
             }
 
-        def _run_augment_detail():
-            _execute_augment_images_from_detail_url(
-                product.id,
-                detail_url,
-                int(payload.targetCount),
-            )
-        threading.Thread(target=_run_augment_detail, daemon=True).start()
+        background_tasks.add_task(
+            _execute_augment_images_from_detail_url,
+            product.id,
+            detail_url,
+            int(payload.targetCount),
+        )
 
         return {
             "status": "accepted",
@@ -983,14 +978,13 @@ def augment_images_from_detail_url(
             image_urls = _collect_image_urls_from_raw(raw)
             if not image_urls:
                 image_urls = [html_url]
-            
-            def _run_augment_img_raw():
-                _execute_augment_images_from_image_urls(
-                    product.id,
-                    image_urls,
-                    int(payload.targetCount),
-                )
-            threading.Thread(target=_run_augment_img_raw, daemon=True).start()
+
+            background_tasks.add_task(
+                _execute_augment_images_from_image_urls,
+                product.id,
+                image_urls,
+                int(payload.targetCount),
+            )
 
             return {
                 "status": "accepted",
@@ -1001,13 +995,12 @@ def augment_images_from_detail_url(
                 "candidateImages": len(image_urls),
             }
 
-        def _run_augment_detail_raw():
-            _execute_augment_images_from_detail_url(
-                product.id,
-                html_url,
-                int(payload.targetCount),
-            )
-        threading.Thread(target=_run_augment_detail_raw, daemon=True).start()
+        background_tasks.add_task(
+            _execute_augment_images_from_detail_url,
+            product.id,
+            html_url,
+            int(payload.targetCount),
+        )
 
         return {
             "status": "accepted",
@@ -1020,13 +1013,12 @@ def augment_images_from_detail_url(
     if not image_urls:
         raise HTTPException(status_code=400, detail="원본 데이터에서 상세페이지/이미지 URL을 찾을 수 없습니다.")
 
-    def _run_augment_img_fallback():
-        _execute_augment_images_from_image_urls(
-            product.id,
-            image_urls,
-            int(payload.targetCount),
-        )
-    threading.Thread(target=_run_augment_img_fallback, daemon=True).start()
+    background_tasks.add_task(
+        _execute_augment_images_from_image_urls,
+        product.id,
+        image_urls,
+        int(payload.targetCount),
+    )
 
     return {
         "status": "accepted",
