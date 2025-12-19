@@ -800,7 +800,7 @@ def trigger_process_pending_products(
 
 
 @router.post("/process/failed", status_code=202)
-def trigger_process_failed_products(
+async def trigger_process_failed_products(
     payload: ProductProcessFailedIn,
     background_tasks: BackgroundTasks,
     wait: bool = Query(default=False),
@@ -809,7 +809,7 @@ def trigger_process_failed_products(
         from app.session_factory import session_factory
 
         with session_factory() as session:
-            summary = _run_failed_product_processing(
+            summary = await _run_failed_product_processing(
                 session,
                 limit=int(payload.limit),
                 min_images_required=int(payload.minImagesRequired),

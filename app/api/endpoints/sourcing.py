@@ -168,7 +168,7 @@ def _create_or_get_product_from_raw_item(session: Session, raw_item: SupplierIte
     return product, True
 
 
-def _execute_post_promote_actions(product_id: uuid.UUID, auto_register_coupang: bool, min_images_required: int) -> None:
+async def _execute_post_promote_actions(product_id: uuid.UUID, auto_register_coupang: bool, min_images_required: int) -> None:
     from app.session_factory import session_factory
     from app.services.processing_service import ProcessingService
     from app.coupang_sync import register_product
@@ -178,7 +178,7 @@ def _execute_post_promote_actions(product_id: uuid.UUID, auto_register_coupang: 
         effective_min_images_required = int(min_images_required)
         if auto_register_coupang:
             effective_min_images_required = 5
-        service.process_product(product_id, min_images_required=effective_min_images_required)
+        await service.process_product(product_id, min_images_required=effective_min_images_required)
 
         if not auto_register_coupang:
             return
