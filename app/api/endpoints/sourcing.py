@@ -295,13 +295,44 @@ async def trigger_keyword_sourcing(
     background_tasks.add_task(service.execute_keyword_sourcing, payload.keywords, payload.min_margin)
     return {"status": "accepted", "message": f"Global keyword sourcing started for {len(payload.keywords)} keywords"}
 
-async def _execute_benchmark_sourcing(benchmark_id: uuid.UUID) -> None:
+async def _execute_benchmark_sourcing(benchmark_id: uuid.UUID, job_id: uuid.UUID) -> None:
     from app.session_factory import session_factory
     from app.services.sourcing_service import SourcingService
+    from app.models import SupplierSyncJob
+    from datetime import datetime, timezone
 
+    # 1. Start Job
     with session_factory() as session:
-        service = SourcingService(session)
-        await service.execute_benchmark_sourcing(benchmark_id)
+        job = session.get(SupplierSyncJob, job_id)
+        if job:
+            job.status = "running"
+            job.started_at = datetime.now(timezone.utc)
+            session.commit()
+
+    try:
+        # 2. Execute Sourcing
+        with session_factory() as session:
+            service = SourcingService(session)
+            await service.execute_benchmark_sourcing(benchmark_id)
+            
+        # 3. Success
+        with session_factory() as session:
+            job = session.get(SupplierSyncJob, job_id)
+            if job:
+                job.status = "succeeded"
+                job.finished_at = datetime.now(timezone.utc)
+                job.progress = 100
+                session.commit()
+    except Exception as e:
+        # 4. Failure
+        with session_factory() as session:
+            job = session.get(SupplierSyncJob, job_id)
+            if job:
+                job.status = "failed"
+                job.last_error = str(e)
+                job.finished_at = datetime.now(timezone.utc)
+                session.commit()
+        raise
 
 
 @router.post("/benchmark/{benchmark_id}")
@@ -312,11 +343,30 @@ async def trigger_benchmark_sourcing(
 ):
     """
     Triggers smart sourcing based on a Benchmark Product (Gap Analysis, Spec Matching).
-    Runs in background.
+    Runs in background with SupplierSyncJob tracking.
     """
-    # session_factory를 사용하는 비동기 래퍼를 BackgroundTasks에 등록
-    background_tasks.add_task(_execute_benchmark_sourcing, benchmark_id)
-    return {"status": "accepted", "message": f"Benchmark sourcing started for {benchmark_id}"}
+    from app.models import SupplierSyncJob
+    
+    # 1. Create Job Entry
+    job = SupplierSyncJob(
+        id=uuid.uuid4(),
+        supplier_code="ownerclan",
+        job_type="benchmark_sourcing",
+        status="queued",
+        params={"benchmark_id": str(benchmark_id)},
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+
+    # 2. Add Task to Background
+    background_tasks.add_task(_execute_benchmark_sourcing, benchmark_id, job.id)
+    
+    return {
+        "status": "accepted", 
+        "message": f"Benchmark sourcing started for {benchmark_id}",
+        "jobId": str(job.id)
+    }
 
 
 @router.patch("/candidates/{candidate_id}")
