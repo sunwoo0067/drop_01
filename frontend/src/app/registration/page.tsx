@@ -29,6 +29,35 @@ interface RegistrationProduct extends Product {
     rejectionReason?: any;
 }
 
+function normalizeCoupangStatus(status?: string | null): string | null {
+    if (!status) return null;
+    const s = String(status).trim();
+    if (!s) return null;
+
+    const su = s.toUpperCase();
+    if (
+        su === "DENIED" ||
+        su === "DELETED" ||
+        su === "IN_REVIEW" ||
+        su === "SAVED" ||
+        su === "APPROVING" ||
+        su === "APPROVED" ||
+        su === "PARTIAL_APPROVED"
+    ) {
+        return su;
+    }
+
+    if (s === "승인반려" || s === "반려") return "DENIED";
+    if (s === "심사중") return "IN_REVIEW";
+    if (s === "승인대기중") return "APPROVING";
+    if (s === "승인완료") return "APPROVED";
+    if (s === "부분승인완료") return "PARTIAL_APPROVED";
+    if (s === "임시저장" || s === "임시저장중") return "SAVED";
+    if (s.includes("삭제") || s === "상품삭제") return "DELETED";
+
+    return s;
+}
+
 export default function RegistrationPage() {
     const [items, setItems] = useState<RegistrationProduct[]>([]);
     const [loading, setLoading] = useState(true);
@@ -135,7 +164,7 @@ export default function RegistrationPage() {
     const handleSyncStatus = async (productId: string) => {
         try {
             const resp = await api.post(`/coupang/sync-status/${productId}`);
-            const newStatus = resp.data.coupangStatus;
+            const newStatus = normalizeCoupangStatus(resp.data.coupangStatus);
 
             // 상태 업데이트 후, 만약 DENIED가 아니게 되었다면 목록 유지 또는 변경
             // 여기서는 단순히 상태값만 업데이트해서 리렌더링 유도
@@ -407,13 +436,25 @@ export default function RegistrationPage() {
                                         </div>
                                         <div className="flex flex-col items-end">
                                             <span className="text-muted-foreground text-[10px] uppercase font-bold tracking-tighter">마켓 상태</span>
-                                            {item.coupangStatus === 'DENIED' ? (
+                                            {normalizeCoupangStatus(item.coupangStatus) === 'DENIED' ? (
                                                 <Badge variant="destructive" className="text-[10px] animate-pulse">
                                                     승인 반려
                                                 </Badge>
-                                            ) : item.coupangStatus === 'IN_REVIEW' ? (
+                                            ) : normalizeCoupangStatus(item.coupangStatus) === 'IN_REVIEW' ? (
                                                 <Badge variant="secondary" className="text-[10px] bg-blue-100 text-blue-700">
                                                     심사 중
+                                                </Badge>
+                                            ) : normalizeCoupangStatus(item.coupangStatus) === 'APPROVING' ? (
+                                                <Badge variant="secondary" className="text-[10px] bg-blue-100 text-blue-700">
+                                                    승인 대기
+                                                </Badge>
+                                            ) : normalizeCoupangStatus(item.coupangStatus) === 'SAVED' ? (
+                                                <Badge variant="secondary" className="text-[10px]">
+                                                    임시 저장
+                                                </Badge>
+                                            ) : normalizeCoupangStatus(item.coupangStatus) === 'APPROVED' ? (
+                                                <Badge variant="success" className="text-[10px]">
+                                                    승인 완료
                                                 </Badge>
                                             ) : (
                                                 <Badge variant="secondary" className="text-[10px]">
@@ -423,7 +464,7 @@ export default function RegistrationPage() {
                                         </div>
                                     </div>
 
-                                    {item.coupangStatus === 'DENIED' && item.rejectionReason && (
+                                    {normalizeCoupangStatus(item.coupangStatus) === 'DENIED' && item.rejectionReason && (
                                         <div className="p-3 rounded-xl bg-destructive/5 border border-destructive/10 space-y-2">
                                             <div className="flex items-center gap-2 text-destructive">
                                                 <AlertTriangle className="h-4 w-4" />
@@ -454,7 +495,7 @@ export default function RegistrationPage() {
                                                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                                     처리 중...
                                                 </>
-                                            ) : item.coupangStatus === 'DENIED' ? (
+                                            ) : normalizeCoupangStatus(item.coupangStatus) === 'DENIED' ? (
                                                 <>
                                                     <RotateCw className="mr-2 h-4 w-4" />
                                                     수정 및 재등록

@@ -284,6 +284,18 @@ def sync_market_listing_status(session: Session, listing_id: uuid.UUID) -> tuple
                 status_name = "DENIED"
             elif su == "DELETED" or "삭제" in s or s == "상품삭제":
                 status_name = "DELETED"
+            elif su in {"IN_REVIEW", "SAVED", "APPROVING", "APPROVED", "PARTIAL_APPROVED"}:
+                status_name = su
+            elif s == "심사중":
+                status_name = "IN_REVIEW"
+            elif s in {"임시저장", "임시저장중"}:
+                status_name = "SAVED"
+            elif s == "승인대기중":
+                status_name = "APPROVING"
+            elif s == "승인완료":
+                status_name = "APPROVED"
+            elif s == "부분승인완료":
+                status_name = "PARTIAL_APPROVED"
             elif su:
                 status_name = su
             else:
@@ -295,11 +307,21 @@ def sync_market_listing_status(session: Session, listing_id: uuid.UUID) -> tuple
         listing.coupang_status = status_name
         
         # 반려 사유 확인 (approvalStatusHistory)
-        history = data_obj.get("approvalStatusHistory", [])
-        if status_name == "DENIED" and history:
-            # 가장 최근의 DENIED 히스토리를 찾음
-            denied_history = next((h for h in history if h.get("statusName") == "DENIED"), history[0])
-            listing.rejection_reason = denied_history
+        history = data_obj.get("approvalStatusHistory")
+        if status_name == "DENIED" and isinstance(history, list) and history:
+            denied_history = next(
+                (
+                    h
+                    for h in history
+                    if isinstance(h, dict) and (h.get("statusName") in {"DENIED", "승인반려", "반려"})
+                ),
+                None,
+            )
+            if isinstance(denied_history, dict):
+                listing.rejection_reason = denied_history
+            else:
+                first = history[0] if history else None
+                listing.rejection_reason = first if isinstance(first, dict) else None
         elif status_name != "DENIED":
             listing.rejection_reason = None
 

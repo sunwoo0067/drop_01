@@ -9,6 +9,35 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 
+function normalizeCoupangStatus(status?: string | null): string | null {
+    if (!status) return null;
+    const s = String(status).trim();
+    if (!s) return null;
+
+    const su = s.toUpperCase();
+    if (
+        su === "DENIED" ||
+        su === "DELETED" ||
+        su === "IN_REVIEW" ||
+        su === "SAVED" ||
+        su === "APPROVING" ||
+        su === "APPROVED" ||
+        su === "PARTIAL_APPROVED"
+    ) {
+        return su;
+    }
+
+    if (s === "승인반려" || s === "반려") return "DENIED";
+    if (s === "심사중") return "IN_REVIEW";
+    if (s === "승인대기중") return "APPROVING";
+    if (s === "승인완료") return "APPROVED";
+    if (s === "부분승인완료") return "PARTIAL_APPROVED";
+    if (s === "임시저장" || s === "임시저장중") return "SAVED";
+    if (s.includes("삭제") || s === "상품삭제") return "DELETED";
+
+    return s;
+}
+
 export default function ProductListPage() {
     const router = useRouter();
     const [products, setProducts] = useState<Product[]>([]);
@@ -97,10 +126,14 @@ export default function ProductListPage() {
 
     const getStatusBadge = (product: Product) => {
         const coupangListing = product.market_listings?.find(l => l.market_item_id);
-        const cpStatus = coupangListing?.coupang_status;
+        const cpStatus = normalizeCoupangStatus(coupangListing?.coupang_status);
 
         if (cpStatus === 'DENIED') return <Badge variant="destructive">반려</Badge>;
+        if (cpStatus === 'DELETED') return <Badge variant="destructive">삭제</Badge>;
         if (cpStatus === 'IN_REVIEW') return <Badge variant="secondary" className="bg-blue-100 text-blue-700 border-none">심사중</Badge>;
+        if (cpStatus === 'APPROVING') return <Badge variant="secondary" className="bg-blue-100 text-blue-700 border-none">승인대기</Badge>;
+        if (cpStatus === 'SAVED') return <Badge variant="secondary">임시저장</Badge>;
+        if (cpStatus === 'PARTIAL_APPROVED') return <Badge variant="success">부분승인</Badge>;
         if (cpStatus === 'APPROVED') return <Badge variant="success">승인</Badge>;
 
         switch (product.processing_status) {
