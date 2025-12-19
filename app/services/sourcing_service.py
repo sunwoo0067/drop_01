@@ -258,7 +258,7 @@ class SourcingService:
                 ) or 0
 
                 insert_stmt = (
-                    insert(SourcingCandidate.__table__)
+                    insert(SourcingCandidate)
                     .values(
                         supplier_code="ownerclan",
                         supplier_item_id=str(raw.item_code),
