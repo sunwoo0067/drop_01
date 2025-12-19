@@ -35,6 +35,9 @@ function normalizeCoupangStatus(status?: string | null): string | null {
     if (!s) return null;
 
     const su = s.toUpperCase();
+    if (su === "APPROVAL_REQUESTED") {
+        return "APPROVING";
+    }
     if (
         su === "DENIED" ||
         su === "DELETED" ||
