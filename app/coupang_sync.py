@@ -273,7 +273,23 @@ def sync_market_listing_status(session: Session, listing_id: uuid.UUID) -> tuple
             return False, f"쿠팡 상품 조회 실패: {data.get('message', '알 수 없는 오류')}"
 
         data_obj = data.get("data", {})
-        status_name = data_obj.get("statusName")
+        raw_status_name = data_obj.get("statusName")
+
+        status_name = None
+        try:
+            s = str(raw_status_name or "").strip()
+            su = s.upper()
+
+            if su == "DENIED" or s in {"승인반려", "반려"}:
+                status_name = "DENIED"
+            elif su == "DELETED" or "삭제" in s or s == "상품삭제":
+                status_name = "DELETED"
+            elif su:
+                status_name = su
+            else:
+                status_name = None
+        except Exception:
+            status_name = None
         
         # 상태 업데이트
         listing.coupang_status = status_name
