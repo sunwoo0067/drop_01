@@ -284,6 +284,8 @@ def sync_market_listing_status(session: Session, listing_id: uuid.UUID) -> tuple
                 status_name = "DENIED"
             elif su == "DELETED" or "삭제" in s or s == "상품삭제":
                 status_name = "DELETED"
+            elif su == "APPROVAL_REQUESTED":
+                status_name = "APPROVING"
             elif su in {"IN_REVIEW", "SAVED", "APPROVING", "APPROVED", "PARTIAL_APPROVED"}:
                 status_name = su
             elif s == "심사중":

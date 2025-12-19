@@ -65,6 +65,8 @@ def _normalize_status(status: object | None) -> str | None:
         return None
 
     su = s.upper()
+    if su == "APPROVAL_REQUESTED":
+        return "APPROVING"
     if su in {
         "DENIED",
         "DELETED",
