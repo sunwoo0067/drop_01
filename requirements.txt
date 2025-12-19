@@ -15,3 +15,8 @@ opencv-python-headless==4.10.0.84
 beautifulsoup4==4.12.3
 google-generativeai
 openai>=1.0.0,<2.0.0
+langgraph
+langchain-core
+langchain-openai
+langchain-google-genai
+langchain-community
