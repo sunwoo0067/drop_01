@@ -286,7 +286,7 @@ def _refresh_ownerclan_raw_if_needed(session: Session, product: Product) -> bool
     return True
 
 
-def _execute_product_processing(product_id: uuid.UUID, min_images_required: int, force_fetch_ownerclan: bool) -> None:
+async def _execute_product_processing(product_id: uuid.UUID, min_images_required: int, force_fetch_ownerclan: bool) -> None:
     from app.session_factory import session_factory
     from app.services.processing_service import ProcessingService
 
@@ -299,16 +299,17 @@ def _execute_product_processing(product_id: uuid.UUID, min_images_required: int,
             _refresh_ownerclan_raw_if_needed(processing_session, product)
 
         service = ProcessingService(processing_session)
-        service.process_product(product_id, min_images_required=min_images_required)
+        # async def로 변경된 process_product를 await 함
+        await service.process_product(product_id, min_images_required=min_images_required)
 
 
-def _execute_pending_product_processing(limit: int, min_images_required: int) -> None:
+async def _execute_pending_product_processing(limit: int, min_images_required: int) -> None:
     from app.session_factory import session_factory
     from app.services.processing_service import ProcessingService
 
     with session_factory() as processing_session:
         service = ProcessingService(processing_session)
-        service.process_pending_products(limit=limit, min_images_required=min_images_required)
+        await service.process_pending_products(limit=limit, min_images_required=min_images_required)
 
 
 def _augment_product_images_best_effort(session: Session, product: Product, raw: dict, target_count: int) -> bool:
@@ -395,7 +396,7 @@ def _augment_product_images_best_effort(session: Session, product: Product, raw:
     return len(merged) > before_count
 
 
-def _run_failed_product_processing(
+async def _run_failed_product_processing(
     session: Session,
     limit: int,
     min_images_required: int,
@@ -437,7 +438,7 @@ def _run_failed_product_processing(
                 refreshed_ids.append(str(p.id))
 
         service = ProcessingService(session)
-        service.process_product(p.id, min_images_required=int(min_images_required))
+        await service.process_product(p.id, min_images_required=int(min_images_required))
 
         session.refresh(p)
         imgs = p.processed_image_urls if isinstance(p.processed_image_urls, list) else []
@@ -473,11 +474,11 @@ def _run_failed_product_processing(
     }
 
 
-def _execute_failed_product_processing(limit: int, min_images_required: int, force_fetch_ownerclan: bool, augment_images: bool) -> None:
+async def _execute_failed_product_processing(limit: int, min_images_required: int, force_fetch_ownerclan: bool, augment_images: bool) -> None:
     from app.session_factory import session_factory
 
     with session_factory() as session:
-        summary = _run_failed_product_processing(
+        summary = await _run_failed_product_processing(
             session,
             limit=limit,
             min_images_required=min_images_required,

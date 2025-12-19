@@ -6,6 +6,8 @@ from sqlalchemy import select, or_, desc
 from sqlalchemy.dialects.postgresql import insert
 
 from app.models import Product, SourcingCandidate, BenchmarkProduct, SupplierItemRaw, SupplierAccount
+from app.ownerclan_client import OwnerClanClient
+from app.settings import settings
 from app.services.ai import AIService
 from app.services.ai.agents.sourcing_agent import SourcingAgent
 from app.embedding_service import EmbeddingService
@@ -15,11 +17,6 @@ logger = logging.getLogger(__name__)
 class SourcingService:
     def __init__(self, db: Session):
         self.db = db
-        self.clant = OwnerClanClient(
-            auth_url=settings.ownerclan_auth_url,
-            api_base_url=settings.ownerclan_api_base_url,
-            graphql_url=settings.ownerclan_graphql_url
-        )
         self.embedding_service = EmbeddingService()
         self.ai_service = AIService()
         self.sourcing_agent = SourcingAgent(db)

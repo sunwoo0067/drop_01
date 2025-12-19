@@ -295,6 +295,15 @@ async def trigger_keyword_sourcing(
     background_tasks.add_task(service.execute_keyword_sourcing, payload.keywords, payload.min_margin)
     return {"status": "accepted", "message": f"Global keyword sourcing started for {len(payload.keywords)} keywords"}
 
+async def _execute_benchmark_sourcing(benchmark_id: uuid.UUID) -> None:
+    from app.session_factory import session_factory
+    from app.services.sourcing_service import SourcingService
+
+    with session_factory() as session:
+        service = SourcingService(session)
+        await service.execute_benchmark_sourcing(benchmark_id)
+
+
 @router.post("/benchmark/{benchmark_id}")
 async def trigger_benchmark_sourcing(
     benchmark_id: uuid.UUID,
@@ -305,8 +314,8 @@ async def trigger_benchmark_sourcing(
     Triggers smart sourcing based on a Benchmark Product (Gap Analysis, Spec Matching).
     Runs in background.
     """
-    service = SourcingService(session)
-    background_tasks.add_task(service.execute_benchmark_sourcing, benchmark_id)
+    # session_factory를 사용하는 비동기 래퍼를 BackgroundTasks에 등록
+    background_tasks.add_task(_execute_benchmark_sourcing, benchmark_id)
     return {"status": "accepted", "message": f"Benchmark sourcing started for {benchmark_id}"}
 
 
