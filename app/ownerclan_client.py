@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
+import time
 
 
 @dataclass(frozen=True)
@@ -119,9 +120,31 @@ class OwnerClanClient:
         if variables is not None:
             payload["variables"] = variables
 
-        timeout = httpx.Timeout(60.0, connect=10.0)
-        with httpx.Client(timeout=timeout) as client:
-            resp = client.post(self._graphql_url, json=payload, headers=headers)
+        # OwnerClan GraphQL can be slow/heavy (large payloads). Increase read timeout and retry on transient timeouts.
+        timeout = httpx.Timeout(300.0, connect=10.0)
+        retryable_statuses = {429, 500, 502, 503, 504}
+        last_exc: Exception | None = None
+        resp: httpx.Response | None = None
+        max_attempts = 5
+        for attempt in range(max_attempts):
+            try:
+                with httpx.Client(timeout=timeout) as client:
+                    resp = client.post(self._graphql_url, json=payload, headers=headers)
+
+                if resp.status_code in retryable_statuses and attempt < (max_attempts - 1):
+                    time.sleep(1.0 * (2**attempt))
+                    continue
+
+                last_exc = None
+                break
+            except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.RemoteProtocolError, httpx.TransportError) as e:
+                last_exc = e
+                if attempt >= (max_attempts - 1):
+                    raise
+                time.sleep(1.0 * (2**attempt))
+
+        if resp is None:
+            raise last_exc or RuntimeError("OwnerClan GraphQL request failed")
 
         if not resp.content:
             return resp.status_code, {}

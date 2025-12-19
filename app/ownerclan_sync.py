@@ -5,6 +5,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import logging
 from typing import Any
 
 from sqlalchemy.dialects.postgresql import insert
@@ -22,6 +23,9 @@ from app.models import (
 )
 from app.ownerclan_client import OwnerClanClient
 from app.settings import settings
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -65,23 +69,39 @@ def _sanitize_json(value: Any) -> Any:
     return value
 
 
-def get_primary_ownerclan_account(session: Session) -> SupplierAccount:
+def get_primary_ownerclan_account(session: Session, user_type: str = "seller") -> SupplierAccount:
+    user_type = (user_type or "seller").strip().lower()
+
     account = (
         session.query(SupplierAccount)
         .filter(SupplierAccount.supplier_code == "ownerclan")
+        .filter(SupplierAccount.user_type == user_type)
         .filter(SupplierAccount.is_primary.is_(True))
         .filter(SupplierAccount.is_active.is_(True))
         .one_or_none()
     )
 
+    if account:
+        return account
+
+    # fallback: primary가 아니더라도 active 계정이 있으면 사용
+    account = (
+        session.query(SupplierAccount)
+        .filter(SupplierAccount.supplier_code == "ownerclan")
+        .filter(SupplierAccount.user_type == user_type)
+        .filter(SupplierAccount.is_active.is_(True))
+        .order_by(SupplierAccount.updated_at.desc())
+        .first()
+    )
+
     if not account:
-        raise RuntimeError("대표 오너클랜 계정이 설정되어 있지 않습니다")
+        raise RuntimeError(f"오너클랜 {user_type} 계정이 설정되어 있지 않습니다")
 
     return account
 
 
-def _get_ownerclan_access_token(session: Session) -> tuple[uuid.UUID, str]:
-    account = get_primary_ownerclan_account(session)
+def _get_ownerclan_access_token(session: Session, user_type: str = "seller") -> tuple[uuid.UUID, str]:
+    account = get_primary_ownerclan_account(session, user_type=user_type)
     return account.id, account.access_token
 
 
@@ -135,7 +155,7 @@ def run_ownerclan_job(session: Session, job: SupplierSyncJob) -> OwnerClanJobRes
 
 
 def sync_ownerclan_orders_raw(session: Session, job: SupplierSyncJob) -> OwnerClanJobResult:
-    account_id, access_token = _get_ownerclan_access_token(session)
+    account_id, access_token = _get_ownerclan_access_token(session, user_type="seller")
 
     client = OwnerClanClient(
         auth_url=settings.ownerclan_auth_url,
@@ -422,7 +442,11 @@ query {
 
 
 def sync_ownerclan_qna_raw(session: Session, job: SupplierSyncJob) -> OwnerClanJobResult:
-    account_id, access_token = _get_ownerclan_access_token(session)
+    requested_user_type = str((job.params or {}).get("userType") or "seller").strip().lower()
+    if requested_user_type not in ("seller", "vendor", "supplier"):
+        requested_user_type = "seller"
+
+    account_id, access_token = _get_ownerclan_access_token(session, user_type=requested_user_type)
 
     client = OwnerClanClient(
         auth_url=settings.ownerclan_auth_url,
@@ -514,6 +538,40 @@ query AllSellerQnaArticles {
 }
 """
 
+    vendor_list_query = """
+query AllVendorQnaArticles {
+  allVendorQnaArticles {
+    pageInfo {
+      hasNextPage
+      hasPreviousPage
+      startCursor
+      endCursor
+    }
+    edges {
+      cursor
+      node {
+        key
+        id
+        type
+        title
+        content
+        files
+        relatedItemKey
+        relatedOrderKey
+        createdAt
+        updatedAt
+        authorType
+        authorKey
+        repliedAt
+        reply
+        repliedByKey
+        replierType
+      }
+    }
+  }
+}
+""".strip()
+
     processed = 0
 
     if isinstance(qna_keys, list) and qna_keys:
@@ -583,14 +641,14 @@ query AllSellerQnaArticles {
         return OwnerClanJobResult(processed=processed)
 
     try:
-        status_code, payload = client.graphql(list_query)
+        status_code, payload = client.graphql(vendor_list_query if requested_user_type in ("vendor", "supplier") else list_query)
     except Exception as e:
         session.add(
             SupplierRawFetchLog(
                 supplier_code="ownerclan",
                 account_id=account_id,
                 endpoint=settings.ownerclan_graphql_url,
-                request_payload={"query": list_query},
+                request_payload={"query": vendor_list_query if requested_user_type in ("vendor", "supplier") else list_query},
                 http_status=None,
                 response_payload=None,
                 error_message=str(e),
@@ -604,7 +662,7 @@ query AllSellerQnaArticles {
             supplier_code="ownerclan",
             account_id=account_id,
             endpoint=settings.ownerclan_graphql_url,
-            request_payload={"query": list_query},
+            request_payload={"query": vendor_list_query if requested_user_type in ("vendor", "supplier") else list_query},
             http_status=status_code,
             response_payload=_sanitize_json(payload),
             error_message=None,
@@ -619,7 +677,11 @@ query AllSellerQnaArticles {
     if payload.get("errors"):
         raise RuntimeError(f"오너클랜 GraphQL 오류: {payload.get('errors')}")
 
-    edges = (((payload.get("data") or {}).get("allSellerQnaArticles") or {}).get("edges") or [])
+    data_root = payload.get("data") or {}
+    if requested_user_type in ("vendor", "supplier"):
+        edges = (((data_root.get("allVendorQnaArticles") or {}).get("edges") or []) )
+    else:
+        edges = (((data_root.get("allSellerQnaArticles") or {}).get("edges") or []) )
     for edge in edges:
         node = (edge or {}).get("node") or {}
         qna_id = node.get("key")
@@ -669,7 +731,7 @@ def _upsert_category_tree(session: Session, node: dict[str, Any]) -> int:
 
 
 def sync_ownerclan_categories_raw(session: Session, job: SupplierSyncJob) -> OwnerClanJobResult:
-    account_id, access_token = _get_ownerclan_access_token(session)
+    account_id, access_token = _get_ownerclan_access_token(session, user_type="seller")
 
     client = OwnerClanClient(
         auth_url=settings.ownerclan_auth_url,
@@ -679,62 +741,123 @@ def sync_ownerclan_categories_raw(session: Session, job: SupplierSyncJob) -> Own
     )
 
     params = dict(job.params or {})
-    query_params: dict[str, Any] = {}
-    for k in ("parent_id", "level"):
-        if params.get(k) is not None:
-            query_params[k] = params[k]
+    first = int(params.get("first", 200))
+    max_pages = int(params.get("maxPages", 0))
+    max_items = int(params.get("maxItems", 0))
+    after = params.get("after")
+    page_count = 0
+    processed = 0
 
-    try:
-        status_code, payload = client.get_categories(parent_id=query_params.get("parent_id"), level=query_params.get("level"))
-    except Exception as e:
+    # NOTE: OwnerClan REST categories endpoint returns 404, but GraphQL provides allCategories/category.
+    query = """
+query ($first: Int!, $after: String) {
+  allCategories(first: $first, after: $after) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    edges {
+      cursor
+      node {
+        id
+        key
+        name
+        fullName
+        parent { key }
+      }
+    }
+  }
+}
+""".strip()
+
+    cursor = after
+    while True:
+        page_count += 1
+        variables = {"first": first, "after": cursor} if cursor else {"first": first, "after": None}
+
+        try:
+            status_code, payload = client.graphql(query, variables=variables)
+        except Exception as e:
+            session.add(
+                SupplierRawFetchLog(
+                    supplier_code="ownerclan",
+                    account_id=account_id,
+                    endpoint=settings.ownerclan_graphql_url,
+                    request_payload={"query": query, "variables": variables},
+                    http_status=None,
+                    response_payload=None,
+                    error_message=str(e),
+                )
+            )
+            session.commit()
+            raise
+
         session.add(
             SupplierRawFetchLog(
                 supplier_code="ownerclan",
                 account_id=account_id,
-                endpoint=f"{settings.ownerclan_api_base_url}/v1/categories",
-                request_payload={"params": query_params},
-                http_status=None,
-                response_payload=None,
-                error_message=str(e),
+                endpoint=settings.ownerclan_graphql_url,
+                request_payload={"query": query, "variables": variables},
+                http_status=status_code,
+                response_payload=_sanitize_json(payload),
+                error_message=None,
             )
         )
         session.commit()
-        raise
-    session.add(
-        SupplierRawFetchLog(
-            supplier_code="ownerclan",
-            account_id=account_id,
-            endpoint=f"{settings.ownerclan_api_base_url}/v1/categories",
-            request_payload={"params": query_params},
-            http_status=status_code,
-            response_payload=payload,
-            error_message=None,
-        )
-    )
 
-    session.commit()
+        if status_code == 401:
+            raise RuntimeError("오너클랜 인증이 만료되었습니다(401). 토큰을 갱신해 주세요")
+        if status_code >= 400:
+            raise RuntimeError(f"오너클랜 카테고리(GraphQL) 호출 실패: HTTP {status_code}")
+        if payload.get("errors"):
+            raise RuntimeError(f"오너클랜 카테고리(GraphQL) 오류: {payload.get('errors')}")
 
-    if status_code == 401:
-        raise RuntimeError("오너클랜 인증이 만료되었습니다(401). 토큰을 갱신해 주세요")
-    if status_code >= 400:
-        raise RuntimeError(f"오너클랜 카테고리 목록 호출 실패: HTTP {status_code}")
+        conn = ((payload.get("data") or {}).get("allCategories") or {})
+        page_info = conn.get("pageInfo") or {}
+        edges = conn.get("edges") or []
 
-    data = payload.get("data") or payload
-    categories = data.get("categories") or data.get("category_list") or data.get("categoryList") or []
+        for edge in edges:
+            node = (edge or {}).get("node") or {}
+            category_id = node.get("key") or node.get("id")
+            if not category_id:
+                continue
 
-    processed = 0
-    if isinstance(categories, list):
-        for cat in categories:
-            if isinstance(cat, dict):
-                processed += _upsert_category_tree(session, cat)
+            stmt = insert(SupplierCategoryRaw).values(
+                supplier_code="ownerclan",
+                category_id=str(category_id),
+                raw=_sanitize_json(node),
+                fetched_at=datetime.now(timezone.utc),
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["supplier_code", "category_id"],
+                set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at},
+            )
+            session.execute(stmt)
+            processed += 1
 
-    job.progress = processed
-    session.commit()
+            if max_items > 0 and processed >= max_items:
+                break
+
+        cursor = page_info.get("endCursor")
+        job.progress = processed
+        session.commit()
+
+        if max_items > 0 and processed >= max_items:
+            break
+        if max_pages > 0 and page_count >= max_pages:
+            break
+
+        has_next = bool(page_info.get("hasNextPage"))
+        if not has_next or not cursor:
+            break
+
+        time.sleep(1.1)
+
     return OwnerClanJobResult(processed=processed)
 
 
 def sync_ownerclan_items_raw(session: Session, job: SupplierSyncJob) -> OwnerClanJobResult:
-    account_id, access_token = _get_ownerclan_access_token(session)
+    account_id, access_token = _get_ownerclan_access_token(session, user_type="seller")
 
     client = OwnerClanClient(
         auth_url=settings.ownerclan_auth_url,
@@ -749,21 +872,36 @@ def sync_ownerclan_items_raw(session: Session, job: SupplierSyncJob) -> OwnerCla
     state = get_sync_state(session, "items_raw")
     overlap_ms = 30 * 60 * 1000
 
-    date_from_ms = int(job.params.get("dateFrom", 0))
-    if date_from_ms == 0 and state and state.watermark_ms:
-        date_from_ms = max(0, int(state.watermark_ms) - overlap_ms)
+    date_preset = str(job.params.get("datePreset") or "").strip().lower()
+    preset_days_map = {
+        "1d": 1,
+        "3d": 3,
+        "7d": 7,
+        "30d": 30,
+        "all": 179,
+    }
+    preset_days = preset_days_map.get(date_preset)
 
-    date_to_ms = int(job.params.get("dateTo", now_ms))
+    if preset_days is not None:
+        date_to_ms = now_ms
+        date_from_ms = max(0, date_to_ms - (preset_days * 24 * 60 * 60 * 1000))
+        after = job.params.get("after")
+    else:
+        date_from_ms = int(job.params.get("dateFrom", 0))
+        if date_from_ms == 0 and state and state.watermark_ms:
+            date_from_ms = max(0, int(state.watermark_ms) - overlap_ms)
 
-    if date_from_ms == 0:
-        date_from_ms = max(0, date_to_ms - max_window_ms)
+        date_to_ms = int(job.params.get("dateTo", now_ms))
 
-    if date_to_ms - date_from_ms > max_window_ms:
-        date_from_ms = max(0, date_to_ms - max_window_ms)
+        if date_from_ms == 0:
+            date_from_ms = max(0, date_to_ms - max_window_ms)
 
-    after = job.params.get("after")
-    if not after and state and state.cursor:
-        after = state.cursor
+        if date_to_ms - date_from_ms > max_window_ms:
+            date_from_ms = max(0, date_to_ms - max_window_ms)
+
+        after = job.params.get("after")
+        if not after and state and state.cursor:
+            after = state.cursor
 
     first = int(job.params.get("first", 100))
 
@@ -972,6 +1110,16 @@ def start_background_ownerclan_job(session_factory: Any, job_id: uuid.UUID) -> N
                 job.status = "succeeded"
                 job.finished_at = datetime.now(timezone.utc)
                 session.commit()
+                
+            # Trigger Sourcing Candidate Conversion (Best Effort)
+            try:
+                with session_factory() as session:
+                    from app.services.sourcing_service import SourcingService
+                    service = SourcingService(session)
+                    service.import_from_raw(limit=2000)
+            except Exception as cvt_e:
+                logger.warning(f"Raw 데이터를 소싱 후보로 변환하는 중 오류가 발생했습니다: {cvt_e}")
+
         except Exception as e:
             with session_factory() as session:
                 job = session.get(SupplierSyncJob, job_id)
