@@ -11,6 +11,8 @@ import { Select } from "@/components/ui/Select";
 import BenchmarkFilters from "./BenchmarkFilters";
 import BenchmarkTable from "./BenchmarkTable";
 import BenchmarkDetail from "./BenchmarkDetail";
+import { CollectionDialog } from "./CollectionDialog";
+import { Modal } from "@/components/ui/Modal";
 import JobMonitor from "./JobMonitor";
 
 export default function BenchmarkPage() {
@@ -245,8 +247,6 @@ function CollectionDialog({ isOpen, onClose, onRefresh }: { isOpen: boolean, onC
             setIsLoading(false);
         }
     };
-
-    const { Modal } = require("@/components/ui/Modal");
 
     return (
         <Modal

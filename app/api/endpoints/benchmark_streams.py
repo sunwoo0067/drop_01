@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from app.db import get_session
 from app.models import BenchmarkCollectJob
@@ -25,10 +25,11 @@ async def status_event_generator(request: Request, session_factory):
         try:
             # Use a fresh session for each check to avoid stale data
             with session_factory() as session:
+                now = datetime.now(timezone.utc)
                 # Fetch active or recently finished jobs (last 5 minutes)
                 active_jobs = session.query(BenchmarkCollectJob).filter(
                     (BenchmarkCollectJob.status.in_(["queued", "running"])) |
-                    (BenchmarkCollectJob.finished_at >= datetime.now(timezone.utc).replace(second=0, microsecond=0))
+                    (BenchmarkCollectJob.finished_at >= now - timedelta(minutes=5))
                 ).order_by(BenchmarkCollectJob.created_at.desc()).limit(20).all()
 
                 for job in active_jobs:
