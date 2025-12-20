@@ -635,7 +635,10 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
                     update_payload["requested"] = True
                     u_code, u_data = client.update_product(update_payload)
                     _log_fetch(session, account, "update_product_after_create(contents)", update_payload, u_code, u_data)
-            break
+                break
+            
+            # 이미지가 아직 없으면 대기 후 재시도
+            time.sleep(2.0)
     except Exception as e:
         logger.warning(f"등록 직후 상세(contents) 보강 실패: {e}")
     
@@ -765,6 +768,36 @@ def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_i
         update_payload = current_data_obj
         update_payload["sellerProductId"] = int(listing.market_item_id)
         update_payload["requested"] = True
+
+        # 로컬 Product 정보 반영 (이름, 가격 등)
+        update_payload["displayProductName"] = (product.processed_name or product.name)[:100]
+        
+        if current_items and isinstance(current_items[0], dict):
+            item = current_items[0]
+            
+            # 배송비 합산 가격 계산 (register_product와 동일 로직)
+            shipping_fee = 0
+            try:
+                if product.supplier_item_id:
+                    raw_item = session.get(SupplierItemRaw, product.supplier_item_id)
+                    raw_obj = raw_item.raw if raw_item and isinstance(raw_item.raw, dict) else {}
+                    v = raw_obj.get("shippingFee")
+                    if isinstance(v, (int, float)):
+                        shipping_fee = int(v)
+                    elif isinstance(v, str):
+                        s = "".join([c for c in v.strip() if c.isdigit()])
+                        if s:
+                            shipping_fee = int(s)
+            except Exception:
+                pass
+
+            base_price = int(product.selling_price or 0)
+            total_price = base_price + shipping_fee
+            if total_price < 3000:
+                total_price = 3000
+            
+            item["salePrice"] = total_price
+            item["itemName"] = (product.processed_name or product.name)[:150]
 
         blocks = _build_contents_image_blocks(coupang_urls) if coupang_urls else []
         if blocks:
