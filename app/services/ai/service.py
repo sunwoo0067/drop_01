@@ -46,8 +46,6 @@ class AIService:
         except Exception as e:
             logger.error(f"Failed to fetch {provider} keys from DB: {e}")
             return []
-        
-        self.default_provider_name = settings.default_ai_provider
 
     def _get_provider(self, provider_type: ProviderType = "auto") -> AIProvider:
         if provider_type == "auto":

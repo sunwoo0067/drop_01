@@ -317,6 +317,7 @@ class SourcingCandidate(DropshipBase):
     
     name: Mapped[str] = mapped_column(Text, nullable=False)
     supply_price: Mapped[int] = mapped_column(Integer, nullable=False)
+    thumbnail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     
     # Sourcing Analysis Data
     source_strategy: Mapped[str] = mapped_column(Text, nullable=False) # e.g. "KEYWORD", "BENCHMARK_GAP", "SPEC_MATCH"
@@ -345,4 +346,3 @@ class APIKey(DropshipBase):
     key: Mapped[str] = mapped_column(Text, nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-

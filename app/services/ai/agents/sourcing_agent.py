@@ -3,7 +3,7 @@ import uuid
 from typing import Dict, Any, List
 from langgraph.graph import StateGraph, END
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func
+from sqlalchemy import select
 
 from app.services.ai.agents.state import AgentState
 from app.services.ai import AIService
@@ -104,7 +104,18 @@ class SourcingAgent:
         # 여기서는 이미 수집된 SourcingCandidate 중에서 유사한 것을 찾는 예시
         vector_items = []
         from app.models import BenchmarkProduct, SourcingCandidate
-        benchmark = self.db.execute(select(BenchmarkProduct).where(BenchmarkProduct.id == uuid.UUID(target_id))).scalar_one_or_none()
+        benchmark = None
+        benchmark_id = None
+        if target_id:
+            try:
+                benchmark_id = uuid.UUID(str(target_id))
+            except (ValueError, TypeError):
+                logger.warning("Invalid benchmark UUID provided to sourcing agent: %s", target_id)
+        if benchmark_id:
+            benchmark = (
+                self.db.execute(select(BenchmarkProduct).where(BenchmarkProduct.id == benchmark_id))
+                .scalar_one_or_none()
+            )
         if benchmark and benchmark.embedding is not None:
             stmt = (
                 select(SourcingCandidate)
@@ -117,7 +128,7 @@ class SourcingAgent:
                     "item_code": cand.supplier_item_id,
                     "name": cand.name,
                     "supply_price": cand.supply_price,
-                    "thumbnail_url": cand.thumbnail_url,
+                    "thumbnail_url": getattr(cand, "thumbnail_url", None),
                     "is_vector_match": True
                 })
 
@@ -141,9 +152,17 @@ class SourcingAgent:
         target_id = state.get("target_id")
         
         from app.models import BenchmarkProduct
-        from app.embedding_service import EmbeddingService
-        emb_service = EmbeddingService()
-        benchmark = self.db.execute(select(BenchmarkProduct).where(BenchmarkProduct.id == uuid.UUID(target_id))).scalar_one_or_none()
+        benchmark = None
+        if target_id:
+            try:
+                benchmark_uuid = uuid.UUID(str(target_id))
+            except (TypeError, ValueError):
+                benchmark_uuid = None
+            if benchmark_uuid:
+                benchmark = (
+                    self.db.execute(select(BenchmarkProduct).where(BenchmarkProduct.id == benchmark_uuid))
+                    .scalar_one_or_none()
+                )
 
         scored_items = []
         for item in items:
@@ -197,5 +216,4 @@ class SourcingAgent:
             "logs": [],
             "final_output": None
         }
-        
-        return self.workflow.invoke(initial_state)
+        return await self.workflow.ainvoke(initial_state)
