@@ -550,7 +550,7 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
                     u_code, u_data = client.update_product(update_payload)
                     _log_fetch(session, account, "update_product_after_create(contents)", update_payload, u_code, u_data)
                 break
-            
+
             # 이미지가 아직 없으면 대기 후 재시도
             time.sleep(2.0)
     except Exception as e:

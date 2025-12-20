@@ -209,7 +209,7 @@ class ImageProcessingService:
         
         # 1. Supplement Images
         candidates = image_urls[:]
-        if len(candidates) < target_count and detail_html:
+        if len(candidates) == 0 and detail_html:
             logger.info(f"Not enough images ({len(candidates)}), extracting from detail HTML...")
             extra_images = self.extract_images_from_html(detail_html, limit=target_count - len(candidates) + 5) # Get a few more to be safe
             candidates.extend(extra_images)
