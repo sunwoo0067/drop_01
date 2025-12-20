@@ -6,6 +6,11 @@ export interface BenchmarkProduct {
     price: number;
     productUrl: string;
     imageUrls?: string[];
+    categoryPath?: string;
+    reviewCount?: number;
+    rating?: number;
+    qualityScore?: number;
+    embeddingUpdatedAt?: string;
     detailHtmlLen: number;
     rawHtmlLen: number;
     blockedReason?: string;

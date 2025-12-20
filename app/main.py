@@ -16,13 +16,14 @@ from app.ownerclan_client import OwnerClanClient
 from app.ownerclan_sync import start_background_ownerclan_job
 from app.session_factory import session_factory
 from app.settings import settings
-from app.api.endpoints import sourcing, products, coupang, settings as settings_endpoint, suppliers as suppliers_endpoint, benchmarks, market
+from app.api.endpoints import sourcing, products, coupang, settings as settings_endpoint, suppliers as suppliers_endpoint, benchmarks, market, benchmark_streams
 from app.schemas.product import ProductResponse
 
 app = FastAPI()
 
 app.include_router(sourcing.router, prefix="/api/sourcing", tags=["Sourcing"])
 app.include_router(benchmarks.router, prefix="/api/benchmarks", tags=["Benchmarks"])
+app.include_router(benchmark_streams.router, prefix="/api/benchmarks", tags=["Benchmarks"])
 app.include_router(products.router, prefix="/api/products", tags=["Products"]) 
 app.include_router(coupang.router, prefix="/api/coupang", tags=["Coupang"])
 app.include_router(settings_endpoint.router, prefix="/api/settings", tags=["Settings"])

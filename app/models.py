@@ -54,6 +54,13 @@ class BenchmarkCollectJob(MarketBase):
     markets: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     limit: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
     progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    
+    # New fields for better tracking
+    category_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    processed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    retry_of_job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+
     failed_markets: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     params: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
@@ -296,6 +303,13 @@ class BenchmarkProduct(MarketBase):
     detail_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_data: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     
+    # New fields for analysis and filtering
+    category_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rating: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    embedding_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    quality_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
     # Advanced Sourcing Fields
     review_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     pain_points: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True) # e.g. ["heavy", "breaks easily"]

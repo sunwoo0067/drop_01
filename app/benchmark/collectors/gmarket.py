@@ -190,10 +190,35 @@ class GmarketBenchmarkCollector:
 
         return {"detail_html": detail_html, "image_urls": image_urls, "raw_html": raw_html_to_store}
 
-    async def run_ranking_collection(self, limit: int = 10, category_url: str | None = None):
+    async def run_ranking_collection(self, limit: int = 10, category_url: str | None = None, job_id: Any = None):
         items = await self.collect_ranking(limit=limit, category_url=category_url)
-        for item in items:
+        total = len(items)
+        
+        from app.models import BenchmarkCollectJob
+        from app.db import SessionLocal
+
+        for idx, item in enumerate(items):
+            logger.info(f"Processing {item.get('name')} ({idx+1}/{total})...")
             details = await self.collect_detail(str(item.get("product_url") or ""))
             if details:
                 item.update(details)
+            
+            # Simple quality score heuristic
+            desc_len = len(item.get("detail_html") or "")
+            img_count = len(item.get("image_urls") or [])
+            item["quality_score"] = min(10.0, (desc_len / 10000.0) + (img_count * 0.5))
+            
             await self._saver.save_product(item)
+
+            # Update Job Progress
+            if job_id:
+                try:
+                    with SessionLocal() as db:
+                        job = db.get(BenchmarkCollectJob, job_id)
+                        if job:
+                            job.processed_count = idx + 1
+                            job.total_count = total
+                            job.progress = int(((idx + 1) / total) * 100) if total > 0 else 100
+                            db.commit()
+                except Exception as je:
+                    logger.error(f"Failed to update job progress: {je}")

@@ -33,32 +33,64 @@ def list_benchmarks(
     session: Session = Depends(get_session),
     q: str | None = Query(default=None),
     market_code: str | None = Query(default=None, alias="marketCode"),
+    min_price: int | None = Query(default=None, alias="minPrice"),
+    max_price: int | None = Query(default=None, alias="maxPrice"),
+    min_review_count: int | None = Query(default=None, alias="minReviewCount"),
+    min_rating: float | None = Query(default=None, alias="minRating"),
+    min_quality_score: float | None = Query(default=None, alias="minQualityScore"),
     order_by: str | None = Query(default=None, alias="orderBy"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
-) -> list[dict]:
-    order_key = (order_by or "created").strip().lower()
-    if order_key == "updated":
-        stmt = (
-            select(BenchmarkProduct)
-            .order_by(BenchmarkProduct.updated_at.desc(), BenchmarkProduct.created_at.desc())
-            .offset(offset)
-            .limit(limit)
-        )
-    else:
-        stmt = select(BenchmarkProduct).order_by(BenchmarkProduct.created_at.desc()).offset(offset).limit(limit)
+) -> dict:
+    stmt = select(BenchmarkProduct)
+    
+    # Filtering
     if market_code:
         stmt = stmt.where(BenchmarkProduct.market_code == market_code)
     if q:
         like = f"%{q}%"
         stmt = stmt.where(BenchmarkProduct.name.ilike(like))
+    if min_price is not None:
+        stmt = stmt.where(BenchmarkProduct.price >= min_price)
+    if max_price is not None:
+        stmt = stmt.where(BenchmarkProduct.price <= max_price)
+    if min_review_count is not None:
+        stmt = stmt.where(BenchmarkProduct.review_count >= min_review_count)
+    if min_rating is not None:
+        stmt = stmt.where(BenchmarkProduct.rating >= min_rating)
+    if min_quality_score is not None:
+        stmt = stmt.where(BenchmarkProduct.quality_score >= min_quality_score)
 
+    # Count for pagination
+    from sqlalchemy import func
+    total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+
+    # Ordering
+    order_key = (order_by or "created").strip().lower()
+    if order_key == "updated":
+        stmt = stmt.order_by(BenchmarkProduct.updated_at.desc(), BenchmarkProduct.created_at.desc())
+    elif order_key == "price_asc":
+        stmt = stmt.order_by(BenchmarkProduct.price.asc())
+    elif order_key == "price_desc":
+        stmt = stmt.order_by(BenchmarkProduct.price.desc())
+    elif order_key == "reviews":
+        stmt = stmt.order_by(BenchmarkProduct.review_count.desc())
+    elif order_key == "rating":
+        stmt = stmt.order_by(BenchmarkProduct.rating.desc())
+    elif order_key == "quality":
+        stmt = stmt.order_by(BenchmarkProduct.quality_score.desc())
+    else:
+        stmt = stmt.order_by(BenchmarkProduct.created_at.desc())
+
+    # Pagination
+    stmt = stmt.offset(offset).limit(limit)
     rows = session.scalars(stmt).all()
-    result: list[dict] = []
+    
+    items: list[dict] = []
     for row in rows:
         rawData = row.raw_data if isinstance(row.raw_data, dict) else {}
         rawHtmlVal = rawData.get("raw_html")
-        result.append(
+        items.append(
             {
                 "id": str(row.id),
                 "marketCode": row.market_code,
@@ -67,6 +99,10 @@ def list_benchmarks(
                 "price": row.price,
                 "productUrl": row.product_url,
                 "imageUrls": row.image_urls,
+                "categoryPath": row.category_path,
+                "reviewCount": row.review_count,
+                "rating": row.rating,
+                "qualityScore": row.quality_score,
                 "detailHtmlLen": len(row.detail_html or ""),
                 "rawHtmlLen": len(rawHtmlVal) if isinstance(rawHtmlVal, str) else 0,
                 "blockedReason": rawData.get("blocked_reason"),
@@ -76,7 +112,12 @@ def list_benchmarks(
                 "updatedAt": row.updated_at.isoformat() if row.updated_at else None,
             }
         )
-    return result
+    return {
+        "items": items,
+        "total": total,
+        "offset": offset,
+        "limit": limit
+    }
 
 
 @router.get("/jobs/{job_id}")
@@ -89,7 +130,10 @@ def get_benchmark_collect_job(job_id: uuid.UUID, session: Session = Depends(get_
         "id": str(job.id),
         "status": job.status,
         "marketCode": job.market_code,
-        "markets": job.markets,
+        "categoryUrl": job.category_url,
+        "totalCount": job.total_count,
+        "processedCount": job.processed_count,
+        "retryOfJobId": str(job.retry_of_job_id) if job.retry_of_job_id else None,
         "limit": job.limit,
         "progress": job.progress,
         "failedMarkets": job.failed_markets,
@@ -105,16 +149,29 @@ def get_benchmark_collect_job(job_id: uuid.UUID, session: Session = Depends(get_
 @router.get("/jobs")
 def list_benchmark_collect_jobs(
     session: Session = Depends(get_session),
+    status: str | None = Query(default=None),
+    market_code: str | None = Query(default=None, alias="marketCode"),
     limit: int = Query(default=30, ge=1, le=200),
-) -> list[dict]:
-    stmt = select(BenchmarkCollectJob).order_by(BenchmarkCollectJob.created_at.desc()).limit(limit)
-    jobs = session.scalars(stmt).all()
-    return [
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    stmt = select(BenchmarkCollectJob).order_by(BenchmarkCollectJob.created_at.desc())
+    if status:
+        stmt = stmt.where(BenchmarkCollectJob.status == status)
+    if market_code:
+        stmt = stmt.where(BenchmarkCollectJob.market_code == market_code)
+    
+    from sqlalchemy import func
+    total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    
+    jobs = session.scalars(stmt.offset(offset).limit(limit)).all()
+    items = [
         {
             "id": str(j.id),
             "status": j.status,
             "marketCode": j.market_code,
-            "markets": j.markets,
+            "categoryUrl": j.category_url,
+            "totalCount": j.total_count,
+            "processedCount": j.processed_count,
             "limit": j.limit,
             "progress": j.progress,
             "failedMarkets": j.failed_markets,
@@ -126,6 +183,12 @@ def list_benchmark_collect_jobs(
         }
         for j in jobs
     ]
+    return {
+        "items": items,
+        "total": total,
+        "offset": offset,
+        "limit": limit
+    }
 
 
 @router.get("/{benchmark_id}")
@@ -159,6 +222,10 @@ def get_benchmark(benchmark_id: uuid.UUID, session: Session = Depends(get_sessio
         "price": row.price,
         "productUrl": row.product_url,
         "imageUrls": row.image_urls,
+        "categoryPath": row.category_path,
+        "reviewCount": row.review_count,
+        "rating": row.rating,
+        "qualityScore": row.quality_score,
         "detailHtml": detailHtmlToReturn,
         "detailHtmlLen": detailHtmlLen,
         "detailHtmlTruncated": detailHtmlTruncated,
@@ -179,49 +246,81 @@ async def collect_benchmark_ranking(
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
 ):
-    market_code = str(payload.marketCode or "COUPANG").strip() or "COUPANG"
+    market_code = str(payload.marketCode or "COUPANG").strip().upper() or "COUPANG"
     category_url = str(payload.categoryUrl).strip() if payload.categoryUrl else None
     limit = int(payload.limit or 0)
+    
     if limit <= 0:
         raise HTTPException(status_code=400, detail="limit은 1 이상이어야 합니다")
     if limit > 50:
         raise HTTPException(status_code=400, detail="limit은 50 이하여야 합니다")
 
-    if market_code.strip().upper() == "ALL":
-        markets = get_supported_market_codes()
+    requested_markets = []
+    if market_code == "ALL":
+        requested_markets = get_supported_market_codes()
+    else:
+        requested_markets = [market_code]
+
+    job_ids = []
+    for m in requested_markets:
         job = BenchmarkCollectJob(
             status="queued",
-            market_code="ALL",
-            markets=markets,
+            market_code=m,
+            category_url=category_url if m == market_code else None,
             limit=limit,
+            total_count=limit,
+            processed_count=0,
             progress=0,
-            failed_markets=[],
-            last_error=None,
-            params={"categoryUrl": None},
+            params={"categoryUrl": category_url if m == market_code else None},
         )
-    session.add(job)
-    session.flush()
+        session.add(job)
+        session.flush()
+        job_ids.append(str(job.id))
+        background_tasks.add_task(_execute_benchmark_ranking_collection, job.id, m, job.category_url, limit)
+    
     session.commit()
+    
+    return {
+        "status": "accepted",
+        "jobIds": job_ids,
+        "marketCode": market_code,
+        "limit": limit
+    }
 
-    background_tasks.add_task(_execute_benchmark_all_ranking_collection, job.id, markets, limit)
-    return {"status": "accepted", "jobId": str(job.id), "marketCode": "ALL", "markets": markets, "limit": limit}
 
-    job = BenchmarkCollectJob(
+@router.post("/jobs/{job_id}/retry", status_code=202)
+async def retry_benchmark_collect_job(
+    job_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session)
+):
+    old_job = session.get(BenchmarkCollectJob, job_id)
+    if not old_job:
+        raise HTTPException(status_code=404, detail="재시도할 Job을 찾을 수 없습니다")
+    
+    new_job = BenchmarkCollectJob(
         status="queued",
-        market_code=market_code,
-        markets=[market_code],
-        limit=limit,
+        market_code=old_job.market_code,
+        category_url=old_job.category_url,
+        limit=old_job.limit,
+        total_count=old_job.limit,
+        processed_count=0,
         progress=0,
-        failed_markets=[],
-        last_error=None,
-        params={"categoryUrl": category_url},
+        retry_of_job_id=old_job.id,
+        params=old_job.params
     )
-    session.add(job)
+    session.add(new_job)
     session.flush()
     session.commit()
 
-    background_tasks.add_task(_execute_benchmark_ranking_collection, job.id, market_code, category_url, limit)
-    return {"status": "accepted", "jobId": str(job.id), "marketCode": market_code, "categoryUrl": category_url, "limit": limit}
+    background_tasks.add_task(
+        _execute_benchmark_ranking_collection, 
+        new_job.id, 
+        new_job.market_code, 
+        new_job.category_url, 
+        new_job.limit
+    )
+    return {"status": "accepted", "jobId": str(new_job.id)}
 
 
 def _execute_benchmark_ranking_collection(job_id: uuid.UUID, market_code: str, category_url: str | None, limit: int) -> None:
@@ -234,16 +333,20 @@ def _execute_benchmark_ranking_collection(job_id: uuid.UUID, market_code: str, c
         job.status = "running"
         job.started_at = datetime.now(timezone.utc)
         job.progress = 0
+        job.processed_count = 0
+        job.total_count = limit
         job_session.commit()
 
-    failed: list[str] = []
+    failed_markets: list[str] = []
     last_error: str | None = None
     try:
         collector = get_benchmark_collector(market_code)
-        asyncio.run(collector.run_ranking_collection(limit=limit, category_url=category_url))
+        # Use asyncio.run if not in an event loop, but BackgroundTasks might be already in one?
+        # Typically background tasks in FastAPI are run in a threadpool if they are 'def' functions.
+        asyncio.run(collector.run_ranking_collection(limit=limit, category_url=category_url, job_id=job_id))
     except Exception as e:
         logger.exception(f"벤치마크 수집 실패: marketCode={market_code}: {e}")
-        failed.append(market_code)
+        failed_markets.append(market_code)
         last_error = f"벤치마크 수집 실패: {e}"
 
     with session_factory() as job_session:
@@ -251,63 +354,11 @@ def _execute_benchmark_ranking_collection(job_id: uuid.UUID, market_code: str, c
         if not job:
             return
         job.progress = 100
-        job.failed_markets = failed
+        job.failed_markets = failed_markets
         job.last_error = last_error
-        job.status = "failed" if failed else "succeeded"
+        job.status = "failed" if failed_markets else "succeeded"
         job.finished_at = datetime.now(timezone.utc)
         job_session.commit()
 
 
-def _execute_benchmark_all_ranking_collection(job_id: uuid.UUID, market_codes: list[str], limit: int) -> None:
-    from app.session_factory import session_factory
-
-    with session_factory() as job_session:
-        job = job_session.get(BenchmarkCollectJob, job_id)
-        if not job:
-            return
-        job.status = "running"
-        job.started_at = datetime.now(timezone.utc)
-        job.progress = 0
-        job.failed_markets = []
-        job.last_error = None
-        job_session.commit()
-
-    async def _run_all() -> tuple[list[str], str | None]:
-        failed_markets: list[str] = []
-        last_error: str | None = None
-
-        total = max(len(market_codes), 1)
-        for idx, code in enumerate(market_codes):
-            try:
-                collector = get_benchmark_collector(code)
-                await collector.run_ranking_collection(limit=limit, category_url=None)
-            except Exception as e:
-                logger.exception(f"벤치마크 ALL 수집 실패: marketCode={code}: {e}")
-                failed_markets.append(code)
-                last_error = str(e)
-
-            progress = int(((idx + 1) / total) * 100)
-            with session_factory() as inner_session:
-                job = inner_session.get(BenchmarkCollectJob, job_id)
-                if job:
-                    job.progress = progress
-                    job.failed_markets = failed_markets
-                    job.last_error = last_error
-                    inner_session.commit()
-
-            await asyncio.sleep(1)
-
-        return failed_markets, last_error
-
-    failed, last_error = asyncio.run(_run_all())
-
-    with session_factory() as job_session:
-        job = job_session.get(BenchmarkCollectJob, job_id)
-        if not job:
-            return
-        job.status = "failed" if failed else "succeeded"
-        job.progress = 100
-        job.failed_markets = failed
-        job.last_error = last_error
-        job.finished_at = datetime.now(timezone.utc)
-        job_session.commit()
+# Removed _execute_benchmark_all_ranking_collection as we now create separate jobs for each market.

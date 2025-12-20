@@ -681,15 +681,26 @@ def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_i
         payload["sellerProductId"] = int(listing.market_item_id)
         payload["requested"] = True
 
-        # 기존 vendorItemId 매핑 유지(쿠팡 요구 사항)
+        # 기존 vendorItemId 및 가격/이미지 맵핑 유지/보정
         if payload.get("items") and current_items and isinstance(current_items[0], dict):
-            if "vendorItemId" in current_items[0]:
-                payload["items"][0]["vendorItemId"] = current_items[0]["vendorItemId"]
+            target_item = payload["items"][0]
+            current_item = current_items[0]
+
+            if "vendorItemId" in current_item:
+                target_item["vendorItemId"] = current_item["vendorItemId"]
+
+            # [BUG FIX] 가격 동기화: salePrice가 existing originalPrice보다 크면 originalPrice 상향
+            existing_original = int(current_item.get("originalPrice") or 0)
+            new_sale = int(target_item.get("salePrice") or 0)
+            if new_sale > existing_original:
+                target_item["originalPrice"] = new_sale
+            else:
+                target_item["originalPrice"] = existing_original
 
             # 로컬 가공 이미지가 없으면 기존 쿠팡 이미지를 활용
-            if not payload["items"][0].get("images"):
+            if not target_item.get("images"):
                 coupang_urls: list[str] = []
-                imgs = current_items[0].get("images") if isinstance(current_items[0].get("images"), list) else []
+                imgs = current_item.get("images") if isinstance(current_item.get("images"), list) else []
                 for im in imgs:
                     if not isinstance(im, dict):
                         continue
@@ -707,7 +718,7 @@ def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_i
                         }
                     )
                 if fallback_images:
-                    payload["items"][0]["images"] = fallback_images
+                    target_item["images"] = fallback_images
 
         code, data = client.update_product(payload)
         _log_fetch(session, account, "update_product", payload, code, data)
@@ -1150,12 +1161,14 @@ def _map_product_to_coupang_payload(
     name_to_use = product.processed_name if product.processed_name else product.name
     
     processed_images = product.processed_image_urls if isinstance(product.processed_image_urls, list) else []
+    
+    # [BUG FIX] Always prepare description HTML to avoid losing local edits
+    raw_desc = product.description or "<p>상세설명 없음</p>"
+    description_html = _normalize_detail_html_for_coupang(raw_desc)[:200000]
+    
+    contents_blocks = []
     if processed_images:
         contents_blocks = _build_contents_image_blocks(processed_images)
-    else:
-        contents_blocks = []
-        raw_desc = product.description or "<p>상세설명 없음</p>"
-        description_html = _normalize_detail_html_for_coupang(raw_desc)[:200000]
     
     # 이미지
     # 가공된 이미지 우선 사용
@@ -1250,7 +1263,11 @@ def _map_product_to_coupang_payload(
         "unitCount": 1,
         "images": images,
         "attributes": [], # TODO: 카테고리 속성 매핑 필요 (예측된 카테고리에 따라 필수 속성이 다름)
-        "contents": (contents_blocks if contents_blocks else [{"contentsType": "HTML", "contentDetails": [{"content": description_html, "detailType": "TEXT"}]}]),
+        "contents": (
+            contents_blocks + [{"contentsType": "HTML", "contentDetails": [{"content": description_html, "detailType": "TEXT"}]}]
+            if contents_blocks 
+            else [{"contentsType": "HTML", "contentDetails": [{"content": description_html, "detailType": "TEXT"}]}]
+        ),
         "notices": notices,
     }
 
