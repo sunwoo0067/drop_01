@@ -649,7 +649,16 @@ def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_i
         
     try:
         client = _get_client_for_account(account)
-        
+
+        # 최신 쿠팡 상품 상태를 조회하여 vendorItemId/기존 이미지 등을 확보
+        code, current_data = client.get_product(listing.market_item_id)
+        if code != 200:
+            return False, f"쿠팡 상품 정보 조회 실패: {current_data.get('message')}"
+        current_data_obj = current_data.get("data") if isinstance(current_data, dict) else None
+        if not isinstance(current_data_obj, dict):
+            return False, "쿠팡 상품 정보 조회 응답(data)이 비정상입니다"
+        current_items = current_data_obj.get("items") if isinstance(current_data_obj.get("items"), list) else []
+
         # 1. 메타 데이터 준비 (등록 시와 동일한 수준으로 최신 정보 확보)
         meta_result = _get_coupang_product_metadata(session, client, account, product)
         if not meta_result["ok"]:
@@ -671,6 +680,34 @@ def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_i
         # 업데이트 API 규격에 맞춰 sellerProductId 및 requested 추가
         payload["sellerProductId"] = int(listing.market_item_id)
         payload["requested"] = True
+
+        # 기존 vendorItemId 매핑 유지(쿠팡 요구 사항)
+        if payload.get("items") and current_items and isinstance(current_items[0], dict):
+            if "vendorItemId" in current_items[0]:
+                payload["items"][0]["vendorItemId"] = current_items[0]["vendorItemId"]
+
+            # 로컬 가공 이미지가 없으면 기존 쿠팡 이미지를 활용
+            if not payload["items"][0].get("images"):
+                coupang_urls: list[str] = []
+                imgs = current_items[0].get("images") if isinstance(current_items[0].get("images"), list) else []
+                for im in imgs:
+                    if not isinstance(im, dict):
+                        continue
+                    url = _extract_coupang_image_url(im)
+                    if url:
+                        coupang_urls.append(url)
+                fallback_images: list[dict[str, Any]] = []
+                for idx, url in enumerate(coupang_urls[:10]):
+                    image_type = "REPRESENTATION" if idx == 0 else "DETAIL"
+                    fallback_images.append(
+                        {
+                            "imageOrder": idx,
+                            "imageType": image_type,
+                            "vendorPath": url,
+                        }
+                    )
+                if fallback_images:
+                    payload["items"][0]["images"] = fallback_images
 
         code, data = client.update_product(payload)
         _log_fetch(session, account, "update_product", payload, code, data)
