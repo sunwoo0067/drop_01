@@ -249,6 +249,8 @@ class MarketListing(MarketBase):
     market_item_id: Mapped[str] = mapped_column(Text, nullable=False)  # e.g. sellerProductId
     status: Mapped[str] = mapped_column(Text, nullable=False, default="ACTIVE")
     linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    coupang_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rejection_reason: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
 
 class SupplierOrder(MarketBase):

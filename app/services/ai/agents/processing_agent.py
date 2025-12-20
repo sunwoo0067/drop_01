@@ -48,7 +48,7 @@ class ProcessingAgent:
         brand = input_data.get("brand", "")
         detail = input_data.get("normalized_detail", "")
         
-        seo_result = self.ai_service.optimize_seo(name, [brand], provider="gemini")
+        seo_result = self.ai_service.optimize_seo(name, [brand], provider="auto")
         
         return {
             "final_output": {

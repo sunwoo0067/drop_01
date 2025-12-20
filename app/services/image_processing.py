@@ -209,19 +209,30 @@ class ImageProcessingService:
         
         # 1. Supplement Images
         candidates = image_urls[:]
-        if len(candidates) == 0 and detail_html:
-            logger.info(f"Not enough images ({len(candidates)}), extracting from detail HTML...")
-            extra_images = self.extract_images_from_html(detail_html, limit=target_count - len(candidates) + 5) # Get a few more to be safe
-            candidates.extend(extra_images)
-            stats["supplemented_from_html"] = len(extra_images or [])
-            
-        # Deduplicate
+        
+        # Deduplicate initial candidates
         seen = set()
         unique_candidates = []
         for url in candidates:
-            if url not in seen:
+            if url and url not in seen:
                 unique_candidates.append(url)
                 seen.add(url)
+        
+        # If not enough images, try to extract from detail HTML
+        if len(unique_candidates) < target_count and detail_html:
+            logger.info(f"Not enough images ({len(unique_candidates)}/{target_count}), extracting from detail HTML...")
+            # Extract enough to fulfill target + some buffer
+            extra_images = self.extract_images_from_html(detail_html, limit=15) 
+            
+            added_count = 0
+            for img_url in extra_images:
+                if img_url not in seen:
+                    unique_candidates.append(img_url)
+                    seen.add(img_url)
+                    added_count += 1
+            
+            stats["supplemented_from_html"] = added_count
+            logger.info(f"Extracted {added_count} new images from HTML. Total unique candidates: {len(unique_candidates)}")
 
         stats["unique_candidates"] = len(unique_candidates)
         

@@ -8,7 +8,7 @@ from app.services.ai.base import AIProvider
 logger = logging.getLogger(__name__)
 
 class GeminiProvider(AIProvider):
-    def __init__(self, api_keys: List[str], model_name: str = "gemini-1.5-flash"):
+    def __init__(self, api_keys: List[str], model_name: str = "gemini-1.5-flash-latest"):
         self.api_keys = [k for k in api_keys if k] # Filter empty
         self.model_name = model_name
         self.current_key_index = 0

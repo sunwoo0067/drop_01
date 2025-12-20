@@ -85,10 +85,12 @@ class AIService:
         return []
 
     def optimize_seo(self, product_name: str, keywords: List[str], provider: ProviderType = "auto") -> Dict[str, Any]:
+        # Filter out None or empty strings
+        clean_keywords = [str(k) for k in keywords if k]
         prompt = f"""
         Optimize product name for SEO (Coupang).
         Original: {product_name}
-        Keywords: {', '.join(keywords)}
+        Keywords: {', '.join(clean_keywords)}
         Return JSON {{ "title": "...", "tags": [...] }}
         """
         return self._get_provider(provider).generate_json(prompt)

@@ -36,23 +36,33 @@ class ProcessingService:
                 if product.supplier_item_id:
                     raw_item = self.db.get(SupplierItemRaw, product.supplier_item_id)
                     raw = raw_item.raw if raw_item and isinstance(raw_item.raw, dict) else {}
+                    
+                    # 1. 메인 images 리스트 확인
                     images_val = raw.get("images")
                     if isinstance(images_val, str):
                         s = images_val.strip()
                         if s.startswith(("http://", "https://")):
-                            raw_images = [s]
+                            raw_images.append(s)
                     elif isinstance(images_val, list):
-                        for it in images_val[:50]:
+                        for it in images_val[:30]:
                             if isinstance(it, str):
                                 s = it.strip()
-                                if s.startswith(("http://", "https://")):
+                                if s.startswith(("http://", "https://")) and s not in raw_images:
                                     raw_images.append(s)
                             elif isinstance(it, dict):
                                 u = it.get("url") or it.get("src")
                                 if isinstance(u, str):
                                     s = u.strip()
-                                    if s.startswith(("http://", "https://")):
+                                    if s.startswith(("http://", "https://")) and s not in raw_images:
                                         raw_images.append(s)
+                    
+                    # 2. thumbnail 필드 별도 확인 (중복 제거하며 추가)
+                    thumb = raw.get("thumbnail") or raw.get("main_image")
+                    if thumb and isinstance(thumb, str) and thumb.strip().startswith("http"):
+                        t = thumb.strip()
+                        if t not in raw_images:
+                            raw_images.insert(0, t)
+
             except Exception as e:
                 logger.warning(f"오너클랜 이미지 추출 실패(productId={product_id}): {e}")
 
