@@ -1,12 +1,10 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
-from app.db import get_session
 from app.models import BenchmarkCollectJob
 
 router = APIRouter()
@@ -25,11 +23,10 @@ async def status_event_generator(request: Request, session_factory):
         try:
             # Use a fresh session for each check to avoid stale data
             with session_factory() as session:
-                now = datetime.now(timezone.utc)
                 # Fetch active or recently finished jobs (last 5 minutes)
                 active_jobs = session.query(BenchmarkCollectJob).filter(
                     (BenchmarkCollectJob.status.in_(["queued", "running"])) |
-                    (BenchmarkCollectJob.finished_at >= now - timedelta(minutes=5))
+                    (BenchmarkCollectJob.finished_at >= datetime.now(timezone.utc).replace(second=0, microsecond=0))
                 ).order_by(BenchmarkCollectJob.created_at.desc()).limit(20).all()
 
                 for job in active_jobs:
@@ -37,12 +34,13 @@ async def status_event_generator(request: Request, session_factory):
                     job_data = {
                         "id": str(job.id),
                         "status": job.status,
-                        "market_code": job.market_code,
-                        "processed_count": job.processed_count,
-                        "total_count": job.total_count,
+                        "marketCode": job.market_code,
+                        "categoryUrl": job.category_url,
+                        "processedCount": job.processed_count,
+                        "totalCount": job.total_count,
                         "progress": job.progress,
-                        "last_error": job.last_error,
-                        "finished_at": job.finished_at.isoformat() if job.finished_at else None
+                        "lastError": job.last_error,
+                        "finishedAt": job.finished_at.isoformat() if job.finished_at else None
                     }
                     
                     status_json = json.dumps(job_data)
