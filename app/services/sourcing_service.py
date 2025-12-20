@@ -1,10 +1,9 @@
 import logging
 import uuid
-from typing import List
-
-from sqlalchemy import desc, select
-from sqlalchemy.dialects.postgresql import insert
+from typing import List, Optional
 from sqlalchemy.orm import Session
+from sqlalchemy import select, or_, desc
+from sqlalchemy.dialects.postgresql import insert
 
 from app.embedding_service import EmbeddingService
 from app.models import BenchmarkProduct, SupplierAccount, SupplierItemRaw, SourcingCandidate
@@ -111,7 +110,7 @@ class SourcingService:
 
     async def execute_benchmark_sourcing(self, benchmark_id: uuid.UUID):
         """
-        Strategy 2: Benchmark Sourcing that leverages the LangGraph-based sourcing agent.
+        Strategy 2: Benchmark Sourcing (LangGraph 기반 에이전트 오케스트레이션)
         """
         benchmark = (
             self.db.execute(select(BenchmarkProduct).where(BenchmarkProduct.id == benchmark_id))
@@ -148,6 +147,8 @@ class SourcingService:
                 spec_data=specs,
                 thumbnail_url=candidate_data.get("thumbnail_url"),
             )
+        
+        logger.info(f"LangGraph Agent sourcing finished for {benchmark.name}")
 
     async def _create_candidate(
         self,
@@ -237,7 +238,7 @@ class SourcingService:
         similarity_text = f"{similarity_score:.4f}" if similarity_score is not None else "n/a"
         logger.info("Created candidate: %s (Similarity=%s)", candidate.name, similarity_text)
 
-    def find_similar_items_in_raw(self, embedding: List[float], limit: int = 10) -> List[SupplierItemRaw]:
+    def find_similar_items_in_raw(self, embedding: List[float], limit: int = 10) -> List[SourcingCandidate]:
         """
         Finds similar items in SourcingCandidate using vector similarity.
         """
@@ -246,7 +247,7 @@ class SourcingService:
             .order_by(SourcingCandidate.embedding.cosine_distance(embedding))
             .limit(limit)
         )
-        return self.db.scalars(stmt).all()
+        return list(self.db.scalars(stmt).all())
 
     def import_from_raw(self, limit: int = 1000) -> int:
         """
@@ -271,15 +272,13 @@ class SourcingService:
 
                 data = raw.raw if isinstance(raw.raw, dict) else {}
                 name = data.get("item_name") or data.get("name") or data.get("itemName") or "Unknown"
-                supply_price = (
-                    self._to_int(
-                        data.get("supply_price")
-                        or data.get("supplyPrice")
-                        or data.get("fixedPrice")
-                        or data.get("price")
-                    )
-                    or 0
-                )
+
+                supply_price = self._to_int(
+                    data.get("supply_price")
+                    or data.get("supplyPrice")
+                    or data.get("fixedPrice")
+                    or data.get("price")
+                ) or 0
 
                 insert_stmt = (
                     insert(SourcingCandidate)
@@ -307,4 +306,11 @@ class SourcingService:
 
         self.db.commit()
         logger.info("Imported %s candidates from raw data.", count)
+=======
+            except Exception as e:
+                logger.error(f"Error converting raw item {raw.id}: {e}")
+                
+        self.db.commit()
+        logger.info(f"Imported {count} candidates from raw data.")
+>>>>>>> feat/benchmark-api-sync
         return count

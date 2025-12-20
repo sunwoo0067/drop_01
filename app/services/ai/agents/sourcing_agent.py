@@ -99,9 +99,7 @@ class SourcingAgent:
                 if isinstance(items_obj, list):
                     items = [it for it in items_obj if isinstance(it, dict)]
         
-        # 2. Local Vector Search (Optionally if we have pre-collected data)
-        # SourcingCandidate 테이블 또는 SupplierItemRaw 테이블에서 유사 벡터 검색
-        # 여기서는 이미 수집된 SourcingCandidate 중에서 유사한 것을 찾는 예시
+        # 2. Local Vector Search
         vector_items = []
         from app.models import BenchmarkProduct, SourcingCandidate
         benchmark = None
@@ -173,7 +171,6 @@ class SourcingAgent:
             
             # Vector Similarity if not already present
             if benchmark and benchmark.embedding is not None and not item.get("similarity_score"):
-                # 간단한 점수 산출을 위해 이름 기반 임베딩만 사용 (성능 고려)
                 # 실제 SourcingService._create_candidate에서는 더 풍부하게 수행함
                 pass 
                 
@@ -216,4 +213,5 @@ class SourcingAgent:
             "logs": [],
             "final_output": None
         }
+        
         return await self.workflow.ainvoke(initial_state)

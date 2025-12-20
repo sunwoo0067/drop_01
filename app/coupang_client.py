@@ -55,13 +55,17 @@ class CoupangClient:
     ) -> tuple[int, dict[str, Any]]:
         # Canonical query string 생성
         query_string = ""
+        signed_query = ""
+        alt_signed_query = ""
         if params:
             # 키 기준으로 파라미터 정렬
             sorted_params = sorted(params.items())
             # 값 정의: URL 인코딩
             query_string = urllib.parse.urlencode(sorted_params)
+            signed_query = f"?{query_string}" if query_string else ""
+            alt_signed_query = query_string
 
-        authorization_header = self._build_authorization(method, path, query_string)
+        authorization_header = self._build_authorization(method, path, signed_query)
         
         url = f"{self._base_url}{path}"
         if query_string:
@@ -74,21 +78,39 @@ class CoupangClient:
         }
 
         timeout = httpx.Timeout(60.0, connect=10.0)
-        with httpx.Client(timeout=timeout) as client:
-            try:
+
+        def _do_request(h: dict[str, str]) -> httpx.Response:
+            with httpx.Client(timeout=timeout) as client:
                 if method == "GET":
-                    resp = client.get(url, headers=headers)
-                elif method == "POST":
-                    resp = client.post(url, json=payload, headers=headers)
-                elif method == "PUT":
-                    resp = client.put(url, json=payload, headers=headers)
-                elif method == "DELETE":
-                    resp = client.delete(url, headers=headers)
-                else:
-                    raise ValueError(f"Unsupported method: {method}")
-            except httpx.RequestError as e:
-                # Network error, etc.
-                return 500, {"code": "INTERNAL_ERROR", "message": str(e)}
+                    return client.get(url, headers=h)
+                if method == "POST":
+                    return client.post(url, json=payload, headers=h)
+                if method == "PUT":
+                    return client.put(url, json=payload, headers=h)
+                if method == "DELETE":
+                    return client.delete(url, headers=h)
+                raise ValueError(f"Unsupported method: {method}")
+
+        try:
+            resp = _do_request(headers)
+        except httpx.RequestError as e:
+            return 500, {"code": "INTERNAL_ERROR", "message": str(e)}
+
+        # Invalid signature 대응(안전한 GET에 한해 1회 재시도)
+        if method == "GET" and resp.status_code == 401:
+            try:
+                data0 = resp.json() if resp.content else {}
+            except Exception:
+                data0 = {"_raw_text": resp.text}
+            msg0 = (data0.get("message") if isinstance(data0, dict) else None) or ""
+            if "Invalid signature" in str(msg0) and alt_signed_query:
+                alt_auth = self._build_authorization(method, path, alt_signed_query)
+                alt_headers = dict(headers)
+                alt_headers["Authorization"] = alt_auth
+                try:
+                    resp = _do_request(alt_headers)
+                except httpx.RequestError as e:
+                    return 500, {"code": "INTERNAL_ERROR", "message": str(e)}
 
         if not resp.content:
             return resp.status_code, {}
@@ -118,6 +140,13 @@ class CoupangClient:
     # --------------------------------------------------------------------------
     # 1. 카테고리 API (Category API)
     # --------------------------------------------------------------------------
+
+    def check_auto_category_agreed(self, vendor_id: str | None = None) -> tuple[int, dict[str, Any]]:
+        """카테고리 자동매칭 서비스 동의 여부 확인"""
+        vid = (vendor_id or self._vendor_id).strip()
+        return self.get(
+            f"/v2/providers/seller_api/apis/api/v1/marketplace/vendors/{vid}/check-auto-category-agreed"
+        )
 
     def get_category_meta(self, category_code: str) -> tuple[int, dict[str, Any]]:
         """카테고리 메타정보 조회"""
@@ -363,14 +392,25 @@ class CoupangClient:
         """출고지 조회"""
         params: dict[str, Any] = {
             "pageNum": page_num,
-            "pageSize": page_size
+            "pageSize": page_size,
         }
-        if place_codes:
-            params["placeCodes"] = place_codes
-        if place_names:
-            params["placeNames"] = place_names
-            
-        return self.get("/v2/providers/marketplace_openapi/apis/api/v2/vendor/shipping-place/outbound", params)
+
+        # 일부 문서/계정에서는 outboundShippingCenters 목록 조회 GET이 막혀있거나(POST만 지원),
+        # 다른 경로를 사용해야 하는 경우가 있어 fallback 합니다.
+        code, data = self.get(f"/v2/providers/openapi/apis/api/v5/vendors/{self._vendor_id}/outboundShippingCenters", params)
+        msg = (data.get("message") if isinstance(data, dict) else None) or ""
+        if code == 404 and ("No matched http method" in msg or "PRECONDITION" in str(data.get("code"))):
+            params2: dict[str, Any] = {
+                "pageNum": page_num,
+                "pageSize": page_size,
+            }
+            if place_codes:
+                params2["placeCodes"] = place_codes
+            if place_names:
+                params2["placeNames"] = place_names
+            return self.get("/v2/providers/marketplace_openapi/apis/api/v2/vendor/shipping-place/outbound", params2)
+
+        return code, data
 
     def update_outbound_shipping_center(self, outbound_shipping_place_code: int, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         """출고지 수정"""

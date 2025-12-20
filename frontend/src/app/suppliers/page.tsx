@@ -298,8 +298,12 @@ export default function SuppliersPage() {
             await fetchJobs();
             alert(`수집 작업이 등록되었습니다. jobId=${res.data.jobId}`);
         } catch (e) {
-            console.error(e);
-            alert(getErrorMessage(e));
+            if (axios.isAxiosError(e) && e.response?.status === 409) {
+                alert("이미 실행 중인 작업이 있습니다. 잠시 후 다시 시도해주세요.");
+            } else {
+                console.error(e);
+                alert(getErrorMessage(e));
+            }
         } finally {
             setTriggerLoading(null);
         }

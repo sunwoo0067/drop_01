@@ -1,7 +1,6 @@
 import logging
-from typing import List, Optional
-
 import httpx
+from typing import List, Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +91,6 @@ class EmbeddingService:
         Ideally use pgvector's <-> operator in DB.
         """
         import numpy as np
-
         v1 = np.array(vec1)
         v2 = np.array(vec2)
         if np.linalg.norm(v1) == 0 or np.linalg.norm(v2) == 0:

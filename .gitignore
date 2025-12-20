@@ -15,3 +15,12 @@ api.log
 frontend.log
 *.pid
 .cursor/
+
+backend.log
+scripts/seed_browser_test.py
+scripts/test_coupang_bulk_integration.py
+scripts/test_coupang_bulk_registration.py
+
+docs/api_docs/coupang/*.pdf
+docs/api_docs/coupang/*.docx
+docs/api_docs/coupang/*:Zone.Identifier

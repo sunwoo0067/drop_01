@@ -6,7 +6,10 @@ export interface Product {
     selling_price: number;
     processing_status: string;
     processed_image_urls?: string[];
+    processed_keywords?: string[];
     created_at: string;
+    status: string;
+    market_listings?: MarketListing[];
 }
 
 export interface SourcingCandidate {
@@ -24,6 +27,7 @@ export interface SourcingCandidate {
     specData?: Record<string, any> | null;
     seoKeywords?: string[] | null;
     targetEvent?: string | null;
+    thumbnailUrl?: string | null;
     status: string;
     createdAt?: string | null;
 }
@@ -33,4 +37,11 @@ export interface MarketListing {
     product_id: string;
     market_item_id: string;
     status: string;
+    coupang_status?: string | null;
+    rejection_reason?: {
+        statusName?: string;
+        reason?: string;
+        approvalDate?: string;
+        [key: string]: any;
+    } | null;
 }
