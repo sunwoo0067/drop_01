@@ -267,7 +267,12 @@ class OwnerClanClient:
         page: int = 1,
         limit: int = 20,
     ) -> tuple[int, dict[str, Any]]:
-        """3.2 복수 상품 정보 조회"""
+        """
+        3.2 복수 상품 정보 조회
+        
+        REST API를 먼저 시도하고, 404 발생 시 GraphQL로 대체합니다.
+        """
+        # 1. Try REST API first
         params: dict[str, Any] = {"page": page, "limit": limit}
         if category:
             params["category"] = category
@@ -276,7 +281,85 @@ class OwnerClanClient:
         if keyword:
             params["keyword"] = keyword
 
-        return self.get("/v1/items", params=params)
+        rest_status, rest_data = self.get("/v1/items", params=params)
+        
+        # If REST API works, return directly
+        if rest_status != 404:
+            return rest_status, rest_data
+        
+        # 2. Fallback to GraphQL
+        return self._get_products_via_graphql(
+            search=keyword,
+            category=category,
+            limit=limit,
+        )
+
+    def _get_products_via_graphql(
+        self,
+        search: str | None = None,
+        category: str | None = None,
+        limit: int = 20,
+    ) -> tuple[int, dict[str, Any]]:
+        """GraphQL을 통한 상품 검색 (REST API 대체용)"""
+        args_parts: list[str] = [f"first: {limit}"]
+        if search:
+            args_parts.append(f'search: "{search}"')
+        if category:
+            args_parts.append(f'category: "{category}"')
+        
+        args_str = ", ".join(args_parts)
+        
+        query = f"""
+        query {{
+          allItems({args_str}) {{
+            edges {{
+              node {{
+                key
+                id
+                name
+                model
+                fixedPrice
+                images
+                status
+                content
+                category {{
+                  id
+                  name
+                }}
+              }}
+            }}
+            pageInfo {{
+              hasNextPage
+            }}
+          }}
+        }}
+        """
+        
+        gql_status, gql_data = self.graphql(query)
+        
+        if gql_status != 200:
+            return gql_status, gql_data
+        
+        # Convert GraphQL response to REST-compatible format
+        edges = gql_data.get("data", {}).get("allItems", {}).get("edges", [])
+        items = []
+        for edge in edges:
+            node = edge.get("node", {})
+            items.append({
+                "item_code": node.get("key"),
+                "item_id": node.get("id"),
+                "name": node.get("name"),
+                "item_name": node.get("name"),  # alias for compatibility
+                "model": node.get("model"),
+                "price": node.get("fixedPrice"),
+                "fixedPrice": node.get("fixedPrice"),
+                "images": node.get("images") or [],
+                "status": node.get("status"),
+                "content": node.get("content"),
+                "category": node.get("category", {}).get("name") if node.get("category") else None,
+            })
+        
+        return 200, {"items": items, "_source": "graphql"}
 
     def get_product_history(
         self,

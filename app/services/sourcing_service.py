@@ -42,6 +42,12 @@ class SourcingService:
     def _extract_items(self, data: dict) -> list[dict]:
         if not isinstance(data, dict):
             return []
+        
+        # Support GraphQL fallback format: {"items": [...], "_source": "graphql"}
+        if "items" in data and isinstance(data.get("items"), list):
+            return [it for it in data["items"] if isinstance(it, dict)]
+        
+        # Original REST API format: {"data": {"items": [...]}}
         data_obj = data.get("data")
         if not isinstance(data_obj, dict):
             return []
