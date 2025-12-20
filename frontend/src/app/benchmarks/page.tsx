@@ -11,7 +11,6 @@ import { Select } from "@/components/ui/Select";
 import BenchmarkFilters from "./BenchmarkFilters";
 import BenchmarkTable from "./BenchmarkTable";
 import BenchmarkDetail from "./BenchmarkDetail";
-import { CollectionDialog } from "./CollectionDialog";
 import { Modal } from "@/components/ui/Modal";
 import JobMonitor from "./JobMonitor";
 

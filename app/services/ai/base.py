@@ -15,3 +15,10 @@ class AIProvider(ABC):
         Generates structured JSON response.
         """
         pass
+
+    @abstractmethod
+    def describe_image(self, image_data: bytes, prompt: str = "Describe this image in detail.") -> str:
+        """
+        Describes the content of an image.
+        """
+        pass

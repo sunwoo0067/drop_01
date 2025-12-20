@@ -83,3 +83,30 @@ class GeminiProvider(AIProvider):
                 logger.error(f"Gemini generate_json failed (non-retryable): {e}")
                 return {}
         return {}
+
+    def describe_image(self, image_data: bytes, prompt: str = "이 이미지를 상세히 설명해주세요. 특히 상품의 특징, 색상, 디자인, 재질 등을 중심으로 설명해주세요.") -> str:
+        if not self.model:
+            return ""
+
+        max_retries = len(self.api_keys)
+        attempts = 0
+
+        while attempts < max_retries:
+            try:
+                # Part for Gemini multimodal
+                contents = [
+                    prompt,
+                    {"mime_type": "image/jpeg", "data": image_data}
+                ]
+                response = self.model.generate_content(contents)
+                return response.text
+            except (ResourceExhausted, ServiceUnavailable) as e:
+                logger.warning(f"Gemini Key {self.current_key_index} exhausted/unavailable: {e}")
+                if not self._rotate_key():
+                    logger.error("All Gemini keys exhausted.")
+                    return ""
+                attempts += 1
+            except Exception as e:
+                logger.error(f"Gemini describe_image failed: {e}")
+                return ""
+        return ""
