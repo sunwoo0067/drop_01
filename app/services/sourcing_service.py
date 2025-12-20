@@ -306,11 +306,4 @@ class SourcingService:
 
         self.db.commit()
         logger.info("Imported %s candidates from raw data.", count)
-=======
-            except Exception as e:
-                logger.error(f"Error converting raw item {raw.id}: {e}")
-                
-        self.db.commit()
-        logger.info(f"Imported {count} candidates from raw data.")
->>>>>>> feat/benchmark-api-sync
         return count
