@@ -425,6 +425,7 @@ def update_sourcing_candidate(
 
     candidate.status = new_status
     session.flush()
+    session.commit()
 
     return {
         "updated": True,
@@ -471,6 +472,8 @@ def promote_sourcing_candidate(
             bool(payload.autoRegisterCoupang),
             int(payload.minImagesRequired),
         )
+
+    session.commit()
 
     return {
         "created": bool(created),

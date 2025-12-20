@@ -1,5 +1,8 @@
 import logging
-import cv2
+try:
+    import cv2
+except Exception:
+    cv2 = None
 import numpy as np
 import requests
 from bs4 import BeautifulSoup
@@ -10,6 +13,9 @@ import math
 from app.services.storage_service import storage_service
 
 logger = logging.getLogger(__name__)
+
+if cv2 is None:
+    logger.warning("cv2(OpenCV) 모듈을 불러올 수 없습니다. 이미지 해시 브레이킹을 건너뜁니다.")
 
 class ImageProcessingService:
     
@@ -30,9 +36,15 @@ class ImageProcessingService:
                     # Basic validation/cleaning
                     if src.startswith("//"):
                         src = "https:" + src
+
+                    src_lower = src.lower()
+                    if src_lower.startswith("data:"):
+                        continue
+                    if not src_lower.startswith(("http://", "https://")):
+                        continue
                     
                     # Filter out tiny icons or tracking pixels if possible (naive check by name/ext)
-                    if not any(x in src.lower() for x in [".gif", "icon", "logo", "pixel"]):
+                    if not any(x in src_lower for x in [".gif", "icon", "logo", "pixel", "banner", "event", "promo", "advert", "ads"]):
                         urls.append(src)
                         
                 if len(urls) >= limit:
@@ -51,12 +63,33 @@ class ImageProcessingService:
         4. Encode back to bytes
         """
         try:
+            if cv2 is None:
+                return image_api_response_content
+
             # 1. Decode
             nparr = np.frombuffer(image_api_response_content, np.uint8)
             img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             
             if img is None:
                 return None
+            try:
+                h0, w0 = img.shape[:2]
+                if h0 > 10 and w0 > 10:
+                    crop_ratio = random.uniform(0.0, 0.06)
+                    ch = max(1, int(h0 * (1.0 - crop_ratio)))
+                    cw = max(1, int(w0 * (1.0 - crop_ratio)))
+
+                    if ch < h0 and cw < w0:
+                        max_y = max(0, h0 - ch)
+                        max_x = max(0, w0 - cw)
+                        oy = int(max_y * random.uniform(0.35, 0.65)) if max_y > 0 else 0
+                        ox = int(max_x * random.uniform(0.35, 0.65)) if max_x > 0 else 0
+                        oy = max(0, min(max_y, oy))
+                        ox = max(0, min(max_x, ox))
+
+                        img = img[oy : oy + ch, ox : ox + cw]
+            except Exception:
+                pass
             
             # 2. Resize Control (Coupang requirements: 500x500 ~ 5000x5000)
             height, width = img.shape[:2]
@@ -176,7 +209,7 @@ class ImageProcessingService:
         
         # 1. Supplement Images
         candidates = image_urls[:]
-        if len(candidates) < target_count and detail_html:
+        if len(candidates) == 0 and detail_html:
             logger.info(f"Not enough images ({len(candidates)}), extracting from detail HTML...")
             extra_images = self.extract_images_from_html(detail_html, limit=target_count - len(candidates) + 5) # Get a few more to be safe
             candidates.extend(extra_images)

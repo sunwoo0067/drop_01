@@ -199,11 +199,12 @@ async def collect_benchmark_ranking(
             last_error=None,
             params={"categoryUrl": None},
         )
-        session.add(job)
-        session.flush()
+    session.add(job)
+    session.flush()
+    session.commit()
 
-        background_tasks.add_task(_execute_benchmark_all_ranking_collection, job.id, markets, limit)
-        return {"status": "accepted", "jobId": str(job.id), "marketCode": "ALL", "markets": markets, "limit": limit}
+    background_tasks.add_task(_execute_benchmark_all_ranking_collection, job.id, markets, limit)
+    return {"status": "accepted", "jobId": str(job.id), "marketCode": "ALL", "markets": markets, "limit": limit}
 
     job = BenchmarkCollectJob(
         status="queued",
@@ -217,6 +218,7 @@ async def collect_benchmark_ranking(
     )
     session.add(job)
     session.flush()
+    session.commit()
 
     background_tasks.add_task(_execute_benchmark_ranking_collection, job.id, market_code, category_url, limit)
     return {"status": "accepted", "jobId": str(job.id), "marketCode": market_code, "categoryUrl": category_url, "limit": limit}

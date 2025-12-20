@@ -25,3 +25,6 @@
 ## 배포
 - **브랜치**: 모든 변경사항은 `feat/` 또는 `fix/` 브랜치에서 작업 후 `dev` 브랜치로 PR
 - **Alembic**: 스키마 변경 시 `alembic revision --autogenerate`로 마이그레이션 생성 필수
+
+## MCP 도구
+- **GitHub MCP**: `scripts/run_github_mcp.sh` 실행 (사전 준비: `.env` 또는 환경 변수에 `GITHUB_PERSONAL_ACCESS_TOKEN` 설정)

@@ -5,6 +5,7 @@ import uuid
 from typing import Any
 from datetime import datetime, timezone
 import os
+import time
 
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import select
@@ -28,6 +29,116 @@ from app.ownerclan_client import OwnerClanClient
 from app.settings import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_detail_html_for_coupang(html: str) -> str:
+    s = str(html or "")
+    if not s:
+        return s
+
+    s = s.replace("http://image1.coupangcdn.com/", "https://image1.coupangcdn.com/")
+    s = s.replace("http://", "https://")
+    return s
+
+
+def _build_coupang_detail_html_from_processed_images(urls: list[str]) -> str:
+    safe_urls: list[str] = []
+    seen: set[str] = set()
+    for u in urls:
+        if not isinstance(u, str):
+            continue
+        s = u.strip()
+        if not s:
+            continue
+        s = _normalize_detail_html_for_coupang(s)
+        if s in seen:
+            continue
+        seen.add(s)
+        safe_urls.append(s)
+        if len(safe_urls) >= 20:
+            break
+
+    parts: list[str] = []
+    for u in safe_urls:
+        parts.append(f'<img src="{u}" style="max-width:100%;height:auto;"> <br>')
+
+    parts.append(
+        '<p style="font-size: 12px; color: #777777; display: block; margin: 20px 0;">'
+        '본 제품을 구매하시면 원활한 배송을 위해 꼭 필요한 고객님의 개인정보를 (성함, 주소, 전화번호 등)  '
+        '택배사 및 제 3업체에서 이용하는 것에 동의하시는 것으로 간주됩니다.<br>'
+        '개인정보는 배송 외의 용도로는 절대 사용되지 않으니 안심하시기 바랍니다. 안전하게 배송해 드리겠습니다.'
+        '</p>'
+    )
+
+    out = " ".join(parts).strip()
+    return out[:200000]
+
+
+def _build_contents_image_blocks(urls: list[str]) -> list[dict[str, Any]]:
+    safe_urls: list[str] = []
+    seen: set[str] = set()
+    for u in urls:
+        if not isinstance(u, str):
+            continue
+        s = u.strip()
+        if not s:
+            continue
+        s = _normalize_detail_html_for_coupang(s)
+        if s in seen:
+            continue
+        seen.add(s)
+        safe_urls.append(s)
+        if len(safe_urls) >= 20:
+            break
+
+    if not safe_urls:
+        return []
+
+    return [
+        {
+            "contentsType": "IMAGE_NO_SPACE",
+            "contentDetails": [{"content": u, "detailType": "IMAGE"} for u in safe_urls],
+        },
+        {
+            "contentsType": "TEXT",
+            "contentDetails": [
+                {
+                    "content": "본 제품을 구매하시면 원활한 배송을 위해 꼭 필요한 고객님의 개인정보를 (성함, 주소, 전화번호 등) 택배사 및 제 3업체에서 이용하는 것에 동의하시는 것으로 간주됩니다. 개인정보는 배송 외의 용도로는 절대 사용되지 않으니 안심하시기 바랍니다. 안전하게 배송해 드리겠습니다.",
+                    "detailType": "TEXT",
+                }
+            ],
+        },
+    ]
+
+
+def _extract_coupang_image_url(image_obj: dict[str, Any]) -> str | None:
+    if not isinstance(image_obj, dict):
+        return None
+
+    def _build_coupang_cdn_url(path: str) -> str:
+        s = str(path or "").strip()
+        if not s:
+            return s
+        if s.startswith("http://") or s.startswith("https://") or s.startswith("//"):
+            return _normalize_detail_html_for_coupang(s)
+        s = s.lstrip("/")
+        if s.startswith("image/"):
+            return "https://image1.coupangcdn.com/" + s
+        return "https://image1.coupangcdn.com/image/" + s
+
+    vendor_path = image_obj.get("vendorPath")
+    if isinstance(vendor_path, str) and vendor_path.strip():
+        vp = vendor_path.strip()
+        if vp.startswith("http://") or vp.startswith("https://") or vp.startswith("//"):
+            return _normalize_detail_html_for_coupang(vp)
+        if "/" in vp:
+            return _build_coupang_cdn_url(vp)
+
+    cdn_path = image_obj.get("cdnPath")
+    if isinstance(cdn_path, str) and cdn_path.strip():
+        return _build_coupang_cdn_url(cdn_path.strip())
+
+    return None
 
 
 def _get_client_for_account(account: MarketAccount) -> CoupangClient:
@@ -484,6 +595,49 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
     # 3. 성공 처리
     # data['data']에 sellerProductId (등록상품ID)가 포함됨
     seller_product_id = str(data.get("data"))
+
+    # 등록 직후 쿠팡이 내려주는 vendor_inventory 기반 이미지 경로로 상세(contents)를 한 번 더 보강합니다.
+    # (내부 저장 포맷/렌더링 이슈 회피 목적)
+    try:
+        for _ in range(10):
+            p_code, p_data = client.get_product(seller_product_id)
+            data_obj2 = p_data.get("data") if isinstance(p_data, dict) else None
+            if p_code != 200 or not isinstance(data_obj2, dict):
+                time.sleep(0.5)
+                continue
+
+            items2 = data_obj2.get("items") if isinstance(data_obj2.get("items"), list) else []
+            urls: list[str] = []
+            for it in items2:
+                if not isinstance(it, dict):
+                    continue
+                imgs = it.get("images") if isinstance(it.get("images"), list) else []
+                for im in imgs:
+                    if not isinstance(im, dict):
+                        continue
+                    u = _extract_coupang_image_url(im)
+                    if isinstance(u, str) and u.strip():
+                        urls.append(u.strip())
+                    if len(urls) >= 20:
+                        break
+                if len(urls) >= 20:
+                    break
+
+            if urls:
+                new_contents = _build_contents_image_blocks(urls)
+                if new_contents:
+                    for it in items2:
+                        if isinstance(it, dict):
+                            it["contents"] = new_contents
+
+                    update_payload = data_obj2
+                    update_payload["sellerProductId"] = data_obj2.get("sellerProductId") or int(seller_product_id)
+                    update_payload["requested"] = True
+                    u_code, u_data = client.update_product(update_payload)
+                    _log_fetch(session, account, "update_product_after_create(contents)", update_payload, u_code, u_data)
+            break
+    except Exception as e:
+        logger.warning(f"등록 직후 상세(contents) 보강 실패: {e}")
     
     # MarketListing 생성 또는 업데이트
     stmt = insert(MarketListing).values(
@@ -579,81 +733,47 @@ def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_i
     try:
         client = _get_client_for_account(account)
         
-        # 기본 정보 조회 (센터 정보 등)
-        return_center_code, outbound_center_code, delivery_company_code, _debug = _get_default_centers(client, account, session)
-        
-        # TODO: 현재는 _map_product_to_coupang_payload가 create_product용 payload를 생성함.
-        # update_product용으로 path 분기가 필요할 수 있음 (아이템 내에 vendorItemId 포함 등)
-        # 하지만 쿠팡 API 가이드에 따르면 전체 전문을 보내는 것이 일반적임.
-        
-        # 상세 조회를 통해 기존 vendorItemId 확보 필요
+        # 쿠팡 가이드: 상품 조회 API로 조회된 JSON 전체에서 원하는 값만 수정 후 전송
         code, current_data = client.get_product(listing.market_item_id)
         if code != 200:
             return False, f"쿠팡 상품 정보 조회 실패: {current_data.get('message')}"
             
         current_data_obj = current_data.get("data", {})
-        current_items = current_data_obj.get("items", [])
-        
-        # 반품지 상세 정보 조회 (고시정보/주소 보완용)
-        # register_product 와 동일한 로직 적용
-        r_code, r_data = client.get_return_shipping_center_by_code(str(return_center_code))
-        return_center_detail = None
-        if r_code == 200 and isinstance(r_data, dict) and isinstance(r_data.get("data"), list) and r_data["data"]:
-            item0 = r_data["data"][0] if isinstance(r_data["data"][0], dict) else {}
-            addr0 = None
-            addrs = item0.get("placeAddresses")
-            if isinstance(addrs, list) and addrs and isinstance(addrs[0], dict):
-                addr0 = addrs[0]
-            return_center_detail = {
-                "shippingPlaceName": item0.get("shippingPlaceName"),
-                "returnZipCode": (addr0.get("returnZipCode") if isinstance(addr0, dict) else None),
-                "returnAddress": (addr0.get("returnAddress") if isinstance(addr0, dict) else None),
-                "returnAddressDetail": (addr0.get("returnAddressDetail") if isinstance(addr0, dict) else None),
-                "companyContactNumber": (addr0.get("companyContactNumber") if isinstance(addr0, dict) else None),
-            }
-        
-        # 상품 고시정보(notices)를 위한 메타데이터 조회
-        predicted_category_code = current_data_obj.get("displayCategoryCode", 77800)
-        n_code, n_data = client.get_category_meta(str(predicted_category_code))
-        notice_meta = n_data.get("data") if n_code == 200 else None
+        if not isinstance(current_data_obj, dict):
+            return False, "쿠팡 상품 정보 조회 응답(data)이 비정상입니다"
 
-        shipping_fee = 0
-        try:
-            if product.supplier_item_id:
-                raw_item = session.get(SupplierItemRaw, product.supplier_item_id)
-                raw = raw_item.raw if raw_item and isinstance(raw_item.raw, dict) else {}
-                v = raw.get("shippingFee")
-                if isinstance(v, (int, float)):
-                    shipping_fee = int(v)
-                elif isinstance(v, str):
-                    s = "".join([c for c in v.strip() if c.isdigit()])
-                    if s:
-                        shipping_fee = int(s)
-        except Exception as e:
-            logger.warning(f"오너클랜 배송비 추출 실패: {e}")
-        
-        # Payload 생성
-        payload = _map_product_to_coupang_payload(
-            product,
-            account,
-            return_center_code,
-            outbound_center_code,
-            predicted_category_code=predicted_category_code,
-            return_center_detail=return_center_detail,
-            notice_meta=notice_meta,
-            shipping_fee=shipping_fee,
-            delivery_company_code=delivery_company_code
-        )
-        
-        payload["sellerProductId"] = int(listing.market_item_id)
-        
-        # 기존 옵션(아이템)의 vendorItemId 매핑
-        if "items" in payload and len(payload["items"]) > 0 and len(current_items) > 0:
-            # Drop01은 단일 옵션 가정
-            payload["items"][0]["vendorItemId"] = current_items[0].get("vendorItemId")
-        
-        code, data = client.update_product(payload)
-        _log_fetch(session, account, "update_product", payload, code, data)
+        current_items = current_data_obj.get("items") if isinstance(current_data_obj.get("items"), list) else []
+        if not current_items or not isinstance(current_items[0], dict):
+            return False, "쿠팡 상품 정보 조회 응답(items)이 비정상입니다"
+
+        coupang_urls: list[str] = []
+        for it in current_items:
+            if not isinstance(it, dict):
+                continue
+            imgs = it.get("images") if isinstance(it.get("images"), list) else []
+            for im in imgs:
+                if not isinstance(im, dict):
+                    continue
+                u = _extract_coupang_image_url(im)
+                if isinstance(u, str) and u.strip():
+                    coupang_urls.append(u.strip())
+                if len(coupang_urls) >= 20:
+                    break
+            if len(coupang_urls) >= 20:
+                break
+
+        update_payload = current_data_obj
+        update_payload["sellerProductId"] = int(listing.market_item_id)
+        update_payload["requested"] = True
+
+        blocks = _build_contents_image_blocks(coupang_urls) if coupang_urls else []
+        if blocks:
+            for it in update_payload.get("items") if isinstance(update_payload.get("items"), list) else []:
+                if isinstance(it, dict):
+                    it["contents"] = blocks
+
+        code, data = client.update_product(update_payload)
+        _log_fetch(session, account, "update_product", update_payload, code, data)
         
         if code == 200 and data.get("code") == "SUCCESS":
             # 업데이트 후 상태 동기화 트리거 (비동기로 하면 좋으나 여기서는 단순하게 처리)
@@ -1092,9 +1212,13 @@ def _map_product_to_coupang_payload(
     # 가공된 이름이 있으면 사용, 없으면 원본 이름 사용
     name_to_use = product.processed_name if product.processed_name else product.name
     
-    # 상세설명 (Contents)
-    # 원본 텍스트라면 간단한 HTML 태그로 감쌈. 보통 공급사 데이터가 이미 HTML임.
-    description_html = product.description or "<p>상세설명 없음</p>"
+    processed_images = product.processed_image_urls if isinstance(product.processed_image_urls, list) else []
+    if processed_images:
+        contents_blocks = _build_contents_image_blocks(processed_images)
+    else:
+        contents_blocks = []
+        raw_desc = product.description or "<p>상세설명 없음</p>"
+        description_html = _normalize_detail_html_for_coupang(raw_desc)[:200000]
     
     # 이미지
     # 가공된 이미지 우선 사용
@@ -1189,12 +1313,7 @@ def _map_product_to_coupang_payload(
         "unitCount": 1,
         "images": images,
         "attributes": [], # TODO: 카테고리 속성 매핑 필요 (예측된 카테고리에 따라 필수 속성이 다름)
-        "contents": [
-            {
-                "contentsType": "HTML",
-                "contentDetails": [{"content": description_html, "detailType": "TEXT"}] 
-            }
-        ],
+        "contents": (contents_blocks if contents_blocks else [{"contentsType": "HTML", "contentDetails": [{"content": description_html, "detailType": "TEXT"}]}]),
         "notices": notices,
     }
 
