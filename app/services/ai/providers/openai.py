@@ -78,7 +78,7 @@ class OpenAIProvider(AIProvider):
                     temperature=0.3
                 )
                 content = response.choices[0].message.content
-                return json.loads(content)
+                return json.loads(content) or {}
             except (RateLimitError, AuthenticationError, APIConnectionError) as e:
                 logger.warning(f"OpenAI Key {self.current_key_index} error: {e}. Rotating.")
                 if not self._rotate_key():
@@ -89,3 +89,50 @@ class OpenAIProvider(AIProvider):
                 logger.error(f"OpenAI generate_json failed: {e}")
                 return {}
         return {}
+
+    def describe_image(self, image_data: bytes, prompt: str = "이 이미지를 상세히 설명해주세요. 특히 상품의 특징, 색상, 디자인, 재질 등을 중심으로 설명해주세요.") -> str:
+        if not self.client:
+            return ""
+
+        import base64
+        base64_image = base64.b64encode(image_data).decode("utf-8")
+        
+        # GPT-4o and GPT-4o-mini support vision by default
+        model = self.model_name
+        if not ("gpt-4o" in model or "gpt-4-turbo" in model or "vision" in model):
+            model = "gpt-4o-mini" # Fallback to a vision capable model if current one doesn't support it
+
+        max_retries = len(self.api_keys)
+        attempts = 0
+
+        while attempts < max_retries:
+            try:
+                response = self.client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/jpeg;base64,{base64_image}",
+                                    },
+                                },
+                            ],
+                        }
+                    ],
+                    max_tokens=500,
+                )
+                return response.choices[0].message.content or ""
+            except (RateLimitError, AuthenticationError, APIConnectionError) as e:
+                logger.warning(f"OpenAI Key {self.current_key_index} error: {e}. Rotating.")
+                if not self._rotate_key():
+                    logger.error("All OpenAI keys exhausted.")
+                    return ""
+                attempts += 1
+            except Exception as e:
+                logger.error(f"OpenAI describe_image failed: {e}")
+                return ""
+        return ""

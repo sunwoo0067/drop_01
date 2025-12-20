@@ -63,7 +63,7 @@ class SourcingService:
         except Exception:
             return None
 
-    def execute_keyword_sourcing(self, keywords: List[str], min_margin: float = 0.15):
+    async def execute_keyword_sourcing(self, keywords: List[str], min_margin: float = 0.15):
         """
         Strategy 1: Simple Keyword Sourcing
         Searches OwnerClan for keywords, filters by margin, and creates candidates.
@@ -101,7 +101,16 @@ class SourcingService:
                 margin = (selling_price - supply_price) / selling_price
 
             if margin is None or margin >= min_margin:
+<<<<<<< Updated upstream
                 self._create_candidate(item, strategy="KEYWORD", margin_score=margin)
+=======
+                await self._create_candidate(
+                    item, 
+                    strategy="KEYWORD", 
+                    margin_score=margin,
+                    thumbnail_url=item.get("thumbnail_url") or (item.get("images")[0] if item.get("images") else None)
+                )
+>>>>>>> Stashed changes
 
     def execute_benchmark_sourcing(self, benchmark_id: uuid.UUID):
         """
@@ -112,6 +121,7 @@ class SourcingService:
             logger.error(f"Benchmark product {benchmark_id} not found")
             return
 
+<<<<<<< Updated upstream
         client = self._get_ownerclan_primary_client(user_type="seller")
 
         # 1. Analyze Benchmark (if not already)
@@ -153,9 +163,29 @@ class SourcingService:
                 benchmark_id=benchmark.id,
                 seasonal_score=current_month_score,
                 spec_data=specs
+=======
+        # LangGraph 에이전트 실행
+        input_data = {
+            "name": benchmark.name,
+            "detail_html": benchmark.detail_html,
+            "price": benchmark.price
+        }
+        
+        result = await self.sourcing_agent.run(str(benchmark_id), input_data)
+        
+        # 에이전트 결과를 바탕으로 기존 _create_candidate 호출 로직 유지가능
+        for candidate_data in result.get("candidate_results", []):
+            await self._create_candidate(
+                candidate_data,
+                strategy="BENCHMARK_AGENT",
+                benchmark_id=benchmark.id,
+                seasonal_score=candidate_data.get("seasonal_score"),
+                spec_data=result.get("specs"),
+                thumbnail_url=candidate_data.get("thumbnail_url")
+>>>>>>> Stashed changes
             )
 
-    def _create_candidate(
+    async def _create_candidate(
         self,
         item: dict,
         strategy: str,
@@ -181,7 +211,7 @@ class SourcingService:
                 select(SourcingCandidate)
                 .where(SourcingCandidate.supplier_code == "ownerclan")
                 .where(SourcingCandidate.supplier_item_id == str(supplier_id))
-            ).first()
+            ).scalars().first()
         )
         if exists:
             return
@@ -196,6 +226,25 @@ class SourcingService:
         if supply_price is None:
             supply_price = 0
 
+        # Generate Rich Embedding and Similarity Score
+        embedding = None
+        similarity_score = None
+        
+        if benchmark_id:
+            benchmark = self.db.execute(select(BenchmarkProduct).where(BenchmarkProduct.id == benchmark_id)).scalar_one_or_none()
+            if benchmark and benchmark.embedding is not None:
+                # 후보 상품의 풍부한 임베딩 생성 (이름 + 썸네일 기반)
+                # 상세 페이지 데이터가 있다면 더 정확하겠지만, 현재 검색 결과에는 썸네일 정도가 최선일 수 있음
+                candidate_text = f"{name} {item.get('detail_html', '')}".strip()
+                candidate_images = [thumbnail_url] if thumbnail_url else []
+                if not candidate_images and item.get("images"):
+                    candidate_images = item.get("images")[:1]
+                
+                embedding = await self.embedding_service.generate_rich_embedding(candidate_text, image_urls=candidate_images)
+                
+                if embedding:
+                    similarity_score = self.embedding_service.compute_similarity(benchmark.embedding, embedding)
+
         candidate = SourcingCandidate(
             supplier_code="ownerclan",
             supplier_item_id=str(supplier_id),
@@ -205,11 +254,96 @@ class SourcingService:
             benchmark_product_id=benchmark_id,
             seasonal_score=seasonal_score,
             margin_score=margin_score,
+            similarity_score=similarity_score,
+            embedding=embedding,
             spec_data=spec_data,
             status="PENDING"
         )
         
+<<<<<<< Updated upstream
         # Optimize SEO immediately? Or lazy load. Let's do lazy for performance.
         self.db.add(candidate)
         self.db.commit()
         logger.info(f"Created candidate: {candidate.name}")
+=======
+        self.db.add(candidate)
+        self.db.commit()
+        logger.info(f"Created candidate: {candidate.name} (Similarity={similarity_score:.4f} if relevant)")
+
+    def find_similar_items_in_raw(self, embedding: List[float], limit: int = 10) -> List[SupplierItemRaw]:
+        """
+        Finds similar items in SupplierItemRaw table using vector similarity.
+        Note: This requires SupplierItemRaw to have an embedding column and pgvector support.
+        """
+        # 현재 SupplierItemRaw에는 embedding 필드가 없으므로, 향후 확장을 위해 인터페이스만 정의하거나
+        # 필요시 모델 업데이트가 선행되어야 합니다.
+        # 일단 SourcingCandidate에서 검색하는 로직을 우선 구현합니다.
+        stmt = (
+            select(SourcingCandidate)
+            .order_by(SourcingCandidate.embedding.cosine_distance(embedding))
+            .limit(limit)
+        )
+        return self.db.scalars(stmt).all()
+
+    def import_from_raw(self, limit: int = 1000) -> int:
+        """
+        Converts available SupplierItemRaw data into SourcingCandidate.
+        Useful for bulk collection where data lands in raw table first.
+        """
+        logger.info("Starting bulk import from SupplierItemRaw...")
+
+        # 1. Fetch raw items from Source DB
+        # We fetch decent amount of latest items and filter in memory
+        stmt = (
+            select(SupplierItemRaw)
+            .where(SupplierItemRaw.supplier_code == "ownerclan")
+            .order_by(desc(SupplierItemRaw.fetched_at))
+            .limit(limit * 5)  # Fetch more to find new ones
+        )
+        
+        raw_items = self.db.scalars(stmt).all()
+        count = 0
+        
+        for raw in raw_items:
+            try:
+                if not raw.item_code:
+                    continue
+
+                data = raw.raw if isinstance(raw.raw, dict) else {}
+                name = data.get("item_name") or data.get("name") or data.get("itemName") or "Unknown"
+                
+                supply_price = self._to_int(
+                    data.get("supply_price")
+                    or data.get("supplyPrice")
+                    or data.get("fixedPrice")
+                    or data.get("price")
+                ) or 0
+
+                insert_stmt = (
+                    insert(SourcingCandidate)
+                    .values(
+                        supplier_code="ownerclan",
+                        supplier_item_id=str(raw.item_code),
+                        name=str(name),
+                        supply_price=int(supply_price),
+                        thumbnail_url=data.get("thumbnail_url") or (data.get("images")[0] if data.get("images") else None),
+                        source_strategy="BULK_COLLECT",
+                        status="PENDING",
+                    )
+                    .on_conflict_do_nothing()
+                )
+
+                result = self.db.execute(insert_stmt)
+                if result.rowcount:
+                    count += int(result.rowcount)
+
+                if count >= limit:
+                    break
+
+            except Exception as e:
+                logger.error(f"Error converting raw item {raw.id}: {e}")
+                
+        self.db.commit()
+        logger.info(f"Imported {count} candidates from raw data.")
+        return count
+>>>>>>> Stashed changes

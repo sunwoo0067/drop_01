@@ -150,8 +150,8 @@ class BenchmarkCollector:
         raw_ranking_text = product_data.get("raw_ranking_text") if isinstance(product_data.get("raw_ranking_text"), str) else ""
         raw_ranking_text = raw_ranking_text[:1000]
 
-        text_to_embed = f"{product_data.get('name', '')} {detail_text[:2000]} {raw_ranking_text} {image_hint}".strip()
-        embedding = await self.embedding_service.generate_embedding(text_to_embed)
+        text_to_embed = f"{product_data.get('name', '')} {detail_text[:2000]} {raw_ranking_text}".strip()
+        embedding = await self.embedding_service.generate_rich_embedding(text_to_embed, image_urls=image_urls)
 
         with SessionLocal() as db:
             # Upsert

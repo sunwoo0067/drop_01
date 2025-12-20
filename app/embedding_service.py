@@ -35,3 +35,61 @@ class EmbeddingService:
             except Exception as e:
                 logger.error(f"Error generating embedding: {e}")
                 return None
+<<<<<<< Updated upstream
+=======
+
+    async def generate_batch_embeddings(self, texts: List[str]) -> List[Optional[List[float]]]:
+        """
+        Generates embeddings for a list of texts.
+        Current Ollama API usually takes one prompt at a time, so we iterate efficiently.
+        """
+        results = []
+        for text in texts:
+            emb = await self.generate_embedding(text)
+            results.append(emb)
+        return results
+
+    async def generate_rich_embedding(self, text: str, image_urls: List[str] = None, max_images: int = 3) -> Optional[List[float]]:
+        """
+        Generates a rich embedding by combining text with image descriptions.
+        """
+        if not text and not image_urls:
+            return None
+
+        combined_text = text or ""
+        
+        if image_urls:
+            from app.services.ai.service import AIService
+            ai_service = AIService()
+            
+            image_descriptions = []
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                for url in image_urls[:max_images]:
+                    try:
+                        resp = await client.get(url)
+                        if resp.status_code == 200:
+                            # AI 서비스를 통해 이미지 설명 생성
+                            desc = ai_service.describe_image(resp.content)
+                            if desc:
+                                image_descriptions.append(f"[Image Description: {desc}]")
+                    except Exception as e:
+                        logger.error(f"Error describing image for rich embedding: {url} - {e}")
+
+            if image_descriptions:
+                combined_text += "\n" + "\n".join(image_descriptions)
+
+        # 원본 텍스트 + 이미지 캡션을 합쳐서 임베딩 생성 (최대 4000자 제한)
+        return await self.generate_embedding(combined_text[:4000])
+
+    def compute_similarity(self, vec1: List[float], vec2: List[float]) -> float:
+        """
+        Simple cosine similarity implementation if needed on-the-fly.
+        Ideally use pgvector's <-> operator in DB.
+        """
+        import numpy as np
+        v1 = np.array(vec1)
+        v2 = np.array(vec2)
+        if np.linalg.norm(v1) == 0 or np.linalg.norm(v2) == 0:
+            return 0.0
+        return float(np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2)))
+>>>>>>> Stashed changes
