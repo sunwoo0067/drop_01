@@ -5,6 +5,9 @@ import asyncio
 import uuid
 from pydantic import BaseModel, Field
 
+import re
+from datetime import datetime, timezone
+
 from app.db import get_session
 from app.models import Product, MarketAccount, MarketOrderRaw, MarketListing, MarketProductRaw
 from app.coupang_sync import (
@@ -17,6 +20,115 @@ from app.coupang_client import CoupangClient
 from sqlalchemy.dialects.postgresql import insert
 
 router = APIRouter()
+
+
+def _to_https_url(url: str) -> str:
+    s = str(url or "").strip()
+    if not s:
+        return s
+    if s.startswith("//"):
+        return "https:" + s
+    if s.startswith("http://"):
+        return "https://" + s[len("http://") :]
+    return s
+
+
+def _extract_coupang_image_url(image_obj: dict) -> str | None:
+    if not isinstance(image_obj, dict):
+        return None
+
+    def _build_coupang_cdn_url(path: str) -> str:
+        s = str(path or "").strip()
+        if not s:
+            return s
+        if s.startswith("http://") or s.startswith("https://") or s.startswith("//"):
+            return _to_https_url(s)
+        s = s.lstrip("/")
+        if s.startswith("image/"):
+            return "https://image1.coupangcdn.com/" + s
+        return "https://image1.coupangcdn.com/image/" + s
+
+    vendor_path = image_obj.get("vendorPath")
+    if isinstance(vendor_path, str) and vendor_path.strip():
+        vp = vendor_path.strip()
+        if vp.startswith("http://") or vp.startswith("https://") or vp.startswith("//"):
+            return _to_https_url(vp)
+        if "/" in vp:
+            return _build_coupang_cdn_url(vp)
+
+    cdn_path = image_obj.get("cdnPath")
+    if isinstance(cdn_path, str) and cdn_path.strip():
+        return _build_coupang_cdn_url(cdn_path.strip())
+
+    return None
+
+
+def _build_detail_html_from_urls(urls: list[str]) -> str:
+    safe_urls: list[str] = []
+    seen: set[str] = set()
+    for u in urls:
+        su = _to_https_url(u)
+        if not su or su in seen:
+            continue
+        seen.add(su)
+        safe_urls.append(su)
+        if len(safe_urls) >= 20:
+            break
+
+    parts: list[str] = ["<center>"]
+    for u in safe_urls:
+        parts.append(f'<img src="{u}"> <br>')
+
+    parts.append("</center> <br>")
+    parts.append(
+        '<p style="font-size: 12px; color: #777777; display: block; margin: 20px 0;">'
+        '본 제품을 구매하시면 원활한 배송을 위해 꼭 필요한 고객님의 개인정보를 (성함, 주소, 전화번호 등)  '
+        '택배사 및 제 3업체에서 이용하는 것에 동의하시는 것으로 간주됩니다.<br>'
+        '개인정보는 배송 외의 용도로는 절대 사용되지 않으니 안심하시기 바랍니다. 안전하게 배송해 드리겠습니다.'
+        '</p>'
+    )
+
+    html = " ".join(parts).strip()
+    return html[:200000]
+
+
+def _build_contents_image_blocks(urls: list[str]) -> list[dict]:
+    safe_urls: list[str] = []
+    seen: set[str] = set()
+    for u in urls:
+        su = _to_https_url(u)
+        if not su or su in seen:
+            continue
+        seen.add(su)
+        safe_urls.append(su)
+        if len(safe_urls) >= 20:
+            break
+
+    if not safe_urls:
+        return []
+
+    return [
+        {
+            "contentsType": "IMAGE_NO_SPACE",
+            "contentDetails": [{"content": u, "detailType": "IMAGE"} for u in safe_urls],
+        },
+        {
+            "contentsType": "TEXT",
+            "contentDetails": [
+                {
+                    "content": "본 제품을 구매하시면 원활한 배송을 위해 꼭 필요한 고객님의 개인정보를 (성함, 주소, 전화번호 등) 택배사 및 제 3업체에서 이용하는 것에 동의하시는 것으로 간주됩니다. 개인정보는 배송 외의 용도로는 절대 사용되지 않으니 안심하시기 바랍니다. 안전하게 배송해 드리겠습니다.",
+                    "detailType": "TEXT",
+                }
+            ],
+        },
+    ]
+
+
+class FixCoupangContentsIn(BaseModel):
+    productId: uuid.UUID | None = None
+    useCoupangImagesOnly: bool = Field(default=True)
+    requestApproval: bool = Field(default=True)
+    useImageBlocks: bool = Field(default=True)
 
 
 def _tag_reason(reason: str | None) -> str | None:
@@ -631,6 +743,171 @@ async def get_coupang_product_detail(
         "sellerProductName": seller_product_name,
         "vendorItemIds": vendor_item_ids,
         "raw": data,
+    }
+
+
+@router.post("/products/{seller_product_id}/fix-contents", status_code=200)
+async def fix_coupang_product_contents(
+    seller_product_id: str,
+    payload: FixCoupangContentsIn,
+    session: Session = Depends(get_session),
+):
+    stmt_acct = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
+    account = session.scalars(stmt_acct).first()
+    if not account:
+        raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
+
+    creds = account.credentials or {}
+    client = CoupangClient(
+        access_key=str(creds.get("access_key", "") or "").strip(),
+        secret_key=str(creds.get("secret_key", "") or "").strip(),
+        vendor_id=str(creds.get("vendor_id", "") or "").strip(),
+    )
+
+    code, data = client.get_product(str(seller_product_id).strip())
+    if code != 200 or not isinstance(data, dict) or data.get("code") != "SUCCESS":
+        raise HTTPException(status_code=400, detail={"message": "쿠팡 상품 조회 실패", "httpStatus": code, "raw": data})
+
+    data_obj = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(data_obj, dict):
+        raise HTTPException(status_code=400, detail="쿠팡 상품 조회 응답(data)이 비정상입니다")
+
+    items = data_obj.get("items") if isinstance(data_obj.get("items"), list) else []
+    if not items or not isinstance(items[0], dict):
+        raise HTTPException(status_code=400, detail="쿠팡 상품 조회 응답(items)이 비정상입니다")
+
+    urls: list[str] = []
+
+    if bool(payload.useCoupangImagesOnly):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            imgs = item.get("images") if isinstance(item.get("images"), list) else []
+            for it in imgs:
+                if not isinstance(it, dict):
+                    continue
+                u = _extract_coupang_image_url(it)
+                if isinstance(u, str) and u.strip():
+                    urls.append(u.strip())
+                if len(urls) >= 20:
+                    break
+            if len(urls) >= 20:
+                break
+
+    if not urls:
+        listing = session.scalars(
+            select(MarketListing)
+            .where(MarketListing.market_account_id == account.id)
+            .where(MarketListing.market_item_id == str(seller_product_id).strip())
+        ).first()
+
+        product: Product | None = None
+        if listing:
+            product = session.get(Product, listing.product_id)
+        elif payload.productId:
+            product = session.get(Product, payload.productId)
+
+        processed = product.processed_image_urls if product and isinstance(product.processed_image_urls, list) else []
+        for u in processed[:20]:
+            if isinstance(u, str) and u.strip():
+                urls.append(u.strip())
+
+    if not urls:
+        text = ""
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            existing_contents = item.get("contents") if isinstance(item.get("contents"), list) else []
+            if not existing_contents or not isinstance(existing_contents[0], dict):
+                continue
+            cds = (
+                existing_contents[0].get("contentDetails")
+                if isinstance(existing_contents[0].get("contentDetails"), list)
+                else []
+            )
+            if cds and isinstance(cds[0], dict) and isinstance(cds[0].get("content"), str):
+                text = cds[0]["content"]
+                if text:
+                    break
+
+        if text:
+            fixed = re.sub(r"http://", "https://", text)
+            html = fixed[:200000]
+        else:
+            raise HTTPException(status_code=400, detail="수정할 상세 이미지/콘텐츠를 찾지 못했습니다")
+    else:
+        html = _build_detail_html_from_urls(urls)
+
+    new_contents: list[dict]
+    if bool(payload.useImageBlocks) and urls:
+        new_contents = _build_contents_image_blocks(urls)
+    else:
+        new_contents = [
+            {
+                "contentsType": "TEXT",
+                "contentDetails": [
+                    {
+                        "content": html,
+                        "detailType": "TEXT",
+                    }
+                ],
+            }
+        ]
+
+    for item in items:
+        if isinstance(item, dict):
+            item["contents"] = new_contents
+
+    update_payload = data_obj
+    update_payload["sellerProductId"] = data_obj.get("sellerProductId") or int(str(seller_product_id).strip())
+    update_payload["requested"] = True
+
+    update_code, update_data = client.update_product(update_payload)
+
+    approval_code: int | None = None
+    approval_data: dict | None = None
+    if update_code == 200 and isinstance(update_data, dict) and update_data.get("code") == "SUCCESS" and bool(payload.requestApproval):
+        final_status = str((data_obj.get("statusName") or data_obj.get("status") or "") ).strip()
+        for _ in range(20):
+            if final_status in {"SAVED", "임시저장"}:
+                break
+            try:
+                _c2, d2 = client.get_product(str(seller_product_id).strip())
+                dobj2 = d2.get("data") if isinstance(d2, dict) else None
+                if isinstance(dobj2, dict):
+                    final_status = str((dobj2.get("statusName") or dobj2.get("status") or "") ).strip()
+            except Exception:
+                pass
+            await asyncio.sleep(1.0)
+
+        if final_status in {"SAVED", "임시저장"}:
+            for _ in range(5):
+                try:
+                    approval_code, approval_data = client.approve_product(str(seller_product_id).strip())
+                except Exception as e:
+                    approval_code, approval_data = 500, {"code": "INTERNAL_ERROR", "message": str(e)}
+
+                msg = (approval_data.get("message") if isinstance(approval_data, dict) else None) or ""
+                if approval_code == 200 and isinstance(approval_data, dict) and approval_data.get("code") == "SUCCESS":
+                    break
+                if "임시저장" in str(msg) and "만" in str(msg):
+                    await asyncio.sleep(1.0)
+                    continue
+                break
+
+    return {
+        "sellerProductId": str(seller_product_id).strip(),
+        "httpStatus": update_code,
+        "raw": update_data,
+        "approval": {
+            "httpStatus": approval_code,
+            "raw": approval_data,
+        },
+        "contentsLength": len(html),
+        "imageCount": len(urls),
+        "usedUrls": urls[:20],
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
 
 

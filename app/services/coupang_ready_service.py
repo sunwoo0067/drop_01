@@ -311,7 +311,9 @@ def augment_product_images_best_effort(session: Session, product: Product, raw: 
                     break
 
             product.processed_image_urls = merged
-            if product.processed_name and len(merged) >= int(target_count):
+            if len(merged) >= int(target_count):
+                if not product.processed_name:
+                    product.processed_name = product.name
                 product.processing_status = "COMPLETED"
             session.commit()
             existing = merged
@@ -348,7 +350,9 @@ def augment_product_images_best_effort(session: Session, product: Product, raw: 
             break
 
     product.processed_image_urls = merged
-    if product.processed_name and len(merged) >= int(target_count):
+    if len(merged) >= int(target_count):
+        if not product.processed_name:
+            product.processed_name = product.name
         product.processing_status = "COMPLETED"
     session.commit()
 

@@ -4,7 +4,7 @@ import json
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
-from app.models import Product, BenchmarkProduct
+from app.models import Product, BenchmarkProduct, SupplierItemRaw
 from app.services.ai.agents.processing_agent import ProcessingAgent
 from app.services.image_processing import image_processing_service
 
@@ -31,11 +31,36 @@ class ProcessingService:
             self.db.commit()
 
             # 데이터 추출
+            raw_images: list[str] = []
+            try:
+                if product.supplier_item_id:
+                    raw_item = self.db.get(SupplierItemRaw, product.supplier_item_id)
+                    raw = raw_item.raw if raw_item and isinstance(raw_item.raw, dict) else {}
+                    images_val = raw.get("images")
+                    if isinstance(images_val, str):
+                        s = images_val.strip()
+                        if s.startswith(("http://", "https://")):
+                            raw_images = [s]
+                    elif isinstance(images_val, list):
+                        for it in images_val[:50]:
+                            if isinstance(it, str):
+                                s = it.strip()
+                                if s.startswith(("http://", "https://")):
+                                    raw_images.append(s)
+                            elif isinstance(it, dict):
+                                u = it.get("url") or it.get("src")
+                                if isinstance(u, str):
+                                    s = u.strip()
+                                    if s.startswith(("http://", "https://")):
+                                        raw_images.append(s)
+            except Exception as e:
+                logger.warning(f"오너클랜 이미지 추출 실패(productId={product_id}): {e}")
+
             input_data = {
                 "name": product.name,
                 "brand": product.brand,
                 "description": product.description,
-                "images": [] # 실제 운영 환경에서는 raw item에서 가져옴
+                "images": raw_images,
             }
             
             # 에이전트 실행
