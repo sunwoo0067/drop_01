@@ -769,8 +769,9 @@ def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_i
         update_payload["sellerProductId"] = int(listing.market_item_id)
         update_payload["requested"] = True
 
-        # 로컬 Product 정보 반영 (이름, 가격 등)
+        # 로컬 Product 정보 반영 (이름, 가격, 이미지, 상세설명 등)
         update_payload["displayProductName"] = (product.processed_name or product.name)[:100]
+        update_payload["sellerProductName"] = (product.processed_name or product.name)[:100]
         
         if current_items and isinstance(current_items[0], dict):
             item = current_items[0]
@@ -796,14 +797,28 @@ def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_i
             if total_price < 3000:
                 total_price = 3000
             
+            item["originalPrice"] = total_price
             item["salePrice"] = total_price
             item["itemName"] = (product.processed_name or product.name)[:150]
 
-        blocks = _build_contents_image_blocks(coupang_urls) if coupang_urls else []
-        if blocks:
-            for it in update_payload.get("items") if isinstance(update_payload.get("items"), list) else []:
-                if isinstance(it, dict):
-                    it["contents"] = blocks
+            # 로컬 가공 이미지 반영
+            processed_images = product.processed_image_urls if isinstance(product.processed_image_urls, list) else []
+            if processed_images:
+                new_images = []
+                for idx, url in enumerate(processed_images):
+                    image_type = "REPRESENTATION" if idx == 0 else "DETAIL"
+                    new_images.append({"imageOrder": idx, "imageType": image_type, "vendorPath": url})
+                item["images"] = new_images
+
+            # 로컬 상세설명 반영
+            if processed_images:
+                item["contents"] = _build_contents_image_blocks(processed_images)
+            else:
+                raw_desc = product.description or "<p>상세설명 없음</p>"
+                desc_html = _normalize_detail_html_for_coupang(raw_desc)[:200000]
+                item["contents"] = [{"contentsType": "HTML", "contentDetails": [{"content": desc_html, "detailType": "TEXT"}]}]
+
+        # _map_product_to_coupang_payload와 유사하게 contents 보강 처리 (위의 item 루프 내에서 처리함)
 
         code, data = client.update_product(update_payload)
         _log_fetch(session, account, "update_product", update_payload, code, data)
