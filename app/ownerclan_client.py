@@ -291,6 +291,8 @@ class OwnerClanClient:
         return self._get_products_via_graphql(
             search=keyword,
             category=category,
+            status=status,
+            page=page,
             limit=limit,
         )
 
@@ -298,44 +300,49 @@ class OwnerClanClient:
         self,
         search: str | None = None,
         category: str | None = None,
+        status: str | None = None,
+        page: int = 1,
         limit: int = 20,
     ) -> tuple[int, dict[str, Any]]:
         """GraphQL을 통한 상품 검색 (REST API 대체용)"""
-        args_parts: list[str] = [f"first: {limit}"]
-        if search:
-            args_parts.append(f'search: "{search}"')
-        if category:
-            args_parts.append(f'category: "{category}"')
-        
-        args_str = ", ".join(args_parts)
-        
-        query = f"""
-        query {{
-          allItems({args_str}) {{
-            edges {{
-              node {{
+        safe_page = max(1, int(page))
+        safe_limit = max(1, int(limit))
+        fetch_limit = safe_limit * safe_page
+
+        query = """
+        query ($first: Int!, $search: String, $category: String) {
+          allItems(first: $first, search: $search, category: $category) {
+            edges {
+              node {
                 key
                 id
                 name
                 model
+                price
                 fixedPrice
                 images
                 status
                 content
-                category {{
+                category {
                   id
                   name
-                }}
-              }}
-            }}
-            pageInfo {{
+                }
+              }
+            }
+            pageInfo {
               hasNextPage
-            }}
-          }}
-        }}
+            }
+          }
+        }
         """
-        
-        gql_status, gql_data = self.graphql(query)
+
+        variables = {
+            "first": fetch_limit,
+            "search": search,
+            "category": category,
+        }
+
+        gql_status, gql_data = self.graphql(query, variables=variables)
         
         if gql_status != 200:
             return gql_status, gql_data
@@ -353,12 +360,22 @@ class OwnerClanClient:
                 "model": node.get("model"),
                 "price": node.get("fixedPrice"),
                 "fixedPrice": node.get("fixedPrice"),
+                "supply_price": node.get("price"),
+                "selling_price": node.get("fixedPrice"),
                 "images": node.get("images") or [],
                 "status": node.get("status"),
                 "content": node.get("content"),
                 "category": node.get("category", {}).get("name") if node.get("category") else None,
             })
-        
+
+        if status:
+            items = [item for item in items if item.get("status") == status]
+
+        if safe_page > 1 or fetch_limit != safe_limit:
+            start_idx = (safe_page - 1) * safe_limit
+            end_idx = start_idx + safe_limit
+            items = items[start_idx:end_idx]
+
         return 200, {"items": items, "_source": "graphql"}
 
     def get_product_history(
