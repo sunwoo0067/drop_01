@@ -46,8 +46,6 @@ class AIService:
         except Exception as e:
             logger.error(f"Failed to fetch {provider} keys from DB: {e}")
             return []
-        
-        self.default_provider_name = settings.default_ai_provider
 
     def _get_provider(self, provider_type: ProviderType = "auto") -> AIProvider:
         if provider_type == "auto":
@@ -87,10 +85,12 @@ class AIService:
         return []
 
     def optimize_seo(self, product_name: str, keywords: List[str], provider: ProviderType = "auto") -> Dict[str, Any]:
+        # Filter out None or empty strings
+        clean_keywords = [str(k) for k in keywords if k]
         prompt = f"""
         Optimize product name for SEO (Coupang).
         Original: {product_name}
-        Keywords: {', '.join(keywords)}
+        Keywords: {', '.join(clean_keywords)}
         Return JSON {{ "title": "...", "tags": [...] }}
         """
         return self._get_provider(provider).generate_json(prompt)
@@ -103,3 +103,9 @@ class AIService:
         Return JSON {{ "months": [int], "current_month_score": float (relevance to month {current_month}) }}
         """
         return self._get_provider(provider).generate_json(prompt)
+
+    def describe_image(self, image_data: bytes, prompt: str = "이 이미지를 상세히 설명해주세요. 특히 상품의 특징, 색상, 디자인, 재질 등을 중심으로 설명해주세요.", provider: ProviderType = "auto") -> str:
+        """
+        Describes the content of an image using the selected provider.
+        """
+        return self._get_provider(provider).describe_image(image_data, prompt)

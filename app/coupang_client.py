@@ -149,8 +149,18 @@ class CoupangClient:
         )
 
     def get_category_meta(self, category_code: str) -> tuple[int, dict[str, Any]]:
-        """카테고리 메타정보 조회"""
-        return self.get(f"/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/{category_code}")
+        """카테고리 메타정보(속성) 조회"""
+        return self.get(f"/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-attributes?displayCategoryCode={category_code}")
+
+    def get_category_notices(self, category_code: str) -> tuple[int, dict[str, Any]]:
+        """카테고리별 상품고시정보 목록 조회"""
+        return self.get(f"/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-notices?displayCategoryCode={category_code}")
+
+    def upload_image_by_url(self, image_url: str) -> tuple[int, dict[str, Any]]:
+        """이미지 업로드 (URL 방식) - OpenAPI v2 기준"""
+        payload = {"originPath": image_url}
+        # 공식 가이드와 환경에 따라 경로가 상이할 수 있으므로, 가장 가능성 높은 v2 경로 사용
+        return self.post("/v2/providers/openapi/apis/api/v1/images/upload", payload)
 
     def predict_category(self, product_name: str, attributes: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
         """카테고리 추천 (예측)"""
@@ -432,10 +442,18 @@ class CoupangClient:
         """반품지 수정"""
         return self.put(f"/v2/providers/openapi/apis/api/v5/vendors/{self._vendor_id}/returnShippingCenters/{return_center_code}", payload)
 
-    def get_return_shipping_center_by_code(self, return_center_codes: str) -> tuple[int, dict[str, Any]]:
-        """반품지 단건(복수) 조회 (센터코드 기준)"""
-        params = {"returnCenterCodes": return_center_codes}
-        return self.get("/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code", params)
+    # --------------------------------------------------------------------------
+    # 7. 배송비 정책 API (Shipping Policy API)
+    # --------------------------------------------------------------------------
+
+    def get_shipping_policies(self, vendor_id: str | None = None) -> tuple[int, dict[str, Any]]:
+        """배송비 정책 목록 조회"""
+        vid = (vendor_id or self._vendor_id).strip()
+        return self.get(f"/v2/providers/marketplace_openapi/apis/api/v1/vendor/shipping-policies/{vid}")
+
+    def create_shipping_policy(self, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """배송비 정책 생성"""
+        return self.post("/v2/providers/marketplace_openapi/apis/api/v1/vendor/shipping-policies", payload)
 
     # --------------------------------------------------------------------------
     # 7. 교환 API (Exchange API)
@@ -479,6 +497,26 @@ class CoupangClient:
             "invoiceNumber": invoice_number
         }
         return self.put(f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/exchangeRequests/{receipt_id}/invoice", payload)
+
+    def cancel_order(
+        self,
+        order_id: str,
+        vendor_item_ids: list[int],
+        receipt_counts: list[int],
+        user_id: str,
+        big_cancel_code: str = "CANERR",
+        middle_cancel_code: str = "CCPNER",
+    ) -> tuple[int, dict[str, Any]]:
+        payload = {
+            "orderId": int(order_id),
+            "vendorItemIds": vendor_item_ids,
+            "receiptCounts": receipt_counts,
+            "bigCancelCode": big_cancel_code,
+            "middleCancelCode": middle_cancel_code,
+            "vendorId": self._vendor_id,
+            "userId": user_id,
+        }
+        return self.post(f"/v2/providers/openapi/apis/api/v5/vendors/{self._vendor_id}/orders/{order_id}/cancel", payload)
 
     # --------------------------------------------------------------------------
     # 8. 쿠폰/캐시백 API (Coupon API)
@@ -590,3 +628,5 @@ class CoupangClient:
     def get_rocket_product(self, seller_product_id: str) -> tuple[int, dict[str, Any]]:
         """로켓그로스 상품 조회"""
         return self.get(f"/v2/providers/rocket_growth_api/apis/api/v1/products/{seller_product_id}")
+
+

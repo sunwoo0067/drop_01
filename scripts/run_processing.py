@@ -1,6 +1,7 @@
 import sys
 import os
 import logging
+import asyncio
 
 # Add app to path
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
@@ -12,7 +13,7 @@ from app.services.processing_service import ProcessingService
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def main():
+async def main():
     logger.info("Starting Product Processing Job...")
     
     db = SessionLocal()
@@ -20,7 +21,7 @@ def main():
         service = ProcessingService(db)
         
         # Process up to 50 pending items
-        processed_count = service.process_pending_products(limit=50)
+        processed_count = await service.process_pending_products(limit=50)
         
         logger.info(f"Job Complete. Processed {processed_count} products.")
         
@@ -30,4 +31,4 @@ def main():
         db.close()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

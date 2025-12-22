@@ -16,13 +16,14 @@ from app.ownerclan_client import OwnerClanClient
 from app.ownerclan_sync import start_background_ownerclan_job
 from app.session_factory import session_factory
 from app.settings import settings
-from app.api.endpoints import sourcing, products, coupang, settings as settings_endpoint, suppliers as suppliers_endpoint, benchmarks, market
+from app.api.endpoints import sourcing, products, coupang, settings as settings_endpoint, suppliers as suppliers_endpoint, benchmarks, market, benchmark_streams
 from app.schemas.product import ProductResponse
 
 app = FastAPI()
 
 app.include_router(sourcing.router, prefix="/api/sourcing", tags=["Sourcing"])
 app.include_router(benchmarks.router, prefix="/api/benchmarks", tags=["Benchmarks"])
+app.include_router(benchmark_streams.router, prefix="/api/benchmarks", tags=["Benchmarks"])
 app.include_router(products.router, prefix="/api/products", tags=["Products"]) 
 app.include_router(coupang.router, prefix="/api/coupang", tags=["Coupang"])
 app.include_router(settings_endpoint.router, prefix="/api/settings", tags=["Settings"])
@@ -47,6 +48,11 @@ def list_benchmarks_alias(
     session: Session = Depends(get_session),
     q: str | None = Query(default=None),
     market_code: str | None = Query(default=None, alias="marketCode"),
+    min_price: int | None = Query(default=None, alias="minPrice"),
+    max_price: int | None = Query(default=None, alias="maxPrice"),
+    min_review_count: int | None = Query(default=None, alias="minReviewCount"),
+    min_rating: float | None = Query(default=None, alias="minRating"),
+    min_quality_score: float | None = Query(default=None, alias="minQualityScore"),
     order_by: str | None = Query(default=None, alias="orderBy"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -55,6 +61,11 @@ def list_benchmarks_alias(
         session=session,
         q=q,
         market_code=market_code,
+        min_price=min_price,
+        max_price=max_price,
+        min_review_count=min_review_count,
+        min_rating=min_rating,
+        min_quality_score=min_quality_score,
         order_by=order_by,
         limit=limit,
         offset=offset,

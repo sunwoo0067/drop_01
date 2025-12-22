@@ -1,8 +1,7 @@
-from typing import Annotated, List, Dict, Any, Optional
-from typing_extensions import TypedDict
+from typing import Annotated, List, Dict, Any, Optional, TypedDict
 import operator
 
-class AgentState(TypedDict):
+class AgentState(TypedDict, total=False):
     """
     LangGraph 에이전트들이 공유하는 상태 클래스.
     """

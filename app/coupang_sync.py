@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from typing import Any
 from datetime import datetime, timezone
 import os
+import time
 
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import select
@@ -21,13 +23,162 @@ from app.models import (
     MarketListing,
     SupplierAccount,
     SupplierItemRaw,
+    SupplierOrderRaw,
     SupplierOrder,
     Order,
+    OrderStatusHistory,
 )
 from app.ownerclan_client import OwnerClanClient
+from app.ownerclan_sync import get_primary_ownerclan_account
+from app.services.detail_html_checks import find_forbidden_tags
+from app.services.detail_html_normalizer import normalize_ownerclan_html
+from app.services.coupang_ready_service import collect_image_urls_from_raw
 from app.settings import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _preserve_detail_html(product: Product | None = None) -> bool:
+    """
+    상품의 상태에 따라 상세페이지 HTML 보존 여부를 결정합니다.
+    - 신규 가공 중(PENDING, PROCESSING)인 경우: 정규화/이미지 보강을 위해 False 반환 (변환 필요)
+    - 이미 완료되었거나 등록된 경우: 기존 레이아웃 유지를 위해 True 반환
+    """
+    if product is None:
+        return False
+    
+    # 신규 등록을 위한 가공 단계에서는 정규화 로직을 태웁니다.
+    if product.processing_status in ("PENDING", "PROCESSING"):
+        return False
+        
+    return True
+
+
+def _name_only_processing() -> bool:
+    return True
+
+
+def _get_original_image_urls(session: Session, product: Product) -> list[str]:
+    if product.supplier_item_id:
+        raw_item = session.get(SupplierItemRaw, product.supplier_item_id)
+        raw = raw_item.raw if raw_item and isinstance(raw_item.raw, dict) else {}
+        return collect_image_urls_from_raw(raw)
+
+    return []
+
+
+def _normalize_detail_html_for_coupang(html: str) -> str:
+    s = str(html or "")
+    if not s:
+        return s
+
+    # Coupang requires HTTPS for all content
+    s = s.replace("http://", "https://")
+    s = s.replace("https://image1.coupangcdn.com/", "https://image1.coupangcdn.com/")
+    
+    # Remove hidden control characters often found in source data
+    s = normalize_ownerclan_html(s)
+    
+    # Further cleanup for any absolute URLs that might still be HTTP (if any)
+    # (Though the global replace usually handles it, being explicit for known CDN)
+    return s
+
+
+def _build_coupang_detail_html_from_processed_images(urls: list[str]) -> str:
+    safe_urls: list[str] = []
+    seen: set[str] = set()
+    for u in urls:
+        if not isinstance(u, str):
+            continue
+        s = u.strip()
+        if not s:
+            continue
+        s = _normalize_detail_html_for_coupang(s)
+        if s in seen:
+            continue
+        seen.add(s)
+        safe_urls.append(s)
+        if len(safe_urls) >= 20:
+            break
+
+    parts: list[str] = []
+    for u in safe_urls:
+        parts.append(f'<img src="{u}" style="max-width:100%;height:auto;"> <br>')
+
+    parts.append(
+        '<p style="font-size: 12px; color: #777777; display: block; margin: 20px 0;">'
+        '본 제품을 구매하시면 원활한 배송을 위해 꼭 필요한 고객님의 개인정보를 (성함, 주소, 전화번호 등)  '
+        '택배사 및 제 3업체에서 이용하는 것에 동의하시는 것으로 간주됩니다.<br>'
+        '개인정보는 배송 외의 용도로는 절대 사용되지 않으니 안심하시기 바랍니다. 안전하게 배송해 드리겠습니다.'
+        '</p>'
+    )
+
+    out = " ".join(parts).strip()
+    return out[:200000]
+
+
+def _build_contents_image_blocks(urls: list[str]) -> list[dict[str, Any]]:
+    safe_urls: list[str] = []
+    seen: set[str] = set()
+    for u in urls:
+        if not isinstance(u, str):
+            continue
+        s = u.strip()
+        if not s:
+            continue
+        s = _normalize_detail_html_for_coupang(s)
+        if s in seen:
+            continue
+        seen.add(s)
+        safe_urls.append(s)
+        if len(safe_urls) >= 20:
+            break
+
+    if not safe_urls:
+        return []
+
+    return [
+        {
+            "contentsType": "IMAGE_NO_SPACE",
+            "contentDetails": [{"content": u, "detailType": "IMAGE"} for u in safe_urls],
+        }
+    ]
+
+
+def _detail_html_has_images(html: str) -> bool:
+    if not html:
+        return False
+    return re.search(r"<img\b", html, re.IGNORECASE) is not None
+
+
+def _extract_coupang_image_url(image_obj: dict[str, Any]) -> str | None:
+    if not isinstance(image_obj, dict):
+        return None
+
+    def _build_coupang_cdn_url(path: str) -> str:
+        s = str(path or "").strip()
+        if not s:
+            return s
+        if s.startswith("http://") or s.startswith("https://") or s.startswith("//"):
+            return _normalize_detail_html_for_coupang(s)
+        s = s.lstrip("/")
+        if s.startswith("image/"):
+            return "https://image1.coupangcdn.com/" + s
+        return "https://image1.coupangcdn.com/image/" + s
+
+    vendor_path = image_obj.get("vendorPath")
+    if isinstance(vendor_path, str) and vendor_path.strip():
+        vp = vendor_path.strip()
+        if vp.startswith("http://") or vp.startswith("https://") or vp.startswith("//"):
+            return _normalize_detail_html_for_coupang(vp)
+        if "/" in vp:
+            return _build_coupang_cdn_url(vp)
+
+    cdn_path = image_obj.get("cdnPath")
+    if isinstance(cdn_path, str) and cdn_path.strip():
+        return _build_coupang_cdn_url(cdn_path.strip())
+
+    return None
 
 
 def _get_client_for_account(account: MarketAccount) -> CoupangClient:
@@ -46,7 +197,7 @@ def _get_client_for_account(account: MarketAccount) -> CoupangClient:
     )
 
 
-def sync_coupang_products(session: Session, account_id: uuid.UUID) -> int:
+def sync_coupang_products(session: Session, account_id: uuid.UUID, deep: bool = False) -> int:
     """
     Syncs products for a specific Coupang account.
     Returns the number of products processed.
@@ -55,6 +206,584 @@ def sync_coupang_products(session: Session, account_id: uuid.UUID) -> int:
     if not account:
         logger.error(f"MarketAccount {account_id} not found")
         return 0
+
+    if account.market_code != "COUPANG":
+        logger.error(f"Account {account.name} is not a Coupang account")
+        return 0
+
+    if not account.is_active:
+        logger.info(f"Account {account.name} is inactive, skipping sync")
+        return 0
+
+    try:
+        client = _get_client_for_account(account)
+    except Exception as e:
+        logger.error(f"Failed to initialize client for {account.name}: {e}")
+        return 0
+
+    logger.info(f"Starting product sync for {account.name} ({account.market_code})")
+
+    total_processed = 0
+    next_token = None
+
+    while True:
+        code, data = client.get_products(
+            next_token=next_token,
+            max_per_page=50,
+        )
+        _log_fetch(session, account, "get_products", {"nextToken": next_token}, code, data)
+
+        if code != 200:
+            logger.error(f"Failed to fetch products for {account.name}: {data}")
+            break
+
+        products = data.get("data", []) if isinstance(data, dict) else []
+        if not products:
+            break
+
+        for p in products:
+            if not isinstance(p, dict):
+                continue
+            seller_product_id = str(p.get("sellerProductId"))
+            if deep:
+                detail_code, detail_data = client.get_product(seller_product_id)
+                _log_fetch(session, account, f"get_product/{seller_product_id}", {}, detail_code, detail_data)
+                detail_obj = detail_data.get("data") if isinstance(detail_data, dict) else None
+                if detail_code == 200 and isinstance(detail_obj, dict):
+                    p = detail_obj
+            existing_row = session.execute(
+                select(MarketProductRaw)
+                .where(MarketProductRaw.market_code == "COUPANG")
+                .where(MarketProductRaw.account_id == account.id)
+                .where(MarketProductRaw.market_item_id == seller_product_id)
+            ).scalars().first()
+            if existing_row and isinstance(existing_row.raw, dict):
+                existing_status = (existing_row.raw.get("status") or "").strip().upper()
+                existing_name = str(existing_row.raw.get("statusName") or "")
+                if existing_status == "SUSPENDED" or "판매중지" in existing_name:
+                    p = {**p, "status": "SUSPENDED", "statusName": "판매중지"}
+            stmt = insert(MarketProductRaw).values(
+                market_code="COUPANG",
+                account_id=account.id,
+                market_item_id=seller_product_id,
+                raw=p,
+                fetched_at=datetime.now(timezone.utc),
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["market_code", "account_id", "market_item_id"],
+                set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at},
+            )
+            session.execute(stmt)
+
+        session.commit()
+        total_processed += len(products)
+
+        next_token = data.get("nextToken") if isinstance(data, dict) else None
+        if not next_token:
+            break
+
+    logger.info(f"Finished product sync for {account.name}. Total: {total_processed}")
+    return total_processed
+
+def _extract_tracking_from_ownerclan_raw(raw: dict[str, Any]) -> tuple[str | None, str | None]:
+    if not isinstance(raw, dict):
+        return None, None
+
+    tracking_no = raw.get("trackingNumber") or raw.get("tracking_number")
+    shipping_code = raw.get("shippingCompanyCode") or raw.get("shipping_company_code")
+    if tracking_no:
+        return str(tracking_no).strip(), str(shipping_code).strip() if shipping_code else None
+
+    products = raw.get("products")
+    if not isinstance(products, list) or not products:
+        return None, None
+
+    for item in products:
+        if not isinstance(item, dict):
+            continue
+        tracking_no = item.get("trackingNumber") or item.get("tracking_number")
+        shipping_code = item.get("shippingCompanyCode") or item.get("shipping_company_code")
+        if tracking_no:
+            return str(tracking_no).strip(), str(shipping_code).strip() if shipping_code else None
+
+    return None, None
+
+
+def _extract_coupang_order_id(raw: dict[str, Any]) -> str | None:
+    if not isinstance(raw, dict):
+        return None
+
+    order_id = raw.get("orderId") or raw.get("order_id")
+    if order_id:
+        return str(order_id).strip()
+
+    order_items = raw.get("orderItems") if isinstance(raw.get("orderItems"), list) else []
+    for item in order_items:
+        if not isinstance(item, dict):
+            continue
+        order_id = item.get("orderId") or item.get("order_id")
+        if order_id:
+            return str(order_id).strip()
+
+    order_sheet_id = raw.get("orderSheetId") or raw.get("shipmentBoxId") or raw.get("order_sheet_id")
+    if order_sheet_id:
+        return str(order_sheet_id).strip()
+
+    return None
+
+
+def _already_uploaded_invoice(
+    session: Session,
+    account_id: uuid.UUID,
+    order_id: str,
+    invoice_number: str,
+) -> bool:
+    if not order_id or not invoice_number:
+        return False
+
+    stmt = (
+        select(SupplierRawFetchLog)
+        .where(SupplierRawFetchLog.supplier_code == "coupang")
+        .where(SupplierRawFetchLog.account_id == account_id)
+        .where(SupplierRawFetchLog.endpoint == "coupang/upload_invoices")
+        .order_by(SupplierRawFetchLog.fetched_at.desc())
+        .limit(200)
+    )
+    logs = session.scalars(stmt).all()
+    for log in logs:
+        payload = log.request_payload if isinstance(log.request_payload, dict) else {}
+        if payload.get("orderId") == order_id and payload.get("invoiceNumber") == invoice_number:
+            return True
+    return False
+
+
+def _already_canceled_order(
+    session: Session,
+    account_id: uuid.UUID,
+    order_id: str,
+) -> bool:
+    if not order_id:
+        return False
+
+    stmt = (
+        select(SupplierRawFetchLog)
+        .where(SupplierRawFetchLog.supplier_code == "coupang")
+        .where(SupplierRawFetchLog.account_id == account_id)
+        .where(SupplierRawFetchLog.endpoint == "coupang/cancel_order")
+        .order_by(SupplierRawFetchLog.fetched_at.desc())
+        .limit(200)
+    )
+    logs = session.scalars(stmt).all()
+    for log in logs:
+        payload = log.request_payload if isinstance(log.request_payload, dict) else {}
+        if payload.get("orderId") == order_id:
+            return True
+    return False
+
+
+def _ownerclan_status_is_cancel(status: object) -> bool:
+    if status is None:
+        return False
+    s = str(status).strip().lower()
+    if not s:
+        return False
+    return "cancel" in s or "취소" in s
+
+
+def _record_order_status_change(
+    session: Session,
+    order: Order,
+    new_status: str,
+    source: str,
+    note: str | None = None,
+) -> bool:
+    old_status = order.status
+    if old_status == new_status:
+        return False
+    order.status = new_status
+    session.add(
+        OrderStatusHistory(
+            order_id=order.id,
+            from_status=old_status,
+            to_status=new_status,
+            source=source,
+            note=note,
+        )
+    )
+    return True
+
+
+def _map_ownerclan_status_to_order_status(status: object) -> str | None:
+    """
+    OwnerClan → Internal Order.status mapping (keyword-based).
+    - CANCELLED: 취소, cancel
+    - SHIPPED: 배송완료, delivered, 완료
+    - SHIPPING: 배송중, shipped, 송장, 출고
+    - READY: 상품준비, 준비중, processing
+    - PAYMENT_COMPLETED: 결제완료, paid
+    """
+    if status is None:
+        return None
+    s = str(status).strip().lower()
+    if not s:
+        return None
+
+    direct_map = {
+        "결제완료": "PAYMENT_COMPLETED",
+        "payment_completed": "PAYMENT_COMPLETED",
+        "paid": "PAYMENT_COMPLETED",
+        "상품준비": "READY",
+        "상품준비중": "READY",
+        "배송준비중": "READY",
+        "processing": "READY",
+        "배송중": "SHIPPING",
+        "출고": "SHIPPING",
+        "송장": "SHIPPING",
+        "shipped": "SHIPPING",
+        "배송완료": "SHIPPED",
+        "구매확정": "SHIPPED",
+        "delivered": "SHIPPED",
+        "취소": "CANCELLED",
+        "cancelled": "CANCELLED",
+        "canceled": "CANCELLED",
+        "cancel": "CANCELLED",
+        "환불": "CANCELLED",
+        "반품": "CANCELLED",
+        "refund": "CANCELLED",
+        "returned": "CANCELLED",
+    }
+    if s in direct_map:
+        return direct_map[s]
+
+    if "cancel" in s or "취소" in s:
+        return "CANCELLED"
+    if "배송완료" in s or "delivered" in s or s in {"완료", "배송완료"}:
+        return "SHIPPED"
+    if "배송중" in s or "shipped" in s or "송장" in s or "출고" in s:
+        return "SHIPPING"
+    if "상품준비" in s or "준비중" in s or "processing" in s:
+        return "READY"
+    if "결제" in s or "paid" in s:
+        return "PAYMENT_COMPLETED"
+    return None
+
+
+def _extract_cancel_items_from_coupang_raw(raw: dict[str, Any]) -> tuple[list[int], list[int]]:
+    vendor_item_ids: list[int] = []
+    receipt_counts: list[int] = []
+    order_items = raw.get("orderItems") if isinstance(raw.get("orderItems"), list) else []
+    for item in order_items:
+        if not isinstance(item, dict):
+            continue
+        vendor_item_id = item.get("vendorItemId") or item.get("vendor_item_id")
+        if vendor_item_id is None:
+            continue
+        try:
+            vendor_item_id_int = int(vendor_item_id)
+        except Exception:
+            continue
+        count = (
+            item.get("shippingCount")
+            or item.get("orderCount")
+            or item.get("quantity")
+            or 1
+        )
+        try:
+            count_int = max(1, int(count))
+        except Exception:
+            count_int = 1
+        vendor_item_ids.append(vendor_item_id_int)
+        receipt_counts.append(count_int)
+    return vendor_item_ids, receipt_counts
+
+
+def sync_ownerclan_orders_to_coupang_invoices(
+    session: Session,
+    coupang_account_id: uuid.UUID,
+    limit: int = 0,
+    dry_run: bool = False,
+    retry_count: int = 0,
+) -> dict[str, Any]:
+    """
+    오너클랜 주문(배송/송장/취소) → 쿠팡 송장 업로드 및 취소(양방향 동기화).
+    - SupplierOrderRaw(오너클랜)에서 trackingNumber 추출
+    - Order/SupplierOrder 매핑으로 쿠팡 주문을 찾아 송장 업로드
+    """
+    processed = 0
+    succeeded = 0
+    skipped = 0
+    failed = 0
+    failures: list[dict[str, Any]] = []
+
+    coupang_account = session.get(MarketAccount, coupang_account_id)
+    if not coupang_account or coupang_account.market_code != "COUPANG":
+        raise RuntimeError("쿠팡 계정을 찾을 수 없습니다")
+
+    if not coupang_account.is_active:
+        return {"processed": 0, "succeeded": 0, "skipped": 0, "failed": 0, "failures": []}
+
+    owner_account = get_primary_ownerclan_account(session, user_type="seller")
+
+    try:
+        client = _get_client_for_account(coupang_account)
+    except Exception as e:
+        raise RuntimeError(f"쿠팡 클라이언트 초기화 실패: {e}")
+
+    default_delivery_company = None
+    if isinstance(coupang_account.credentials, dict):
+        default_delivery_company = coupang_account.credentials.get("default_delivery_company_code")
+    if not default_delivery_company:
+        _rc, _oc, default_delivery_company, _debug = _get_default_centers(client, coupang_account, session)
+    if not default_delivery_company:
+        default_delivery_company = "KDEXP"
+
+    q = (
+        session.query(SupplierOrderRaw)
+        .filter(SupplierOrderRaw.supplier_code == "ownerclan")
+        .filter(SupplierOrderRaw.account_id == owner_account.id)
+        .order_by(SupplierOrderRaw.fetched_at.desc())
+    )
+    if limit and limit > 0:
+        q = q.limit(limit)
+
+    rows = q.all()
+    retry_count = max(0, int(retry_count or 0))
+
+    def _should_retry(resp: dict[str, Any]) -> bool:
+        data = resp.get("data") if isinstance(resp, dict) else None
+        if isinstance(data, dict):
+            response_code = data.get("responseCode")
+            if response_code in {1, 99}:
+                return True
+            response_list = data.get("responseList")
+            if isinstance(response_list, list):
+                for item in response_list:
+                    if isinstance(item, dict) and item.get("retryRequired") is True:
+                        return True
+        return False
+
+    def _is_invoice_success(code: int, resp: dict[str, Any]) -> bool:
+        if code >= 300:
+            return False
+        data = resp.get("data") if isinstance(resp, dict) else None
+        if isinstance(data, dict):
+            response_code = data.get("responseCode")
+            if response_code not in (0, None):
+                return False
+            response_list = data.get("responseList")
+            if isinstance(response_list, list):
+                for item in response_list:
+                    if isinstance(item, dict) and item.get("succeed") is False:
+                        return False
+        return True
+
+    def _is_cancel_success(code: int, resp: dict[str, Any]) -> bool:
+        if code >= 300:
+            return False
+        data = resp.get("data") if isinstance(resp, dict) else None
+        if isinstance(data, dict):
+            failed_items = data.get("failedItemIds")
+            if isinstance(failed_items, list) and failed_items:
+                return False
+        return True
+
+    for row in rows:
+        processed += 1
+        raw = row.raw if isinstance(row.raw, dict) else {}
+        order_status = raw.get("status") or raw.get("order_status")
+        mapped_status = _map_ownerclan_status_to_order_status(order_status)
+        is_cancel = _ownerclan_status_is_cancel(order_status)
+        tracking_no, shipping_code = _extract_tracking_from_ownerclan_raw(raw)
+        if not tracking_no and not is_cancel:
+            skipped += 1
+            continue
+
+        supplier_order = (
+            session.query(SupplierOrder)
+            .filter(SupplierOrder.supplier_code == "ownerclan")
+            .filter(SupplierOrder.supplier_order_id == row.order_id)
+            .one_or_none()
+        )
+        if not supplier_order:
+            alt_id = raw.get("id") or raw.get("key")
+            if alt_id:
+                supplier_order = (
+                    session.query(SupplierOrder)
+                    .filter(SupplierOrder.supplier_code == "ownerclan")
+                    .filter(SupplierOrder.supplier_order_id == str(alt_id))
+                    .one_or_none()
+                )
+        if not supplier_order:
+            skipped += 1
+            continue
+
+        order = session.query(Order).filter(Order.supplier_order_id == supplier_order.id).one_or_none()
+        if not order or not order.market_order_id:
+            skipped += 1
+            continue
+
+        if mapped_status:
+            try:
+                if _record_order_status_change(session, order, mapped_status, "ownerclan_status_map"):
+                    session.commit()
+            except Exception:
+                session.rollback()
+
+        market_raw = session.get(MarketOrderRaw, order.market_order_id)
+        market_raw_data = market_raw.raw if market_raw and isinstance(market_raw.raw, dict) else {}
+        coupang_order_id = _extract_coupang_order_id(market_raw_data)
+        if not coupang_order_id:
+            failed += 1
+            failures.append({"ownerclanOrderId": row.order_id, "reason": "쿠팡 orderId를 찾을 수 없습니다"})
+            continue
+
+        invoice_number = tracking_no
+        delivery_company_code = shipping_code or default_delivery_company
+
+        if is_cancel:
+            if _already_canceled_order(session, coupang_account_id, coupang_order_id):
+                skipped += 1
+                continue
+            vendor_item_ids, receipt_counts = _extract_cancel_items_from_coupang_raw(market_raw_data)
+            if not vendor_item_ids:
+                failed += 1
+                failures.append({"ownerclanOrderId": row.order_id, "reason": "쿠팡 취소용 vendorItemId를 찾을 수 없습니다"})
+                continue
+            user_id = None
+            if isinstance(coupang_account.credentials, dict):
+                user_id = coupang_account.credentials.get("vendor_user_id")
+            if not user_id:
+                failed += 1
+                failures.append({"ownerclanOrderId": row.order_id, "reason": "쿠팡 취소용 vendor_user_id가 없습니다"})
+                continue
+
+            payload = {
+                "orderId": coupang_order_id,
+                "vendorItemIds": vendor_item_ids,
+                "receiptCounts": receipt_counts,
+                "bigCancelCode": "CANERR",
+                "middleCancelCode": "CCPNER",
+                "vendorId": coupang_account.credentials.get("vendor_id") if isinstance(coupang_account.credentials, dict) else None,
+                "userId": user_id,
+            }
+
+            if dry_run:
+                skipped += 1
+                continue
+            attempts = 0
+            ok = False
+            code = 0
+            resp: dict[str, Any] | None = None
+            while attempts <= retry_count:
+                attempts += 1
+                code, resp = client.cancel_order(
+                    order_id=coupang_order_id,
+                    vendor_item_ids=vendor_item_ids,
+                    receipt_counts=receipt_counts,
+                    user_id=user_id,
+                )
+                resp = resp if isinstance(resp, dict) else {"_raw": resp}
+                ok = _is_cancel_success(code, resp)
+                session.add(
+                    SupplierRawFetchLog(
+                        supplier_code="coupang",
+                        account_id=coupang_account_id,
+                        endpoint="coupang/cancel_order",
+                        request_payload={**payload, "attempt": attempts},
+                        http_status=code,
+                        response_payload=resp,
+                        error_message=None if ok else "cancel_order failed",
+                    )
+                )
+                session.commit()
+                if ok or not _should_retry(resp):
+                    break
+                time.sleep(min(8, 2 ** (attempts - 1)))
+
+            if not ok:
+                failed += 1
+                failures.append(
+                    {
+                        "ownerclanOrderId": row.order_id,
+                        "reason": f"쿠팡 주문 취소 실패: HTTP {code}",
+                        "response": resp,
+                    }
+                )
+                continue
+
+            if ok:
+                try:
+                    if _record_order_status_change(session, order, "CANCELLED", "ownerclan_cancel"):
+                        session.commit()
+                except Exception:
+                    session.rollback()
+                succeeded += 1
+            continue
+
+        if _already_uploaded_invoice(session, coupang_account_id, coupang_order_id, invoice_number):
+            skipped += 1
+            continue
+
+        payload = {
+            "orderId": coupang_order_id,
+            "deliveryCompanyCode": delivery_company_code,
+            "invoiceNumber": invoice_number,
+        }
+
+        if dry_run:
+            skipped += 1
+            continue
+        attempts = 0
+        ok = False
+        code = 0
+        resp: dict[str, Any] | None = None
+        while attempts <= retry_count:
+            attempts += 1
+            code, resp = client.upload_invoices([payload])
+            resp = resp if isinstance(resp, dict) else {"_raw": resp}
+            ok = _is_invoice_success(code, resp)
+            session.add(
+                SupplierRawFetchLog(
+                    supplier_code="coupang",
+                    account_id=coupang_account_id,
+                    endpoint="coupang/upload_invoices",
+                    request_payload={**payload, "attempt": attempts},
+                    http_status=code,
+                    response_payload=resp,
+                    error_message=None if ok else "upload_invoices failed",
+                )
+            )
+            session.commit()
+            if ok or not _should_retry(resp):
+                break
+            time.sleep(min(8, 2 ** (attempts - 1)))
+
+        if not ok:
+            failed += 1
+            failures.append(
+                {
+                    "ownerclanOrderId": row.order_id,
+                    "reason": f"쿠팡 송장 업로드 실패: HTTP {code}",
+                    "response": resp,
+                }
+            )
+            continue
+
+        if ok:
+            try:
+                if _record_order_status_change(session, order, "SHIPPING", "ownerclan_invoice"):
+                    session.commit()
+            except Exception:
+                session.rollback()
+            succeeded += 1
+
+    return {
+        "processed": processed,
+        "succeeded": succeeded,
+        "skipped": skipped,
+        "failed": failed,
+        "failures": failures[:50],
+    }
         
     if account.market_code != "COUPANG":
         logger.error(f"Account {account.name} is not a Coupang account")
@@ -234,6 +963,32 @@ def _log_fetch(session: Session, account: MarketAccount, endpoint: str, payload:
     API 통신 결과를 SupplierRawFetchLog 테이블에 기록합니다.
     트랜잭션 롤백 시 로그가 소실되지 않도록 새 세션을 사용합니다.
     """
+    def _mask_value(value: object) -> str:
+        s = str(value or "")
+        if len(s) <= 2:
+            return "*" * len(s)
+        return f"{'*' * (len(s) - 2)}{s[-2:]}"
+
+    def _sanitize_payload(value: object) -> object:
+        if isinstance(value, dict):
+            out: dict[str, object] = {}
+            for k, v in value.items():
+                key = str(k)
+                if key in {"vendorId", "vendorUserId"}:
+                    out[key] = _mask_value(v)
+                    continue
+                if key == "content" and isinstance(v, str) and len(v) > 2000:
+                    out[key] = v[:2000] + "..."
+                    continue
+                out[key] = _sanitize_payload(v)
+            return out
+        if isinstance(value, list):
+            return [_sanitize_payload(v) for v in value]
+        return value
+
+    safe_payload = payload if isinstance(payload, dict) else {"_raw": payload}
+    if endpoint in {"create_product", "update_product_after_create(contents)"}:
+        safe_payload = _sanitize_payload(safe_payload)
     try:
         from app.db import SessionLocal
         with SessionLocal() as log_session:
@@ -241,7 +996,7 @@ def _log_fetch(session: Session, account: MarketAccount, endpoint: str, payload:
                 supplier_code="COUPANG", # 마켓 로그도 일단 여기 기록
                 account_id=account.id,
                 endpoint=endpoint,
-                request_payload=payload if isinstance(payload, dict) else {"_raw": payload},
+                request_payload=safe_payload,
                 http_status=code,
                 response_payload=data if isinstance(data, dict) else {"_raw": data},
                 error_message=data.get("message") if isinstance(data, dict) else None,
@@ -351,12 +1106,25 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
         logger.error(f"상품을 찾을 수 없습니다: {product_id}")
         return False, "상품을 찾을 수 없습니다"
 
-    processed_images = product.processed_image_urls if isinstance(product.processed_image_urls, list) else []
-    if len(processed_images) < 5:
-        logger.error(
-            f"쿠팡 등록을 위해서는 가공 이미지가 최소 5장 필요합니다(productId={product.id}, images={len(processed_images)})"
-        )
-        return False, f"쿠팡 등록을 위해서는 가공 이미지가 최소 5장 필요합니다(images={len(processed_images)})"
+    original_images = _get_original_image_urls(session, product)
+    payload_images = original_images
+    if not payload_images:
+        processed_images = product.processed_image_urls if isinstance(product.processed_image_urls, list) else []
+        payload_images = processed_images
+
+    if len(payload_images) > 9:
+        payload_images = payload_images[:9]
+    if len(payload_images) < 1:
+        if _name_only_processing():
+            logger.warning(
+                "이미지 없이 등록을 시도합니다(name_only). productId=%s",
+                product.id,
+            )
+        else:
+            logger.error(
+                f"쿠팡 등록을 위해서는 이미지가 최소 1장 필요합니다(productId={product.id}, images={len(payload_images)})"
+            )
+            return False, f"쿠팡 등록을 위해서는 이미지가 최소 1장 필요합니다(images={len(payload_images)})"
 
     try:
         client = _get_client_for_account(account)
@@ -365,106 +1133,21 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
         return False, f"클라이언트 초기화 실패: {e}"
 
     # 1. 메타 데이터 준비
-    return_center_code, outbound_center_code, delivery_company_code, _debug = _get_default_centers(client, account, session)
-    if not return_center_code or not outbound_center_code:
-        logger.error(f"기본 센터 정보 조회 실패: {_debug}")
-        return False, f"기본 센터 정보 조회 실패: {_debug}"
-
-    # 기본 매핑
-    # 1.5 카테고리 예측
-    predicted_category_code = 77800 # 기본값 (기타/미분류 등)
-    try:
-        if os.getenv("COUPANG_ENABLE_CATEGORY_PREDICTION", "0") != "1":
-            raise RuntimeError("카테고리 예측 비활성화(COUPANG_ENABLE_CATEGORY_PREDICTION != 1)")
-
-        agreed = False
-        try:
-            agreed_http, agreed_data = client.check_auto_category_agreed(str(account.credentials.get("vendor_id") or "").strip())
-            if agreed_http == 200 and isinstance(agreed_data, dict) and agreed_data.get("code") == "SUCCESS":
-                agreed = bool(agreed_data.get("data"))
-            else:
-                logger.warning(
-                    f"카테고리 자동매칭 동의 여부 확인 실패: HTTP={agreed_http}, 응답={agreed_data}"
-                )
-        except Exception as e:
-            logger.warning(f"카테고리 자동매칭 동의 여부 확인 중 오류 발생: {e}")
-
-        # 가공된 이름 명 또는 원본 이름 사용
-        pred_name = product.processed_name or product.name
-        if not agreed:
-            logger.info("카테고리 자동매칭 서비스 미동의로 예측을 건너뜁니다(기본 카테고리 사용)")
-        else:
-            code, pred_data = client.predict_category(pred_name)
-            if code == 200 and pred_data.get("code") == "SUCCESS":
-                 # 응답 구조: data -> predictedCategoryCode (문서/경험 기반 추정)
-                 # 실제 응답이 {"data": {"predictedCategoryCode": "12345", ...}} 형태라고 가정
-                 # 혹은 {"data": "12345"} 일 수도 있음. 가장 안전한 파싱 필요.
-                 # 보통 쿠팡 응답은 `data` 필드에 결과를 담음.
-                 resp_data = pred_data.get("data")
-                 if isinstance(resp_data, dict) and "predictedCategoryCode" in resp_data:
-                     predicted_category_code = int(resp_data["predictedCategoryCode"])
-                     logger.info(f"카테고리 예측 성공: {pred_name} -> {predicted_category_code}")
-                 elif isinstance(resp_data, (str, int)):
-                     # 만약 data 자체가 코드라면
-                     predicted_category_code = int(resp_data)
-                     logger.info(f"카테고리 예측 성공 (Direct): {pred_name} -> {predicted_category_code}")
-            else:
-                logger.warning(f"카테고리 예측 실패: Code {code}, Msg {pred_data}")
-    except Exception as e:
-        logger.info(f"카테고리 예측 스킵/실패: {e}")
-
-    notice_meta: dict[str, Any] | None = None
-    try:
-        meta_http, meta_data = client.get_category_meta(str(predicted_category_code))
-        if meta_http == 200 and isinstance(meta_data, dict) and isinstance(meta_data.get("data"), dict):
-            notice_meta = meta_data["data"]
-    except Exception as e:
-        logger.warning(f"카테고리 메타 조회 중 오류 발생: {e}")
-
-    return_center_detail: dict[str, Any] | None = None
-    try:
-        _rc, _rd = client.get_return_shipping_center_by_code(str(return_center_code))
-        if _rc == 200 and isinstance(_rd, dict) and isinstance(_rd.get("data"), list) and _rd["data"]:
-            item0 = _rd["data"][0] if isinstance(_rd["data"][0], dict) else {}
-            addr0 = None
-            addrs = item0.get("placeAddresses")
-            if isinstance(addrs, list) and addrs and isinstance(addrs[0], dict):
-                addr0 = addrs[0]
-            return_center_detail = {
-                "shippingPlaceName": item0.get("shippingPlaceName"),
-                "returnZipCode": (addr0.get("returnZipCode") if isinstance(addr0, dict) else None),
-                "returnAddress": (addr0.get("returnAddress") if isinstance(addr0, dict) else None),
-                "returnAddressDetail": (addr0.get("returnAddressDetail") if isinstance(addr0, dict) else None),
-                "companyContactNumber": (addr0.get("companyContactNumber") if isinstance(addr0, dict) else None),
-            }
-    except Exception as e:
-        logger.warning(f"반품지 상세 조회 중 오류 발생: {e}")
-
-    shipping_fee = 0
-    try:
-        if product.supplier_item_id:
-            raw_item = session.get(SupplierItemRaw, product.supplier_item_id)
-            raw = raw_item.raw if raw_item and isinstance(raw_item.raw, dict) else {}
-            v = raw.get("shippingFee")
-            if isinstance(v, (int, float)):
-                shipping_fee = int(v)
-            elif isinstance(v, str):
-                s = "".join([c for c in v.strip() if c.isdigit()])
-                if s:
-                    shipping_fee = int(s)
-    except Exception as e:
-        logger.warning(f"오너클랜 배송비 추출 실패: {e}")
+    meta_result = _get_coupang_product_metadata(session, client, account, product)
+    if not meta_result["ok"]:
+        return False, meta_result["error"]
 
     payload = _map_product_to_coupang_payload(
         product,
         account,
-        return_center_code,
-        outbound_center_code,
-        predicted_category_code,
-        return_center_detail,
-        notice_meta,
-        shipping_fee,
-        delivery_company_code,
+        meta_result["return_center_code"],
+        meta_result["outbound_center_code"],
+        meta_result["predicted_category_code"],
+        meta_result["return_center_detail"],
+        meta_result["notice_meta"],
+        meta_result["shipping_fee"],
+        meta_result["delivery_company_code"],
+        image_urls=payload_images,
     )
     
     # 2. API 호출
@@ -484,6 +1167,85 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
     # 3. 성공 처리
     # data['data']에 sellerProductId (등록상품ID)가 포함됨
     seller_product_id = str(data.get("data"))
+
+    # 등록 직후 쿠팡이 내려주는 vendor_inventory 기반 이미지 경로로 상세(contents)를 한 번 더 보강합니다.
+    # (내부 저장 포맷/렌더링 이슈 회피 목적)
+    if not _preserve_detail_html(product):
+        try:
+            for _ in range(10):
+                p_code, p_data = client.get_product(seller_product_id)
+                data_obj2 = p_data.get("data") if isinstance(p_data, dict) else None
+                if p_code != 200 or not isinstance(data_obj2, dict):
+                    time.sleep(0.5)
+                    continue
+
+                items2 = data_obj2.get("items") if isinstance(data_obj2.get("items"), list) else []
+                urls: list[str] = []
+                for it in items2:
+                    if not isinstance(it, dict):
+                        continue
+                    imgs = it.get("images") if isinstance(it.get("images"), list) else []
+                    for im in imgs:
+                        if not isinstance(im, dict):
+                            continue
+                        u = _extract_coupang_image_url(im)
+                        if isinstance(u, str) and u.strip():
+                            urls.append(u.strip())
+                        if len(urls) >= 20:
+                            break
+                    if len(urls) >= 20:
+                        break
+
+                if urls:
+                    new_image_blocks = [
+                        {
+                            "contentsType": "IMAGE_NO_SPACE",
+                            "contentDetails": [{"content": u, "detailType": "IMAGE"} for u in urls],
+                        }
+                    ]
+                    if new_image_blocks:
+                        for it in items2:
+                            if isinstance(it, dict):
+                                # 기존 컨텐츠 블록 중 HTML, TEXT 블록은 유지하고 이미지 블록만 교체합니다.
+                                existing_contents = it.get("contents", [])
+                                if not isinstance(existing_contents, list):
+                                    existing_contents = []
+                                
+                                preserved = []
+                                html_has_images = False
+                                for c in existing_contents:
+                                    c_type = c.get("contentsType")
+                                    if c_type == "HTML":
+                                        # 쿠팡 변환 과정에서 http:// 주소가 생길 수 있으므로 다시 한번 https로 정규화
+                                        details = c.get("contentDetails", [])
+                                        for d in details:
+                                            if d.get("detailType") == "TEXT" and "content" in d:
+                                                d["content"] = _normalize_detail_html_for_coupang(d["content"])
+                                                if _detail_html_has_images(d["content"]):
+                                                    html_has_images = True
+                                        preserved.append(c)
+                                    elif c_type == "TEXT":
+                                        # 중복 방지: _build_contents_image_blocks에서 삭제했으므로 기존 텍스트 블록은 유지
+                                        preserved.append(c)
+                                
+                                # HTML에 이미지가 있으면 레이아웃 유지를 위해 이미지 블록은 생략
+                                if html_has_images:
+                                    it["contents"] = preserved
+                                else:
+                                    # 원본 HTML/TEXT를 먼저 보여주고, 그 뒤에 보강된 이미지 블록을 배치 (레이아웃 상단 우선)
+                                    it["contents"] = preserved + new_image_blocks
+
+                        update_payload = data_obj2
+                        update_payload["sellerProductId"] = data_obj2.get("sellerProductId") or int(seller_product_id)
+                        update_payload["requested"] = True
+                        u_code, u_data = client.update_product(update_payload)
+                        _log_fetch(session, account, "update_product_after_create(contents)", update_payload, u_code, u_data)
+                    break
+
+                # 이미지가 아직 없으면 대기 후 재시도
+                time.sleep(2.0)
+        except Exception as e:
+            logger.warning(f"등록 직후 상세(contents) 보강 실패: {e}")
     
     # MarketListing 생성 또는 업데이트
     stmt = insert(MarketListing).values(
@@ -553,6 +1315,70 @@ def delete_product_from_coupang(session: Session, account_id: uuid.UUID, seller_
         return False, str(e)
 
 
+def stop_product_sales(session: Session, account_id: uuid.UUID, seller_product_id: str) -> tuple[bool, dict | None]:
+    """
+    쿠팡 상품의 판매를 중지합니다. (모든 vendorItemId에 대해 stop_sales 호출)
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account:
+        return False, {"message": "계정을 찾을 수 없습니다"}
+
+    try:
+        client = _get_client_for_account(account)
+        code, data = client.get_product(seller_product_id)
+        if code != 200:
+            return False, {"message": f"상품 조회 실패: {data.get('message', '알 수 없는 오류')}"}
+
+        items = data.get("data", {}).get("items", [])
+        results: list[dict] = []
+        stopped = 0
+        for item in items:
+            vendor_item_id = item.get("vendorItemId")
+            if not vendor_item_id:
+                continue
+            stop_code, stop_data = client.stop_sales(str(vendor_item_id))
+            results.append(
+                {
+                    "vendorItemId": str(vendor_item_id),
+                    "httpStatus": int(stop_code),
+                    "raw": stop_data if isinstance(stop_data, dict) else {"_raw": stop_data},
+                }
+            )
+            if stop_code == 200:
+                stopped += 1
+
+        if stopped == 0 and results:
+            return False, {"message": "판매중지 실패", "results": results}
+
+        raw_row = session.execute(
+            select(MarketProductRaw)
+            .where(MarketProductRaw.market_code == "COUPANG")
+            .where(MarketProductRaw.account_id == account.id)
+            .where(MarketProductRaw.market_item_id == str(seller_product_id))
+        ).scalars().first()
+        if raw_row:
+            raw_payload = raw_row.raw if isinstance(raw_row.raw, dict) else {}
+            raw_payload = {**raw_payload, "status": "SUSPENDED", "statusName": "판매중지"}
+            raw_row.raw = raw_payload
+            session.commit()
+
+        listing = session.execute(
+            select(MarketListing)
+            .where(MarketListing.market_account_id == account.id)
+            .where(MarketListing.market_item_id == str(seller_product_id))
+        ).scalars().first()
+        if listing:
+            listing.status = "SUSPENDED"
+            session.commit()
+
+        return True, {"stopped": stopped, "results": results}
+
+    except Exception as e:
+        session.rollback()
+        logger.error(f"쿠팡 판매중지 중 예외 발생: {e}")
+        return False, {"message": str(e)}
+
+
 def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_id: uuid.UUID) -> tuple[bool, str | None]:
     """
     쿠팡에 등록된 상품 정보를 내부 Product 기준으로 업데이트합니다.
@@ -578,80 +1404,78 @@ def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_i
         
     try:
         client = _get_client_for_account(account)
-        
-        # 기본 정보 조회 (센터 정보 등)
-        return_center_code, outbound_center_code, delivery_company_code, _debug = _get_default_centers(client, account, session)
-        
-        # TODO: 현재는 _map_product_to_coupang_payload가 create_product용 payload를 생성함.
-        # update_product용으로 path 분기가 필요할 수 있음 (아이템 내에 vendorItemId 포함 등)
-        # 하지만 쿠팡 API 가이드에 따르면 전체 전문을 보내는 것이 일반적임.
-        
-        # 상세 조회를 통해 기존 vendorItemId 확보 필요
+
+        # 최신 쿠팡 상품 상태를 조회하여 vendorItemId/기존 이미지 등을 확보
         code, current_data = client.get_product(listing.market_item_id)
         if code != 200:
             return False, f"쿠팡 상품 정보 조회 실패: {current_data.get('message')}"
-            
-        current_data_obj = current_data.get("data", {})
-        current_items = current_data_obj.get("items", [])
-        
-        # 반품지 상세 정보 조회 (고시정보/주소 보완용)
-        # register_product 와 동일한 로직 적용
-        r_code, r_data = client.get_return_shipping_center_by_code(str(return_center_code))
-        return_center_detail = None
-        if r_code == 200 and isinstance(r_data, dict) and isinstance(r_data.get("data"), list) and r_data["data"]:
-            item0 = r_data["data"][0] if isinstance(r_data["data"][0], dict) else {}
-            addr0 = None
-            addrs = item0.get("placeAddresses")
-            if isinstance(addrs, list) and addrs and isinstance(addrs[0], dict):
-                addr0 = addrs[0]
-            return_center_detail = {
-                "shippingPlaceName": item0.get("shippingPlaceName"),
-                "returnZipCode": (addr0.get("returnZipCode") if isinstance(addr0, dict) else None),
-                "returnAddress": (addr0.get("returnAddress") if isinstance(addr0, dict) else None),
-                "returnAddressDetail": (addr0.get("returnAddressDetail") if isinstance(addr0, dict) else None),
-                "companyContactNumber": (addr0.get("companyContactNumber") if isinstance(addr0, dict) else None),
-            }
-        
-        # 상품 고시정보(notices)를 위한 메타데이터 조회
-        predicted_category_code = current_data_obj.get("displayCategoryCode", 77800)
-        n_code, n_data = client.get_category_meta(str(predicted_category_code))
-        notice_meta = n_data.get("data") if n_code == 200 else None
+        current_data_obj = current_data.get("data") if isinstance(current_data, dict) else None
+        if not isinstance(current_data_obj, dict):
+            return False, "쿠팡 상품 정보 조회 응답(data)이 비정상입니다"
+        current_items = current_data_obj.get("items") if isinstance(current_data_obj.get("items"), list) else []
 
-        shipping_fee = 0
-        try:
-            if product.supplier_item_id:
-                raw_item = session.get(SupplierItemRaw, product.supplier_item_id)
-                raw = raw_item.raw if raw_item and isinstance(raw_item.raw, dict) else {}
-                v = raw.get("shippingFee")
-                if isinstance(v, (int, float)):
-                    shipping_fee = int(v)
-                elif isinstance(v, str):
-                    s = "".join([c for c in v.strip() if c.isdigit()])
-                    if s:
-                        shipping_fee = int(s)
-        except Exception as e:
-            logger.warning(f"오너클랜 배송비 추출 실패: {e}")
-        
-        # Payload 생성
+        # 1. 메타 데이터 준비 (등록 시와 동일한 수준으로 최신 정보 확보)
+        meta_result = _get_coupang_product_metadata(session, client, account, product)
+        if not meta_result["ok"]:
+            return False, meta_result["error"]
+
+        # 2. 페이로드 생성 (Full Sync 방식: 내부 매핑 함수 활용)
         payload = _map_product_to_coupang_payload(
             product,
             account,
-            return_center_code,
-            outbound_center_code,
-            predicted_category_code=predicted_category_code,
-            return_center_detail=return_center_detail,
-            notice_meta=notice_meta,
-            shipping_fee=shipping_fee,
-            delivery_company_code=delivery_company_code
+            meta_result["return_center_code"],
+            meta_result["outbound_center_code"],
+            meta_result["predicted_category_code"],
+            meta_result["return_center_detail"],
+            meta_result["notice_meta"],
+            meta_result["shipping_fee"],
+            meta_result["delivery_company_code"],
+            image_urls=_get_original_image_urls(session, product),
         )
         
+        # 업데이트 API 규격에 맞춰 sellerProductId 및 requested 추가
         payload["sellerProductId"] = int(listing.market_item_id)
-        
-        # 기존 옵션(아이템)의 vendorItemId 매핑
-        if "items" in payload and len(payload["items"]) > 0 and len(current_items) > 0:
-            # Drop01은 단일 옵션 가정
-            payload["items"][0]["vendorItemId"] = current_items[0].get("vendorItemId")
-        
+        payload["requested"] = True
+
+        # 기존 vendorItemId 및 가격/이미지 맵핑 유지/보정
+        if payload.get("items") and current_items and isinstance(current_items[0], dict):
+            target_item = payload["items"][0]
+            current_item = current_items[0]
+
+            if "vendorItemId" in current_item:
+                target_item["vendorItemId"] = current_item["vendorItemId"]
+
+            # [BUG FIX] 가격 동기화: salePrice가 existing originalPrice보다 크면 originalPrice 상향
+            existing_original = int(current_item.get("originalPrice") or 0)
+            new_sale = int(target_item.get("salePrice") or 0)
+            if new_sale > existing_original:
+                target_item["originalPrice"] = new_sale
+            else:
+                target_item["originalPrice"] = existing_original
+
+            # 로컬 가공 이미지가 없으면 기존 쿠팡 이미지를 활용
+            if not target_item.get("images"):
+                coupang_urls: list[str] = []
+                imgs = current_item.get("images") if isinstance(current_item.get("images"), list) else []
+                for im in imgs:
+                    if not isinstance(im, dict):
+                        continue
+                    url = _extract_coupang_image_url(im)
+                    if url:
+                        coupang_urls.append(url)
+                fallback_images: list[dict[str, Any]] = []
+                for idx, url in enumerate(coupang_urls[:10]):
+                    image_type = "REPRESENTATION" if idx == 0 else "DETAIL"
+                    fallback_images.append(
+                        {
+                            "imageOrder": idx,
+                            "imageType": image_type,
+                            "vendorPath": url,
+                        }
+                    )
+                if fallback_images:
+                    target_item["images"] = fallback_images
+
         code, data = client.update_product(payload)
         _log_fetch(session, account, "update_product", payload, code, data)
         
@@ -985,7 +1809,7 @@ def _get_default_centers(client: CoupangClient, account: MarketAccount | None = 
         cached_return = account.credentials.get("default_return_center_code")
         cached_outbound = account.credentials.get("default_outbound_shipping_place_code")
         cached_delivery = account.credentials.get("default_delivery_company_code")
-        if cached_return and cached_outbound and cached_delivery:
+        if cached_return and cached_outbound and cached_delivery == "CJGLS":
             return str(cached_return), str(cached_outbound), str(cached_delivery), "cached(사용)"
 
     def _extract_msg(rc: int, data: dict[str, Any]) -> str:
@@ -1023,7 +1847,7 @@ def _get_default_centers(client: CoupangClient, account: MarketAccount | None = 
     outbound_code = _extract_first_code(outbound_data, ["outboundShippingPlaceCode", "outbound_shipping_place_code", "shippingPlaceCode", "placeCode"])
     
     # 택배사 코드 추출
-    delivery_company_code = "KDEXP"  # 기본값 (경동택배)
+    delivery_company_code = "CJGLS"  # 기본값 (CJ대한통운, 기본 배송지 이슈 방지)
     if isinstance(outbound_data, dict):
         # v2 API Response check
         data_obj = outbound_data.get("data") if isinstance(outbound_data.get("data"), dict) else None
@@ -1032,22 +1856,34 @@ def _get_default_centers(client: CoupangClient, account: MarketAccount | None = 
             # Typical keys: deliveryCompanyCodes (list) or usableDeliveryCompanies
             codes = content[0].get("deliveryCompanyCodes") or content[0].get("usableDeliveryCompanies")
             if isinstance(codes, list) and codes:
-                first_code_entry = codes[0]
-                if isinstance(first_code_entry, dict):
-                    # dict 형태인 경우 (예: {'deliveryCompanyCode': '...', 'deliveryCompanyName': '...'})
-                    # 문서상 여러 키 가능성 대비
-                    delivery_company_code = (
-                        first_code_entry.get("deliveryCompanyCode") or 
-                        first_code_entry.get("code") or 
-                        first_code_entry.get("id")
-                    )
-                else:
-                    # str 형태인 경우
-                    delivery_company_code = str(first_code_entry)
+                # CJGLS가 목록에 있으면 우선 선택 (사용자 요청)
+                found_cj = False
+                for entry in codes:
+                    c = ""
+                    if isinstance(entry, dict):
+                        c = entry.get("deliveryCompanyCode") or entry.get("code") or entry.get("id") or ""
+                    else:
+                        c = str(entry)
+                    
+                    if c == "CJGLS":
+                        delivery_company_code = "CJGLS"
+                        found_cj = True
+                        break
+                
+                if not found_cj:
+                    first_code_entry = codes[0]
+                    if isinstance(first_code_entry, dict):
+                        delivery_company_code = (
+                            first_code_entry.get("deliveryCompanyCode") or 
+                            first_code_entry.get("code") or 
+                            first_code_entry.get("id")
+                        )
+                    else:
+                        delivery_company_code = str(first_code_entry)
             
             if not delivery_company_code:
-                logger.warning(f"지원 택배사 목록이 비어있거나 코드를 추출할 수 없습니다. 기본값 KDEXP를 사용합니다. (outbound_code={outbound_code})")
-                delivery_company_code = "KDEXP"
+                logger.warning(f"지원 택배사 목록이 비어있거나 코드를 추출할 수 없습니다. 기본값 CJGLS를 사용합니다. (outbound_code={outbound_code})")
+                delivery_company_code = "CJGLS"
         else:
             logger.warning(f"출고지 정보에 택배사 데이터가 없습니다. 기본값 {delivery_company_code}를 사용합니다. (outbound_code={outbound_code})")
     
@@ -1083,7 +1919,8 @@ def _map_product_to_coupang_payload(
     return_center_detail: dict[str, Any] | None = None,
     notice_meta: dict[str, Any] | None = None,
     shipping_fee: int = 0,
-    delivery_company_code: str = "KDEXP",
+    delivery_company_code: str = "CJGLS",
+    image_urls: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     내부 Product 모델을 쿠팡 API Payload로 매핑합니다.
@@ -1092,20 +1929,38 @@ def _map_product_to_coupang_payload(
     # 가공된 이름이 있으면 사용, 없으면 원본 이름 사용
     name_to_use = product.processed_name if product.processed_name else product.name
     
-    # 상세설명 (Contents)
-    # 원본 텍스트라면 간단한 HTML 태그로 감쌈. 보통 공급사 데이터가 이미 HTML임.
-    description_html = product.description or "<p>상세설명 없음</p>"
+    processed_images = product.processed_image_urls if isinstance(product.processed_image_urls, list) else []
+    payload_images = image_urls if isinstance(image_urls, list) and image_urls else processed_images
+    
+    # 상세페이지는 원본 HTML 유지 (신규 가공 시에만 정규화 적용)
+    raw_desc = product.description or "<p>상세설명 없음</p>"
+    if _preserve_detail_html(product):
+        description_html = str(raw_desc)[:200000]
+    else:
+        description_html = _normalize_detail_html_for_coupang(str(raw_desc)[:200000])
+    forbidden = find_forbidden_tags(description_html)
+    if forbidden:
+        logger.warning(
+            "상세페이지 금지 태그 감지(productId=%s, tags=%s)",
+            product.id,
+            ",".join(forbidden),
+        )
+    
+    contents_blocks = []
+    if payload_images and (not _preserve_detail_html(product)) and not _detail_html_has_images(description_html):
+        contents_blocks = _build_contents_image_blocks(payload_images)
     
     # 이미지
     # 가공된 이미지 우선 사용
     images = []
-    if product.processed_image_urls:
-        # processed_image_urls는 JSONB 리스트
-        img_list = product.processed_image_urls
+    if payload_images:
+        img_list = payload_images
         if isinstance(img_list, list):
             for url in img_list:
                 image_type = "REPRESENTATION" if len(images) == 0 else "DETAIL"
                 images.append({"imageOrder": len(images), "imageType": image_type, "vendorPath": url})
+                if len(images) >= 9:
+                    break
     
     # 가공된 이미지가 없을 경우 처리 방안 필요
     # 현재는 선행 단계에서 처리되었다고 가정함.
@@ -1164,14 +2019,33 @@ def _map_product_to_coupang_payload(
                     )
     except Exception:
         notices = []
+    
+    if not notices:
+        # Fallback to standard "기타 재화" notices
+        notice_cat = "기타 재화"
+        details = ["품명 및 모델명", "인증/허가 사항", "제조국(원산지)", "제조자(수입자)", "소비자상담 관련 전화번호"]
+        notices = [
+            {"noticeCategoryName": notice_cat, "noticeCategoryDetailName": d, "content": "상세페이지 참조"}
+            for d in details
+        ]
+
+    # Return Center Fallbacks
+    return_zip = (return_center_detail.get("returnZipCode") if return_center_detail else None) or "14598"
+    return_addr = (return_center_detail.get("returnAddress") if return_center_detail else None) or "경기도 부천시 원미구 부일로199번길 21"
+    return_addr_detail = (return_center_detail.get("returnAddressDetail") if return_center_detail else None) or "401 슈가맨워크"
+    return_phone = _normalize_phone((return_center_detail.get("companyContactNumber") if return_center_detail else None) or "070-4581-8906")
+    return_name = (return_center_detail.get("shippingPlaceName") if return_center_detail else None) or "기본 반품지"
 
     base_price = int(product.selling_price or 0)
     ship_fee = int(shipping_fee or 0)
     if ship_fee < 0:
         ship_fee = 0
-    total_price = base_price + ship_fee
+    total_price = (base_price + ship_fee)
     if total_price < 3000:
         total_price = 3000
+    
+    # Coupang requires prices to be in 10-won increments
+    total_price = (total_price // 10) * 10
 
     item_payload = {
         "itemName": name_to_use[:150], # 최대 150자
@@ -1189,33 +2063,15 @@ def _map_product_to_coupang_payload(
         "unitCount": 1,
         "images": images,
         "attributes": [], # TODO: 카테고리 속성 매핑 필요 (예측된 카테고리에 따라 필수 속성이 다름)
-        "contents": [
-            {
-                "contentsType": "HTML",
-                "contentDetails": [{"content": description_html, "detailType": "TEXT"}] 
-            }
-        ],
+        "contents": (
+            contents_blocks + [{"contentsType": "HTML", "contentDetails": [{"content": description_html, "detailType": "TEXT"}]}]
+        ) if contents_blocks else [{"contentsType": "HTML", "contentDetails": [{"content": description_html, "detailType": "TEXT"}]}],
         "notices": notices,
     }
 
-    return_zip = None
-    return_addr = None
-    return_addr_detail = None
-    return_phone = None
-    return_name = None
-    if isinstance(return_center_detail, dict):
-        return_zip = return_center_detail.get("returnZipCode")
-        return_addr = return_center_detail.get("returnAddress")
-        return_addr_detail = return_center_detail.get("returnAddressDetail")
-        return_phone = _normalize_phone(return_center_detail.get("companyContactNumber"))
-        return_name = return_center_detail.get("shippingPlaceName")
-
-    if not return_name:
-        return_name = "반품지"
-
     now = datetime.now(timezone.utc)
     sale_started_at = now.strftime("%Y-%m-%dT%H:%M:%S")
-    sale_ended_at = "2099-01-01T23:59:59"
+    sale_ended_at = "2099-12-31T23:59:59"
 
     payload = {
         "displayCategoryCode": predicted_category_code, 
@@ -1252,3 +2108,96 @@ def _map_product_to_coupang_payload(
     }
     
     return payload
+
+def _get_coupang_product_metadata(
+    session: Session, 
+    client: Any, 
+    account: MarketAccount, 
+    product: Product
+) -> dict[str, Any]:
+    """
+    상품 등록 및 업데이트 시 공통으로 필요한 메타데이터(센터, 카테고리, 배송비 등)를 조회합니다.
+    """
+    return_center_code, outbound_center_code, delivery_company_code, _debug = _get_default_centers(client, account, session)
+    if not return_center_code or not outbound_center_code:
+        return {"ok": False, "error": f"기본 센터 정보 조회 실패: {_debug}"}
+
+    # 카테고리 예측
+    predicted_category_code = 77800
+    try:
+        if os.getenv("COUPANG_ENABLE_CATEGORY_PREDICTION", "0") == "1":
+            agreed = False
+            try:
+                agreed_http, agreed_data = client.check_auto_category_agreed(str(account.credentials.get("vendor_id") or "").strip())
+                if agreed_http == 200 and isinstance(agreed_data, dict) and agreed_data.get("code") == "SUCCESS":
+                    agreed = bool(agreed_data.get("data"))
+            except Exception:
+                pass
+
+            if agreed:
+                pred_name = product.processed_name or product.name
+                code, pred_data = client.predict_category(pred_name)
+                if code == 200 and pred_data.get("code") == "SUCCESS":
+                    resp_data = pred_data.get("data")
+                    if isinstance(resp_data, dict) and "predictedCategoryCode" in resp_data:
+                        predicted_category_code = int(resp_data["predictedCategoryCode"])
+                    elif isinstance(resp_data, (str, int)):
+                        predicted_category_code = int(resp_data)
+    except Exception as e:
+        logger.info(f"카테고리 예측 스킵/실패: {e}")
+
+    # 공시 메타
+    notice_meta = None
+    try:
+        meta_http, meta_data = client.get_category_meta(str(predicted_category_code))
+        if meta_http == 200 and isinstance(meta_data, dict) and isinstance(meta_data.get("data"), dict):
+            notice_meta = meta_data["data"]
+    except Exception:
+        pass
+
+    # 반품지 상세
+    return_center_detail = None
+    try:
+        _rc, _rd = client.get_return_shipping_center_by_code(str(return_center_code))
+        if _rc == 200 and isinstance(_rd, dict) and isinstance(_rd.get("data"), list) and _rd["data"]:
+            item0 = _rd["data"][0] if isinstance(_rd["data"][0], dict) else {}
+            addr0 = None
+            addrs = item0.get("placeAddresses")
+            if isinstance(addrs, list) and addrs and isinstance(addrs[0], dict):
+                addr0 = addrs[0]
+            return_center_detail = {
+                "shippingPlaceName": item0.get("shippingPlaceName"),
+                "returnZipCode": (addr0.get("returnZipCode") if isinstance(addr0, dict) else None),
+                "returnAddress": (addr0.get("returnAddress") if isinstance(addr0, dict) else None),
+                "returnAddressDetail": (addr0.get("returnAddressDetail") if isinstance(addr0, dict) else None),
+                "companyContactNumber": (addr0.get("companyContactNumber") if isinstance(addr0, dict) else None),
+            }
+    except Exception:
+        pass
+
+    # 배송비
+    shipping_fee = 0
+    try:
+        if product.supplier_item_id:
+            raw_item = session.get(SupplierItemRaw, product.supplier_item_id)
+            raw = raw_item.raw if raw_item and isinstance(raw_item.raw, dict) else {}
+            v = raw.get("shippingFee")
+            if isinstance(v, (int, float)):
+                shipping_fee = int(v)
+            elif isinstance(v, str):
+                s = "".join([c for c in v.strip() if c.isdigit()])
+                if s:
+                    shipping_fee = int(s)
+    except Exception:
+        pass
+
+    return {
+        "ok": True,
+        "return_center_code": return_center_code,
+        "outbound_center_code": outbound_center_code,
+        "delivery_company_code": delivery_company_code,
+        "predicted_category_code": predicted_category_code,
+        "notice_meta": notice_meta,
+        "return_center_detail": return_center_detail,
+        "shipping_fee": shipping_fee,
+    }

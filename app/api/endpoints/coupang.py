@@ -1,22 +1,184 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, or_
 import asyncio
 import uuid
 from pydantic import BaseModel, Field
 
+import re
+from datetime import datetime, timezone
+
 from app.db import get_session
-from app.models import Product, MarketAccount, MarketOrderRaw, MarketListing, MarketProductRaw
+from app.models import Product, MarketAccount, MarketOrderRaw, MarketListing, MarketProductRaw, SupplierRawFetchLog
+from app.services.order_sync_retry import get_coupang_client_from_account, retry_coupang_failures
 from app.coupang_sync import (
     register_product,
     sync_coupang_orders_raw,
     fulfill_coupang_orders_via_ownerclan,
+    sync_ownerclan_orders_to_coupang_invoices,
     sync_market_listing_status,
 )
 from app.coupang_client import CoupangClient
 from sqlalchemy.dialects.postgresql import insert
 
 router = APIRouter()
+
+
+def _to_https_url(url: str) -> str:
+    s = str(url or "").strip()
+    if not s:
+        return s
+    if s.startswith("//"):
+        return "https:" + s
+    if s.startswith("http://"):
+        return "https://" + s[len("http://") :]
+    return s
+
+
+def _extract_coupang_image_url(image_obj: dict) -> str | None:
+    if not isinstance(image_obj, dict):
+        return None
+
+    def _build_coupang_cdn_url(path: str) -> str:
+        s = str(path or "").strip()
+        if not s:
+            return s
+        if s.startswith("http://") or s.startswith("https://") or s.startswith("//"):
+            return _to_https_url(s)
+        s = s.lstrip("/")
+        if s.startswith("image/"):
+            return "https://image1.coupangcdn.com/" + s
+        return "https://image1.coupangcdn.com/image/" + s
+
+    vendor_path = image_obj.get("vendorPath")
+    if isinstance(vendor_path, str) and vendor_path.strip():
+        vp = vendor_path.strip()
+        if vp.startswith("http://") or vp.startswith("https://") or vp.startswith("//"):
+            return _to_https_url(vp)
+        if "/" in vp:
+            return _build_coupang_cdn_url(vp)
+
+    cdn_path = image_obj.get("cdnPath")
+    if isinstance(cdn_path, str) and cdn_path.strip():
+        return _build_coupang_cdn_url(cdn_path.strip())
+
+    return None
+
+
+def _build_detail_html_from_urls(urls: list[str]) -> str:
+    safe_urls: list[str] = []
+    seen: set[str] = set()
+    for u in urls:
+        su = _to_https_url(u)
+        if not su or su in seen:
+            continue
+        seen.add(su)
+        safe_urls.append(su)
+        if len(safe_urls) >= 20:
+            break
+
+    parts: list[str] = ["<center>"]
+    for u in safe_urls:
+        parts.append(f'<img src="{u}"> <br>')
+
+    parts.append("</center> <br>")
+    parts.append(
+        '<p style="font-size: 12px; color: #777777; display: block; margin: 20px 0;">'
+        '본 제품을 구매하시면 원활한 배송을 위해 꼭 필요한 고객님의 개인정보를 (성함, 주소, 전화번호 등)  '
+        '택배사 및 제 3업체에서 이용하는 것에 동의하시는 것으로 간주됩니다.<br>'
+        '개인정보는 배송 외의 용도로는 절대 사용되지 않으니 안심하시기 바랍니다. 안전하게 배송해 드리겠습니다.'
+        '</p>'
+    )
+
+    html = " ".join(parts).strip()
+    return html[:200000]
+
+
+def _build_contents_image_blocks(urls: list[str]) -> list[dict]:
+    safe_urls: list[str] = []
+    seen: set[str] = set()
+    for u in urls:
+        su = _to_https_url(u)
+        if not su or su in seen:
+            continue
+        seen.add(su)
+        safe_urls.append(su)
+        if len(safe_urls) >= 20:
+            break
+
+    if not safe_urls:
+        return []
+
+    return [
+        {
+            "contentsType": "IMAGE_NO_SPACE",
+            "contentDetails": [{"content": u, "detailType": "IMAGE"} for u in safe_urls],
+        },
+        {
+            "contentsType": "TEXT",
+            "contentDetails": [
+                {
+                    "content": "본 제품을 구매하시면 원활한 배송을 위해 꼭 필요한 고객님의 개인정보를 (성함, 주소, 전화번호 등) 택배사 및 제 3업체에서 이용하는 것에 동의하시는 것으로 간주됩니다. 개인정보는 배송 외의 용도로는 절대 사용되지 않으니 안심하시기 바랍니다. 안전하게 배송해 드리겠습니다.",
+                    "detailType": "TEXT",
+                }
+            ],
+        },
+    ]
+
+
+class FixCoupangContentsIn(BaseModel):
+    productId: uuid.UUID | None = None
+    useCoupangImagesOnly: bool = Field(default=True)
+    requestApproval: bool = Field(default=True)
+    useImageBlocks: bool = Field(default=True)
+
+
+class OwnerClanInvoiceSyncIn(BaseModel):
+    limit: int = Field(default=0, ge=0, le=500)
+    dryRun: bool = Field(default=False)
+    retryCount: int = Field(default=0, ge=0, le=3)
+
+
+class OrderSyncFailureOut(BaseModel):
+    id: uuid.UUID
+    endpoint: str
+    httpStatus: int | None = None
+    errorMessage: str | None = None
+    fetchedAt: datetime | None = None
+    requestPayload: dict | None = None
+    responsePayload: dict | None = None
+
+
+class OrderSyncRetryIn(BaseModel):
+    ids: list[uuid.UUID]
+    retryCount: int = Field(default=0, ge=0, le=3)
+
+
+class OrderSyncReportOut(BaseModel):
+    total: int
+    succeeded: int
+    failed: int
+    byEndpoint: dict[str, dict[str, int]]
+    topErrors: list[dict[str, object]]
+
+
+class OrderMappingIssueOut(BaseModel):
+    orderId: str
+    reason: str
+    sellerProductId: str | None = None
+
+
+class OrderMappingIssueReportOut(BaseModel):
+    total: int
+    counts: dict[str, int]
+    samples: list[OrderMappingIssueOut]
+
+
+class SchedulerStateOut(BaseModel):
+    name: str
+    status: str
+    updatedAt: str
+    meta: dict | None = None
 
 
 def _tag_reason(reason: str | None) -> str | None:
@@ -73,6 +235,37 @@ def _tag_reason(reason: str | None) -> str | None:
     return f"[UNKNOWN] {r}"
 
 
+def _parse_iso_dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _extract_seller_product_id(raw: dict) -> str | None:
+    if not isinstance(raw, dict):
+        return None
+    seller_product_id = raw.get("sellerProductId") or raw.get("seller_product_id")
+    if seller_product_id:
+        return str(seller_product_id)
+    order_items = raw.get("orderItems") if isinstance(raw.get("orderItems"), list) else []
+    if order_items and isinstance(order_items[0], dict):
+        seller_product_id = order_items[0].get("sellerProductId") or order_items[0].get("seller_product_id")
+        if seller_product_id:
+            return str(seller_product_id)
+    return None
+
+
+def _read_scheduler_state() -> dict:
+    try:
+        from app.services.sync_scheduler_state import read_scheduler_state
+        return read_scheduler_state()
+    except Exception:
+        return {}
+
+
 def _get_images_count(product: Product) -> int:
     imgs = product.processed_image_urls if isinstance(product.processed_image_urls, list) else []
     return len(imgs)
@@ -108,7 +301,7 @@ async def register_products_bulk_endpoint(
         products = session.scalars(select(Product).where(Product.id.in_(payload.productIds))).all()
         missing: list[dict] = []
         for p in products:
-            if _get_images_count(p) < 5:
+            if _get_images_count(p) < 1:
                 missing.append(
                     {
                         "productId": str(p.id),
@@ -119,7 +312,7 @@ async def register_products_bulk_endpoint(
         if missing:
             raise HTTPException(
                 status_code=409,
-                detail={"message": "쿠팡 등록을 위해서는 가공 완료 및 이미지 5장이 필요합니다", "items": missing[:50]},
+                detail={"message": "쿠팡 등록을 위해서는 가공 완료 및 이미지 1장이 필요합니다", "items": missing[:50]},
             )
 
     if wait:
@@ -156,7 +349,7 @@ async def register_products_bulk_endpoint(
                 ready = await ensure_product_ready_for_coupang(
                     session,
                     str(p.id),
-                    min_images_required=5,
+                    min_images_required=1,
                     force_fetch_ownerclan=bool(force_fetch_ownerclan),
                     augment_images=bool(augment_images),
                 )
@@ -174,7 +367,7 @@ async def register_products_bulk_endpoint(
                     )
                     continue
 
-            if _get_images_count(p) < 5:
+            if _get_images_count(p) < 1:
                 registered_fail += 1
                 registered_fail_ids.append(str(p.id))
                 raw_reason = f"가공/이미지 조건 미달(processingStatus={p.processing_status}, images={_get_images_count(p)})"
@@ -267,7 +460,7 @@ async def preview_register_products_bulk(
             blocked.append({**base, "reason": "supplier_item_id 없음"})
             continue
 
-        if p.processing_status == "COMPLETED" and images_count >= 5:
+        if p.processing_status == "COMPLETED" and images_count >= 1:
             ready.append(base)
         else:
             needs_fix.append(base)
@@ -316,7 +509,7 @@ async def register_product_endpoint(
         ready = await ensure_product_ready_for_coupang(
             session,
             str(product.id),
-            min_images_required=5,
+            min_images_required=1,
             force_fetch_ownerclan=bool(force_fetch_ownerclan),
             augment_images=bool(augment_images),
         )
@@ -351,10 +544,10 @@ async def register_product_endpoint(
         return {"status": "accepted", "message": "쿠팡 상품 등록 작업이 시작되었습니다.", "autoFix": True}
 
     processed_images = product.processed_image_urls if isinstance(product.processed_image_urls, list) else []
-    if product.processing_status != "COMPLETED" or len(processed_images) < 5:
+    if product.processing_status != "COMPLETED" or len(processed_images) < 1:
         raise HTTPException(
             status_code=409,
-            detail=f"쿠팡 등록을 위해서는 가공 완료 및 이미지 5장이 필요합니다(processingStatus={product.processing_status}, images={len(processed_images)})",
+            detail=f"쿠팡 등록을 위해서는 가공 완료 및 이미지 1장이 필요합니다(processingStatus={product.processing_status}, images={len(processed_images)})",
         )
 
     background_tasks.add_task(execute_coupang_registration, account.id, product.id, False, False, False)
@@ -448,6 +641,26 @@ def delete_coupang_product_endpoint(
     return {"status": "success", "message": "상품이 쿠팡에서 삭제되었습니다."}
 
 
+@router.post("/products/{seller_product_id}/stop-sales", status_code=200)
+def stop_coupang_product_sales_endpoint(
+    seller_product_id: str,
+    session: Session = Depends(get_session),
+):
+    """
+    쿠팡 상품 판매를 중지합니다.
+    """
+    stmt = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
+    account = session.scalars(stmt).first()
+    if not account:
+        raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
+
+    from app.coupang_sync import stop_product_sales
+    success, payload = stop_product_sales(session, account.id, seller_product_id)
+    if not success:
+        raise HTTPException(status_code=400, detail=payload or {"message": "판매중지 실패"})
+    return {"status": "success", "result": payload}
+
+
 def execute_bulk_coupang_registration(
     account_id: uuid.UUID,
     product_ids: list[uuid.UUID] | None,
@@ -480,7 +693,7 @@ def execute_bulk_coupang_registration(
                 ensure_product_ready_for_coupang(
                     session,
                     str(p.id),
-                    min_images_required=5,
+                    min_images_required=1,
                     force_fetch_ownerclan=bool(force_fetch_ownerclan),
                     augment_images=bool(augment_images),
                 )
@@ -527,7 +740,7 @@ def execute_coupang_registration(
                 ensure_product_ready_for_coupang(
                     session,
                     str(product_id),
-                    min_images_required=5,
+                    min_images_required=1,
                     force_fetch_ownerclan=bool(force_fetch_ownerclan),
                     augment_images=bool(augment_images),
                 )
@@ -631,6 +844,171 @@ async def get_coupang_product_detail(
         "sellerProductName": seller_product_name,
         "vendorItemIds": vendor_item_ids,
         "raw": data,
+    }
+
+
+@router.post("/products/{seller_product_id}/fix-contents", status_code=200)
+async def fix_coupang_product_contents(
+    seller_product_id: str,
+    payload: FixCoupangContentsIn,
+    session: Session = Depends(get_session),
+):
+    stmt_acct = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
+    account = session.scalars(stmt_acct).first()
+    if not account:
+        raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
+
+    creds = account.credentials or {}
+    client = CoupangClient(
+        access_key=str(creds.get("access_key", "") or "").strip(),
+        secret_key=str(creds.get("secret_key", "") or "").strip(),
+        vendor_id=str(creds.get("vendor_id", "") or "").strip(),
+    )
+
+    code, data = client.get_product(str(seller_product_id).strip())
+    if code != 200 or not isinstance(data, dict) or data.get("code") != "SUCCESS":
+        raise HTTPException(status_code=400, detail={"message": "쿠팡 상품 조회 실패", "httpStatus": code, "raw": data})
+
+    data_obj = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(data_obj, dict):
+        raise HTTPException(status_code=400, detail="쿠팡 상품 조회 응답(data)이 비정상입니다")
+
+    items = data_obj.get("items") if isinstance(data_obj.get("items"), list) else []
+    if not items or not isinstance(items[0], dict):
+        raise HTTPException(status_code=400, detail="쿠팡 상품 조회 응답(items)이 비정상입니다")
+
+    urls: list[str] = []
+
+    if bool(payload.useCoupangImagesOnly):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            imgs = item.get("images") if isinstance(item.get("images"), list) else []
+            for it in imgs:
+                if not isinstance(it, dict):
+                    continue
+                u = _extract_coupang_image_url(it)
+                if isinstance(u, str) and u.strip():
+                    urls.append(u.strip())
+                if len(urls) >= 20:
+                    break
+            if len(urls) >= 20:
+                break
+
+    if not urls:
+        listing = session.scalars(
+            select(MarketListing)
+            .where(MarketListing.market_account_id == account.id)
+            .where(MarketListing.market_item_id == str(seller_product_id).strip())
+        ).first()
+
+        product: Product | None = None
+        if listing:
+            product = session.get(Product, listing.product_id)
+        elif payload.productId:
+            product = session.get(Product, payload.productId)
+
+        processed = product.processed_image_urls if product and isinstance(product.processed_image_urls, list) else []
+        for u in processed[:20]:
+            if isinstance(u, str) and u.strip():
+                urls.append(u.strip())
+
+    if not urls:
+        text = ""
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            existing_contents = item.get("contents") if isinstance(item.get("contents"), list) else []
+            if not existing_contents or not isinstance(existing_contents[0], dict):
+                continue
+            cds = (
+                existing_contents[0].get("contentDetails")
+                if isinstance(existing_contents[0].get("contentDetails"), list)
+                else []
+            )
+            if cds and isinstance(cds[0], dict) and isinstance(cds[0].get("content"), str):
+                text = cds[0]["content"]
+                if text:
+                    break
+
+        if text:
+            fixed = re.sub(r"http://", "https://", text)
+            html = fixed[:200000]
+        else:
+            raise HTTPException(status_code=400, detail="수정할 상세 이미지/콘텐츠를 찾지 못했습니다")
+    else:
+        html = _build_detail_html_from_urls(urls)
+
+    new_contents: list[dict]
+    if bool(payload.useImageBlocks) and urls:
+        new_contents = _build_contents_image_blocks(urls)
+    else:
+        new_contents = [
+            {
+                "contentsType": "TEXT",
+                "contentDetails": [
+                    {
+                        "content": html,
+                        "detailType": "TEXT",
+                    }
+                ],
+            }
+        ]
+
+    for item in items:
+        if isinstance(item, dict):
+            item["contents"] = new_contents
+
+    update_payload = data_obj
+    update_payload["sellerProductId"] = data_obj.get("sellerProductId") or int(str(seller_product_id).strip())
+    update_payload["requested"] = True
+
+    update_code, update_data = client.update_product(update_payload)
+
+    approval_code: int | None = None
+    approval_data: dict | None = None
+    if update_code == 200 and isinstance(update_data, dict) and update_data.get("code") == "SUCCESS" and bool(payload.requestApproval):
+        final_status = str((data_obj.get("statusName") or data_obj.get("status") or "") ).strip()
+        for _ in range(20):
+            if final_status in {"SAVED", "임시저장"}:
+                break
+            try:
+                _c2, d2 = client.get_product(str(seller_product_id).strip())
+                dobj2 = d2.get("data") if isinstance(d2, dict) else None
+                if isinstance(dobj2, dict):
+                    final_status = str((dobj2.get("statusName") or dobj2.get("status") or "") ).strip()
+            except Exception:
+                pass
+            await asyncio.sleep(1.0)
+
+        if final_status in {"SAVED", "임시저장"}:
+            for _ in range(5):
+                try:
+                    approval_code, approval_data = client.approve_product(str(seller_product_id).strip())
+                except Exception as e:
+                    approval_code, approval_data = 500, {"code": "INTERNAL_ERROR", "message": str(e)}
+
+                msg = (approval_data.get("message") if isinstance(approval_data, dict) else None) or ""
+                if approval_code == 200 and isinstance(approval_data, dict) and approval_data.get("code") == "SUCCESS":
+                    break
+                if "임시저장" in str(msg) and "만" in str(msg):
+                    await asyncio.sleep(1.0)
+                    continue
+                break
+
+    return {
+        "sellerProductId": str(seller_product_id).strip(),
+        "httpStatus": update_code,
+        "raw": update_data,
+        "approval": {
+            "httpStatus": approval_code,
+            "raw": approval_data,
+        },
+        "contentsLength": len(html),
+        "imageCount": len(urls),
+        "usedUrls": urls[:20],
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -915,6 +1293,227 @@ def execute_coupang_ownerclan_fulfill(
             dry_run=dry_run,
             limit=limit,
         )
+
+
+def execute_ownerclan_invoice_sync(
+    account_id: uuid.UUID,
+    limit: int,
+    dry_run: bool,
+    retry_count: int,
+):
+    from app.session_factory import session_factory
+
+    with session_factory() as session:
+        sync_ownerclan_orders_to_coupang_invoices(
+            session,
+            coupang_account_id=account_id,
+            limit=limit,
+            dry_run=dry_run,
+            retry_count=retry_count,
+        )
+
+
+@router.post("/orders/sync-ownerclan-invoices", status_code=202)
+async def sync_ownerclan_invoices_endpoint(
+    payload: OwnerClanInvoiceSyncIn,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    """
+    오너클랜 주문 송장/취소 정보를 쿠팡에 반영합니다.
+    """
+    stmt = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
+    account = session.scalars(stmt).first()
+
+    if not account:
+        raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
+
+    background_tasks.add_task(
+        execute_ownerclan_invoice_sync,
+        account.id,
+        payload.limit,
+        payload.dryRun,
+        payload.retryCount,
+    )
+
+    return {"status": "accepted", "message": "오너클랜 송장/취소 → 쿠팡 반영 작업이 시작되었습니다."}
+
+
+@router.get("/orders/sync-failures", status_code=200, response_model=list[OrderSyncFailureOut])
+def list_order_sync_failures(
+    session: Session = Depends(get_session),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    endpoints = ["coupang/upload_invoices", "coupang/cancel_order"]
+    stmt = (
+        select(SupplierRawFetchLog)
+        .where(SupplierRawFetchLog.supplier_code == "coupang")
+        .where(SupplierRawFetchLog.endpoint.in_(endpoints))
+        .where(or_(SupplierRawFetchLog.error_message.is_not(None), SupplierRawFetchLog.http_status >= 300))
+        .order_by(SupplierRawFetchLog.fetched_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    rows = session.scalars(stmt).all()
+    return [
+        OrderSyncFailureOut(
+            id=r.id,
+            endpoint=r.endpoint,
+            httpStatus=r.http_status,
+            errorMessage=r.error_message,
+            fetchedAt=r.fetched_at,
+            requestPayload=r.request_payload if isinstance(r.request_payload, dict) else None,
+            responsePayload=r.response_payload if isinstance(r.response_payload, dict) else None,
+        )
+        for r in rows
+    ]
+
+
+@router.post("/orders/sync-failures/retry", status_code=200)
+def retry_order_sync_failures(
+    payload: OrderSyncRetryIn,
+    session: Session = Depends(get_session),
+):
+    return retry_coupang_failures(session, payload.ids, payload.retryCount)
+
+
+@router.get("/orders/sync-report", status_code=200, response_model=OrderSyncReportOut)
+def get_order_sync_report(
+    session: Session = Depends(get_session),
+    fromTs: str | None = Query(default=None),
+    toTs: str | None = Query(default=None),
+):
+    endpoints = ["coupang/upload_invoices", "coupang/cancel_order"]
+    stmt = (
+        select(SupplierRawFetchLog)
+        .where(SupplierRawFetchLog.supplier_code == "coupang")
+        .where(SupplierRawFetchLog.endpoint.in_(endpoints))
+        .order_by(SupplierRawFetchLog.fetched_at.desc())
+    )
+
+    start_dt = _parse_iso_dt(fromTs)
+    end_dt = _parse_iso_dt(toTs)
+    if start_dt:
+        stmt = stmt.where(SupplierRawFetchLog.fetched_at >= start_dt)
+    if end_dt:
+        stmt = stmt.where(SupplierRawFetchLog.fetched_at <= end_dt)
+
+    rows = session.scalars(stmt).all()
+
+    total = len(rows)
+    succeeded = 0
+    failed = 0
+    by_endpoint: dict[str, dict[str, int]] = {}
+    error_counts: dict[str, int] = {}
+
+    for row in rows:
+        endpoint = row.endpoint or "unknown"
+        entry = by_endpoint.setdefault(endpoint, {"succeeded": 0, "failed": 0})
+        ok = (row.http_status or 0) < 300 and row.error_message is None
+        if ok:
+            succeeded += 1
+            entry["succeeded"] += 1
+        else:
+            failed += 1
+            entry["failed"] += 1
+            key = row.error_message or "unknown_error"
+            error_counts[key] = error_counts.get(key, 0) + 1
+
+    top_errors = [
+        {"error": k, "count": v}
+        for k, v in sorted(error_counts.items(), key=lambda item: item[1], reverse=True)[:5]
+    ]
+
+    return {
+        "total": total,
+        "succeeded": succeeded,
+        "failed": failed,
+        "byEndpoint": by_endpoint,
+        "topErrors": top_errors,
+    }
+
+
+@router.get("/orders/mapping-issues", status_code=200, response_model=OrderMappingIssueReportOut)
+def get_order_mapping_issues(
+    session: Session = Depends(get_session),
+    limit: int = Query(default=200, ge=1, le=1000),
+):
+    stmt = (
+        select(MarketOrderRaw)
+        .where(MarketOrderRaw.market_code == "COUPANG")
+        .order_by(MarketOrderRaw.fetched_at.desc())
+        .limit(limit)
+    )
+    rows = session.scalars(stmt).all()
+
+    counts: dict[str, int] = {}
+    samples: list[OrderMappingIssueOut] = []
+
+    for row in rows:
+        raw = row.raw if isinstance(row.raw, dict) else {}
+        order_id = str(row.order_id)
+        seller_product_id = _extract_seller_product_id(raw)
+
+        def _add_issue(reason: str):
+            counts[reason] = counts.get(reason, 0) + 1
+            if len(samples) < 50:
+                samples.append(
+                    OrderMappingIssueOut(
+                        orderId=order_id,
+                        reason=reason,
+                        sellerProductId=seller_product_id,
+                    )
+                )
+
+        if not seller_product_id:
+            _add_issue("missing_seller_product_id")
+            continue
+
+        listing = (
+            session.query(MarketListing)
+            .filter(MarketListing.market_item_id == str(seller_product_id))
+            .first()
+        )
+        if not listing:
+            _add_issue("missing_market_listing")
+            continue
+
+        product = session.get(Product, listing.product_id)
+        if not product:
+            _add_issue("missing_product")
+            continue
+
+        if not product.supplier_item_id:
+            _add_issue("missing_supplier_item_id")
+
+        order = session.query(Order).filter(Order.market_order_id == row.id).one_or_none()
+        if not order:
+            _add_issue("missing_order_link")
+            continue
+
+        if order.supplier_order_id is None:
+            _add_issue("missing_supplier_order_link")
+
+    return {"total": len(rows), "counts": counts, "samples": samples}
+
+
+@router.get("/orders/scheduler-state", status_code=200, response_model=list[SchedulerStateOut])
+def get_scheduler_state():
+    state = _read_scheduler_state()
+    results: list[SchedulerStateOut] = []
+    for name, payload in state.items():
+        if not isinstance(payload, dict):
+            continue
+        results.append(
+            SchedulerStateOut(
+                name=str(name),
+                status=str(payload.get("status") or "unknown"),
+                updatedAt=str(payload.get("updated_at") or ""),
+                meta=payload.get("meta") if isinstance(payload.get("meta"), dict) else None,
+            )
+        )
+    return results
 
 
 class CoupangListingLinkIn(BaseModel):

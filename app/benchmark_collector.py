@@ -1,9 +1,11 @@
 import logging
+import re
 # import httpx # Replaced by curl_cffi
 from curl_cffi.requests import AsyncSession
 from bs4 import BeautifulSoup
 from typing import List, Dict, Any
 import asyncio
+from datetime import datetime, timezone
 from app.models import BenchmarkProduct
 from app.db import SessionLocal
 from app.embedding_service import EmbeddingService
@@ -60,12 +62,30 @@ class BenchmarkCollector:
                     except ValueError:
                         price = 0
                         
+                    # Extract Rating and Review Count (Coupang specific)
+                    rating_tag = li.select_one("span.rating-star > span.rating")
+                    rating = 0.0
+                    if rating_tag and "width" in rating_tag.get("style", ""):
+                        # style="width: 80%"
+                        m_rate = re.search(r"width:\s*(\d+)%", rating_tag["style"])
+                        if m_rate:
+                            rating = float(m_rate.group(1)) / 20.0 # 100% -> 5.0
+                    
+                    review_count_tag = li.select_one("span.rating-total-count")
+                    review_count = 0
+                    if review_count_tag:
+                        m_count = re.search(r"(\d+)", review_count_tag.text.replace(",", ""))
+                        if m_count:
+                            review_count = int(m_count.group(1))
+
                     items.append({
                         "product_id": product_id,
                         "name": name,
                         "price": price,
                         "product_url": product_url,
-                        "vendor_item_id": vendor_item_id
+                        "vendor_item_id": vendor_item_id,
+                        "rating": rating,
+                        "review_count": review_count
                     })
                     
             except Exception as e:
@@ -122,6 +142,12 @@ class BenchmarkCollector:
         if isinstance(raw_html_val, str) and len(raw_html_val) > 50000:
             raw_data_to_save["raw_html"] = raw_html_val[:50000]
 
+        # New analysis fields
+        category_path = product_data.get("category_path")
+        review_count = int(product_data.get("review_count", 0))
+        rating = float(product_data.get("rating", 0.0))
+        quality_score = float(product_data.get("quality_score", 0.0))
+
         # Generate Embedding
         detail_html_to_save = product_data.get("detail_html")
         if isinstance(detail_html_to_save, str) and len(detail_html_to_save) > 200000:
@@ -141,8 +167,8 @@ class BenchmarkCollector:
         raw_ranking_text = product_data.get("raw_ranking_text") if isinstance(product_data.get("raw_ranking_text"), str) else ""
         raw_ranking_text = raw_ranking_text[:1000]
 
-        text_to_embed = f"{product_data.get('name', '')} {detail_text[:2000]} {raw_ranking_text} {image_hint}".strip()
-        embedding = await self.embedding_service.generate_embedding(text_to_embed)
+        text_to_embed = f"{product_data.get('name', '')} {detail_text[:2000]} {raw_ranking_text}".strip()
+        embedding = await self.embedding_service.generate_rich_embedding(text_to_embed, image_urls=image_urls)
 
         with SessionLocal() as db:
             # Upsert
@@ -156,6 +182,11 @@ class BenchmarkCollector:
                 existing.price = product_data["price"]
                 existing.product_url = product_data["product_url"]
                 existing.raw_data = raw_data_to_save
+                existing.category_path = category_path
+                existing.review_count = review_count
+                existing.rating = rating
+                existing.quality_score = quality_score
+                
                 # Update details if available
                 if "detail_html" in product_data and (detail_html_to_save or ""):
                     existing.detail_html = detail_html_to_save
@@ -163,17 +194,24 @@ class BenchmarkCollector:
                     existing.image_urls = product_data["image_urls"]
                 if embedding:
                     existing.embedding = embedding
+                    existing.embedding_updated_at = datetime.now(timezone.utc) if hasattr(existing, 'embedding_updated_at') else None
             else:
+                from datetime import timezone
                 new_item = BenchmarkProduct(
                     market_code=self.market_code,
                     product_id=str(product_data["product_id"]),
                     name=product_data["name"],
                     price=product_data["price"],
                     product_url=product_data["product_url"],
+                    category_path=category_path,
+                    review_count=review_count,
+                    rating=rating,
+                    quality_score=quality_score,
                     detail_html=detail_html_to_save,
                     image_urls=product_data.get("image_urls"),
                     raw_data=raw_data_to_save,
-                    embedding=embedding
+                    embedding=embedding,
+                    embedding_updated_at = datetime.now(timezone.utc)
                 )
                 db.add(new_item)
             
@@ -193,13 +231,38 @@ class BenchmarkCollector:
             await self.save_product(item)
             await asyncio.sleep(1)
 
-    async def run_ranking_collection(self, limit: int = 10, category_url: str | None = None):
+    async def run_ranking_collection(self, limit: int = 10, category_url: str | None = None, job_id: Any = None):
         items = await self.collect_ranking(limit=limit, category_url=category_url)
-        for item in items:
+        total = len(items)
+        
+        from app.models import BenchmarkCollectJob
+        
+        for idx, item in enumerate(items):
             name = item.get("name") or "(no name)"
-            logger.info(f"Processing {name}...")
+            logger.info(f"Processing {name} ({idx+1}/{total})...")
+            
             details = await self.collect_detail(str(item.get("product_url") or ""))
             if details:
                 item.update(details)
+            
+            # Simple quality score heuristic: product description length + images
+            desc_len = len(item.get("detail_html") or "")
+            img_count = len(item.get("image_urls") or [])
+            item["quality_score"] = min(10.0, (desc_len / 10000.0) + (img_count * 0.5))
+            
             await self.save_product(item)
+            
+            # Update Job Progress
+            if job_id:
+                try:
+                    with SessionLocal() as db:
+                        job = db.get(BenchmarkCollectJob, job_id)
+                        if job:
+                            job.processed_count = idx + 1
+                            job.total_count = total
+                            job.progress = int(((idx + 1) / total) * 100) if total > 0 else 100
+                            db.commit()
+                except Exception as je:
+                    logger.error(f"Failed to update job progress: {je}")
+
             await asyncio.sleep(1)

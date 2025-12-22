@@ -3,54 +3,231 @@
 import { useState, useEffect, useCallback } from "react";
 import api from "@/lib/api";
 import { BenchmarkProduct } from "@/lib/types/benchmark";
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { Loader2, Plus, RefreshCw, BarChart4, ClipboardList, Download } from "lucide-react";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
+
+import BenchmarkFilters from "./BenchmarkFilters";
+import BenchmarkTable from "./BenchmarkTable";
+import BenchmarkDetail from "./BenchmarkDetail";
 import { Modal } from "@/components/ui/Modal";
-import { Loader2, ExternalLink, RefreshCw, Search, Plus, AlertCircle } from "lucide-react";
-import { Badge } from "@/components/ui/Badge";
+import JobMonitor from "./JobMonitor";
 
-// --- Types ---
+export default function BenchmarkPage() {
+    const [items, setItems] = useState<BenchmarkProduct[]>([]);
+    const [total, setTotal] = useState(0);
+    const [loading, setLoading] = useState(true);
+    const [activeTab, setActiveTab] = useState<'products' | 'jobs'>('products');
 
-interface BenchmarkCollectJob {
-    id: string;
-    status: string;
-    marketCode: string;
-    progress: number;
-    failedMarkets: string[];
-    lastError: string | null;
-    createdAt: string;
-}
+    // Filters State
+    const [filters, setFilters] = useState({
+        q: "",
+        marketCode: "ALL",
+        minPrice: "",
+        maxPrice: "",
+        minReviewCount: "",
+        minRating: "",
+        minQualityScore: "",
+        orderBy: "created",
+        offset: 0,
+        limit: 50
+    });
 
-// --- Components ---
+    // selection
+    const [selectedId, setSelectedId] = useState<string | null>(null);
+    const [isCollectionOpen, setIsCollectionOpen] = useState(false);
 
-function JobStatusCard({ job }: { job: BenchmarkCollectJob }) {
-    const isRunning = job.status === "running" || job.status === "queued";
-    const statusColor =
-        job.status === "succeeded" ? "text-green-600 border-green-200 bg-green-50" :
-            job.status === "failed" ? "text-destructive border-red-200 bg-red-50" :
-                "text-primary border-blue-200 bg-blue-50";
+    const fetchBenchmarks = useCallback(async () => {
+        setLoading(true);
+        try {
+            const params = { ...filters };
+            // Map empty strings to undefined
+            Object.keys(params).forEach(key => {
+                if ((params as any)[key] === "") (params as any)[key] = undefined;
+            });
+            if (params.marketCode === 'ALL') params.marketCode = undefined;
+
+            const response = await api.get('/benchmarks', { params });
+            setItems(response.data.items || []);
+            setTotal(response.data.total || 0);
+        } catch (err) {
+            console.error(err);
+        } finally {
+            setLoading(false);
+        }
+    }, [filters]);
+
+    useEffect(() => {
+        fetchBenchmarks();
+    }, [fetchBenchmarks]);
+
+    const handleDownloadCSV = () => {
+        if (items.length === 0) return;
+
+        const headers = ["마켓", "상품ID", "상품명", "가격", "평점", "리뷰", "품질점수", "카테고리경로", "URL"];
+        const rows = items.map(p => [
+            p.marketCode,
+            `"${p.productId}"`,
+            `"${p.name.replace(/"/g, '""')}"`,
+            p.price,
+            p.rating,
+            p.reviewCount,
+            p.qualityScore,
+            `"${(p.categoryPath || '').replace(/"/g, '""')}"`,
+            p.productUrl
+        ]);
+
+        const csvContent = [
+            headers.join(","),
+            ...rows.map(r => r.join(","))
+        ].join("\n");
+
+        // BOM for Excel (UTF-8)
+        const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        link.setAttribute("download", `benchmarks_${new Date().toISOString().split('T')[0]}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
 
     return (
-        <div className={`flex items-center justify-between p-3 rounded-md border ${statusColor} text-sm mb-2`}>
-            <div className="flex items-center gap-2">
-                {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> :
-                    job.status === "succeeded" ? <div className="h-2 w-2 rounded-full bg-green-500" /> :
-                        <AlertCircle className="h-4 w-4" />
-                }
-                <span className="font-medium">{job.marketCode} 수집 ({job.status})</span>
-                {job.progress > 0 && <span className="text-xs opacity-75"> - {job.progress}%</span>}
+        <div className="flex flex-col h-[calc(100vh-140px)] -m-6 box-border overflow-hidden">
+            {/* Header Area */}
+            <div className="flex items-center justify-between px-6 py-4 bg-background border-b z-10 shrink-0">
+                <div>
+                    <h1 className="text-2xl font-black tracking-tight flex items-center gap-2">
+                        <BarChart4 className="h-6 w-6 text-primary" />
+                        BENCHMARKS
+                    </h1>
+                    <p className="text-xs text-muted-foreground font-medium uppercase tracking-widest opacity-70">
+                        Market Intelligence & Product Analysis
+                    </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                    <div className="flex bg-muted p-1 rounded-lg mr-4">
+                        <Button
+                            variant={activeTab === 'products' ? 'secondary' : 'ghost'}
+                            size="sm"
+                            className="h-8 px-4 text-xs font-semibold"
+                            onClick={() => setActiveTab('products')}
+                        >
+                            <BarChart4 className="h-3.5 w-3.5 mr-2" />
+                            상품 분석
+                        </Button>
+                        <Button
+                            variant={activeTab === 'jobs' ? 'secondary' : 'ghost'}
+                            size="sm"
+                            className="h-8 px-4 text-xs font-semibold"
+                            onClick={() => setActiveTab('jobs')}
+                        >
+                            <ClipboardList className="h-3.5 w-3.5 mr-2" />
+                            수집 모니터
+                        </Button>
+                    </div>
+
+                    <Button onClick={() => setIsCollectionOpen(true)} size="sm" className="h-9 px-4 shadow-md hover:shadow-lg transition-all">
+                        <Plus className="mr-2 h-4 w-4" />
+                        신규 수집
+                    </Button>
+                    <Button onClick={fetchBenchmarks} variant="outline" size="sm" className="h-9 w-9 p-0" disabled={loading}>
+                        <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                    </Button>
+                </div>
             </div>
-            <span className="text-xs opacity-75">{new Date(job.createdAt).toLocaleTimeString()}</span>
+
+            {/* Content Area */}
+            <div className="flex flex-1 overflow-hidden">
+                {/* Left Sidebar: Filters or Jobs Info */}
+                <aside className="w-72 border-r bg-muted/10 overflow-y-auto shrink-0 transition-all">
+                    {activeTab === 'products' ? (
+                        <BenchmarkFilters
+                            filters={filters}
+                            setFilters={setFilters}
+                            onSearch={fetchBenchmarks}
+                            isLoading={loading}
+                        />
+                    ) : (
+                        <div className="p-4 space-y-4">
+                            <h3 className="text-sm font-semibold">작업 상태 안내</h3>
+                            <p className="text-xs text-muted-foreground leading-relaxed">
+                                현재 진행 중인 수집 작업의 상태와 진행률을 확인하고, 실패한 작업을 재시도할 수 있습니다.
+                            </p>
+                            <div className="p-3 bg-blue-50 border border-blue-100 rounded-md">
+                                <p className="text-[10px] text-blue-700 font-medium">
+                                    TIP: 신규 수집을 시작하면 이곳에서 실시간 진행 상황이 업데이트됩니다.
+                                </p>
+                            </div>
+                        </div>
+                    )}
+                </aside>
+
+                {/* Main Panel: Results Table or Job History */}
+                <main className="flex-1 flex flex-col min-w-0 bg-background relative overflow-hidden">
+                    {activeTab === 'products' ? (
+                        <>
+                            <div className="flex-1 overflow-y-auto">
+                                <BenchmarkTable
+                                    items={items}
+                                    selectedId={selectedId}
+                                    onSelect={setSelectedId}
+                                    isLoading={loading}
+                                />
+                            </div>
+                            {/* Pagination/Status Area */}
+                            <div className="p-4 border-t bg-muted/5 flex items-center justify-between text-xs text-muted-foreground shrink-0">
+                                <span>총 {total}개의 상품</span>
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-8 text-[11px] font-bold"
+                                    onClick={handleDownloadCSV}
+                                    disabled={items.length === 0}
+                                >
+                                    <Download className="h-3.5 w-3.5 mr-1" />
+                                    CSV 내보내기
+                                </Button>
+                            </div>
+                        </>
+                    ) : (
+                        <div className="p-6 max-w-2xl mx-auto w-full">
+                            <JobMonitor />
+                        </div>
+                    )}
+                </main>
+
+                {/* Right Sidebar: Details (Dynamic) */}
+                {selectedId && activeTab === 'products' && (
+                    <aside className="w-[450px] shrink-0">
+                        <BenchmarkDetail
+                            id={selectedId}
+                            onClose={() => setSelectedId(null)}
+                        />
+                    </aside>
+                )}
+            </div>
+
+            <CollectionDialog
+                isOpen={isCollectionOpen}
+                onClose={() => setIsCollectionOpen(false)}
+                onRefresh={() => {
+                    setActiveTab('jobs'); // Switch to jobs tab to see progress
+                }}
+            />
         </div>
     );
 }
 
+// Inline for brevity in this overhaul, though should ideally be in its own file
 function CollectionDialog({ isOpen, onClose, onRefresh }: { isOpen: boolean, onClose: () => void, onRefresh: () => void }) {
-    const [marketCode, setMarketCode] = useState("COUPANG");
+    const [marketCode, setMarketCode] = useState("ALL");
     const [categoryUrl, setCategoryUrl] = useState("");
-    const [limit, setLimit] = useState(10);
+    const [limit, setLimit] = useState(20);
     const [isLoading, setIsLoading] = useState(false);
 
     const handleSubmit = async () => {
@@ -62,9 +239,8 @@ function CollectionDialog({ isOpen, onClose, onRefresh }: { isOpen: boolean, onC
                 limit: Math.min(Math.max(limit, 1), 50)
             });
             onClose();
-            onRefresh(); // Trigger status refresh
+            onRefresh();
         } catch (err: any) {
-            console.error(err);
             alert("수집 요청 실패: " + (err.response?.data?.detail || err.message));
         } finally {
             setIsLoading(false);
@@ -77,21 +253,22 @@ function CollectionDialog({ isOpen, onClose, onRefresh }: { isOpen: boolean, onC
             onClose={onClose}
             title="벤치마크 신규 수집"
             footer={
-                <>
+                <div className="flex gap-2 justify-end w-full">
                     <Button variant="ghost" onClick={onClose} disabled={isLoading}>취소</Button>
-                    <Button onClick={handleSubmit} disabled={isLoading}>
+                    <Button onClick={handleSubmit} disabled={isLoading} className="bg-primary text-primary-foreground shadow-md">
                         {isLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                         수집 시작
                     </Button>
-                </>
+                </div>
             }
         >
-            <div className="space-y-4">
+            <div className="space-y-5 py-2">
                 <Select
-                    label="마켓 선택"
+                    label="대상 마켓"
                     value={marketCode}
                     onChange={(e) => setMarketCode(e.target.value)}
                     options={[
+                        { value: "ALL", label: "전체 마켓 (ALL)" },
                         { value: "COUPANG", label: "쿠팡 (Coupang)" },
                         { value: "NAVER_SHOPPING", label: "네이버쇼핑 (Naver)" },
                         { value: "GMARKET", label: "G마켓 (Gmarket)" },
@@ -100,244 +277,38 @@ function CollectionDialog({ isOpen, onClose, onRefresh }: { isOpen: boolean, onC
                     ]}
                 />
 
-                <div>
-                    <label className="text-sm font-medium mb-1 block">카테고리 URL (선택)</label>
+                <div className="space-y-1.5">
+                    <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">카테고리 URL (선택)</label>
                     <Input
-                        placeholder="https://www.coupang.com/np/categories/..."
+                        placeholder="마켓별 베스트/카테고리 URL 주소"
                         value={categoryUrl}
                         onChange={(e) => setCategoryUrl(e.target.value)}
                     />
-                    <p className="text-xs text-muted-foreground mt-1">입력하지 않으면 기본 랭킹 페이지를 수집합니다.</p>
+                    <p className="text-[10px] text-muted-foreground/80 bg-muted/50 p-2 rounded border border-dashed leading-relaxed">
+                        마켓 코드 <strong>ALL</strong> 선택 시 카테고리 URL은 무시되며 각 마켓의 전체 베스트 상품이 수집됩니다.
+                    </p>
                 </div>
 
-                <div>
-                    <label className="text-sm font-medium mb-1 block">수집 개수 (최대 50)</label>
-                    <Input
-                        type="number"
-                        min={1}
-                        max={50}
-                        value={limit}
-                        onChange={(e) => setLimit(Number(e.target.value))}
-                    />
+                <div className="space-y-1.5">
+                    <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">마켓별 수집 개수 (최대 50)</label>
+                    <div className="flex items-center gap-4">
+                        <Input
+                            type="number"
+                            min={1}
+                            max={50}
+                            value={limit}
+                            onChange={(e) => setLimit(Number(e.target.value))}
+                            className="w-24"
+                        />
+                        <div className="flex-1 h-2 bg-muted rounded-full relative">
+                            <div
+                                className="absolute inset-y-0 left-0 bg-primary rounded-full transition-all"
+                                style={{ width: `${(limit / 50) * 100}%` }}
+                            />
+                        </div>
+                    </div>
                 </div>
             </div>
         </Modal>
-    );
-}
-
-// --- Main Page ---
-
-export default function BenchmarkPage() {
-    const [benchmarks, setBenchmarks] = useState<BenchmarkProduct[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-
-    // Filters
-    const [searchQuery, setSearchQuery] = useState("");
-    const [marketFilter, setMarketFilter] = useState("ALL");
-    const [sortOrder, setSortOrder] = useState("created");
-
-    // Collection State
-    const [isCollectionOpen, setIsCollectionOpen] = useState(false);
-    const [activeJobs, setActiveJobs] = useState<BenchmarkCollectJob[]>([]);
-
-    const fetchBenchmarks = useCallback(async () => {
-        setLoading(true);
-        setError(null);
-        try {
-            const params: any = {
-                limit: 50,
-                orderBy: sortOrder
-            };
-            if (searchQuery) params.q = searchQuery;
-            if (marketFilter && marketFilter !== 'ALL') params.marketCode = marketFilter;
-
-            const response = await api.get('/benchmarks', { params });
-            setBenchmarks(response.data);
-        } catch (err: any) {
-            console.error(err);
-            setError("벤치마크 데이터를 불러오는데 실패했습니다.");
-        } finally {
-            setLoading(false);
-        }
-    }, [searchQuery, marketFilter, sortOrder]);
-
-    const fetchJobs = async () => {
-        try {
-            const response = await api.get('/benchmarks/jobs', { params: { limit: 5 } });
-            setActiveJobs(response.data);
-        } catch (err) {
-            console.error("Failed to fetch jobs", err);
-        }
-    };
-
-    // Initial Load & Job Polling
-    useEffect(() => {
-        fetchBenchmarks();
-        fetchJobs();
-        const interval = setInterval(fetchJobs, 5000); // Poll jobs every 5s
-        return () => clearInterval(interval);
-    }, [fetchBenchmarks]);
-
-    return (
-        <div className="space-y-6">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div>
-                    <h1 className="text-3xl font-bold tracking-tight">벤치마크 상품</h1>
-                    <p className="text-muted-foreground mt-2">
-                        경쟁사/시장 벤치마크 상품을 수집하고 분석합니다.
-                    </p>
-                </div>
-                <div className="flex gap-2">
-                    <Button onClick={() => setIsCollectionOpen(true)}>
-                        <Plus className="mr-2 h-4 w-4" />
-                        신규 수집
-                    </Button>
-                    <Button onClick={fetchBenchmarks} variant="outline" disabled={loading}>
-                        <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-                    </Button>
-                </div>
-            </div>
-
-            {/* Job Status Section */}
-            {activeJobs.length > 0 && activeJobs.some(j => j.status === 'running' || j.status === 'queued') && (
-                <div className="bg-muted/30 p-4 rounded-lg border">
-                    <h3 className="text-sm font-semibold mb-3 flex items-center">
-                        <Loader2 className="h-3 w-3 mr-2 animate-spin" />
-                        진행 중인 수집 작업
-                    </h3>
-                    {activeJobs.filter(j => j.status === 'running' || j.status === 'queued').map(job => (
-                        <JobStatusCard key={job.id} job={job} />
-                    ))}
-                </div>
-            )}
-
-            {/* Filter Bar */}
-            <div className="flex flex-col md:flex-row gap-4 bg-background p-4 rounded-lg border shadow-sm items-end">
-                <div className="w-full md:w-1/3">
-                    <label className="text-sm font-medium mb-1 block">검색</label>
-                    <div className="relative">
-                        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                        <Input
-                            className="pl-9"
-                            placeholder="상품명 검색..."
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && fetchBenchmarks()}
-                        />
-                    </div>
-                </div>
-                <div className="w-full md:w-1/4">
-                    <Select
-                        label="마켓"
-                        options={[
-                            { value: "ALL", label: "전체" },
-                            { value: "COUPANG", label: "쿠팡" },
-                            { value: "NAVER_SHOPPING", label: "네이버쇼핑" },
-                            { value: "GMARKET", label: "G마켓" },
-                            { value: "AUCTION", label: "옥션" },
-                            { value: "ELEVENST", label: "11번가" },
-                        ]}
-                        value={marketFilter}
-                        onChange={(e) => setMarketFilter(e.target.value)}
-                    />
-                </div>
-                <div className="w-full md:w-1/4">
-                    <Select
-                        label="정렬"
-                        options={[
-                            { value: "created", label: "최신순" },
-                            { value: "updated", label: "업데이트순" },
-                        ]}
-                        value={sortOrder}
-                        onChange={(e) => setSortOrder(e.target.value)}
-                    />
-                </div>
-                <Button variant="secondary" onClick={fetchBenchmarks} className="w-full md:w-auto">
-                    조회
-                </Button>
-            </div>
-
-            {error && (
-                <div className="bg-destructive/15 text-destructive p-4 rounded-md flex items-center">
-                    <AlertCircle className="h-4 w-4 mr-2" />
-                    {error}
-                </div>
-            )}
-
-            {loading && benchmarks.length === 0 ? (
-                <div className="flex justify-center items-center h-64">
-                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                </div>
-            ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                    {benchmarks.map((item) => (
-                        <Card key={item.id} className="overflow-hidden hover:shadow-lg transition-transform hover:-translate-y-1 duration-200 group">
-                            <div className="aspect-square relative bg-muted/20 overflow-hidden">
-                                {item.imageUrls && item.imageUrls.length > 0 ? (
-                                    <img
-                                        src={item.imageUrls[0]}
-                                        alt={item.name}
-                                        className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                                        loading="lazy"
-                                    />
-                                ) : (
-                                    <div className="flex items-center justify-center h-full text-muted-foreground">
-                                        No Image
-                                    </div>
-                                )}
-                                <div className="absolute top-2 right-2">
-                                    <Badge variant="secondary" className="bg-black/50 text-white backdrop-blur-sm border-0">
-                                        {item.marketCode}
-                                    </Badge>
-                                </div>
-                            </div>
-                            <CardHeader className="p-4 pb-2">
-                                <CardTitle className="text-base line-clamp-2 min-h-[3rem]" title={item.name}>
-                                    {item.name}
-                                </CardTitle>
-                            </CardHeader>
-                            <CardContent className="p-4 pt-0 space-y-2">
-                                <div className="font-bold text-lg text-primary">
-                                    {item.price.toLocaleString()}원
-                                </div>
-                                <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                                    <span className={`px-1.5 py-0.5 rounded ${item.detailHtmlLen > 0 ? "bg-green-100 text-green-700" : "bg-gray-100"}`}>
-                                        {item.detailHtmlLen > 0 ? '상세보유' : '상세없음'}
-                                    </span>
-                                </div>
-                            </CardContent>
-                            <CardFooter className="p-4 pt-0 bg-muted/5 mt-auto">
-                                <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="w-full text-muted-foreground hover:text-primary"
-                                    onClick={() => window.open(item.productUrl, '_blank')}
-                                >
-                                    <ExternalLink className="h-4 w-4 mr-2" />
-                                    상품 원문 보기
-                                </Button>
-                            </CardFooter>
-                        </Card>
-                    ))}
-                    {!loading && benchmarks.length === 0 && (
-                        <div className="col-span-full flex flex-col items-center justify-center py-16 text-muted-foreground bg-muted/10 rounded-lg border border-dashed">
-                            <Search className="h-10 w-10 mb-4 opacity-20" />
-                            <p className="text-lg font-medium">수집된 벤치마크 상품이 없습니다.</p>
-                            <p className="text-sm mt-1">상단의 '신규 수집' 버튼을 눌러 데이터를 수집해보세요.</p>
-                        </div>
-                    )}
-                </div>
-            )}
-
-            <CollectionDialog
-                isOpen={isCollectionOpen}
-                onClose={() => setIsCollectionOpen(false)}
-                onRefresh={() => {
-                    fetchJobs();
-                    // Optional: fetchBenchmarks() after a delay or let the user refresh manually
-                }}
-            />
-        </div>
     );
 }

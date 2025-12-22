@@ -54,6 +54,9 @@ class BenchmarkCollectJob(MarketBase):
     markets: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     limit: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
     progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    category_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    processed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failed_markets: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     params: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
@@ -245,9 +248,9 @@ class MarketListing(MarketBase):
     market_account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_accounts.id"), nullable=False)
     market_item_id: Mapped[str] = mapped_column(Text, nullable=False)  # e.g. sellerProductId
     status: Mapped[str] = mapped_column(Text, nullable=False, default="ACTIVE")
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     coupang_status: Mapped[str | None] = mapped_column(Text, nullable=True)
     rejection_reason: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class SupplierOrder(MarketBase):
@@ -278,6 +281,18 @@ class Order(MarketBase):
     
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class OrderStatusHistory(MarketBase):
+    __tablename__ = "order_status_history"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    order_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("orders.id"), nullable=False)
+    from_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    to_status: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class BenchmarkProduct(MarketBase):
@@ -312,16 +327,14 @@ class SourcingCandidate(DropshipBase):
     These are transient candidates before being promoted to real 'Products'.
     """
     __tablename__ = "sourcing_candidates"
-    __table_args__ = (
-        UniqueConstraint("supplier_code", "supplier_item_id", name="uq_sourcing_candidates_supplier_item"),
-    )
- 
+
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     supplier_code: Mapped[str] = mapped_column(Text, nullable=False)
     supplier_item_id: Mapped[str] = mapped_column(Text, nullable=False)
     
     name: Mapped[str] = mapped_column(Text, nullable=False)
     supply_price: Mapped[int] = mapped_column(Integer, nullable=False)
+    thumbnail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     
     # Sourcing Analysis Data
     source_strategy: Mapped[str] = mapped_column(Text, nullable=False) # e.g. "KEYWORD", "BENCHMARK_GAP", "SPEC_MATCH"
@@ -335,7 +348,6 @@ class SourcingCandidate(DropshipBase):
     spec_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True) # Extracted specs
     seo_keywords: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True) # High value keywords
     target_event: Mapped[str | None] = mapped_column(Text, nullable=True) # e.g. "Christmas"
-    thumbnail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
     
@@ -351,4 +363,3 @@ class APIKey(DropshipBase):
     key: Mapped[str] = mapped_column(Text, nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-

@@ -1,0 +1,195 @@
+Fetching product 15934785975...
+Successfully fetched product from Coupang:
+{
+  "code": "SUCCESS",
+  "message": "",
+  "data": {
+    "trackingId": null,
+    "sellerProductId": 15934785975,
+    "sellerProductName": "로얄 무지상장용지 P2 160g 100매 20권",
+    "displayCategoryCode": 80064,
+    "categoryId": 6968,
+    "productId": 9246494742,
+    "vendorId": "A01022209",
+    "mdId": "NLUP",
+    "mdName": "dummy",
+    "saleStartedAt": "2025-12-22T13:46:37",
+    "saleEndedAt": "2099-12-31T00:00:00",
+    "displayProductName": "로얄 무지상장용지 P2 160g 100매 20권",
+    "brand": "기타",
+    "generalProductName": "",
+    "productGroup": "",
+    "statusName": "승인완료",
+    "deliveryMethod": "SEQUENCIAL",
+    "deliveryCompanyCode": "CJGLS",
+    "deliveryChargeType": "FREE",
+    "deliveryCharge": 0,
+    "freeShipOverAmount": 0,
+    "deliveryChargeOnReturn": 5000,
+    "deliverySurcharge": 0,
+    "remoteAreaDeliverable": "Y",
+    "bundlePackingDelivery": 0,
+    "unionDeliveryType": "NOT_UNION_DELIVERY",
+    "returnCenterCode": "1001670198",
+    "returnChargeName": "송내 반품",
+    "companyContactNumber": "070-4581-8906",
+    "returnZipCode": "14598",
+    "returnAddress": "경기도 부천시 원미구 부일로199번길 21",
+    "returnAddressDetail": "401 슈가맨워크",
+    "returnCharge": 5000,
+    "exchangeType": "AFTER",
+    "afterServiceInformation": "",
+    "afterServiceContactNumber": "",
+    "outboundShippingPlaceCode": 17903308,
+    "contributorType": "API_SELLER",
+    "vendorUserId": "0250605r",
+    "requested": false,
+    "items": [
+      {
+        "offerCondition": "NEW",
+        "offerDescription": "",
+        "sellerProductItemId": 36714978505,
+        "vendorItemId": 94362453772,
+        "itemId": 27346215993,
+        "itemName": "단일상품",
+        "originalPrice": 233100,
+        "salePrice": 202020,
+        "supplyPrice": 0,
+        "maximumBuyCount": 9999,
+        "maximumBuyForPerson": 0,
+        "outboundShippingTimeDay": 3,
+        "maximumBuyForPersonPeriod": 1,
+        "unitCount": 1,
+        "adultOnly": "EVERYONE",
+        "freePriceType": null,
+        "taxType": "TAX",
+        "parallelImported": "NOT_PARALLEL_IMPORTED",
+        "overseasPurchased": "NOT_OVERSEAS_PURCHASED",
+        "externalVendorSku": "WFLBCWM",
+        "pccNeeded": false,
+        "bestPriceGuaranteed3P": false,
+        "emptyBarcode": true,
+        "emptyBarcodeReason": "NONE",
+        "barcode": "",
+        "saleAgentCommission": 0.0,
+        "modelNo": "WFLBCWM",
+        "images": [
+          {
+            "imageOrder": 0,
+            "imageType": "REPRESENTATION",
+            "cdnPath": "vendor_inventory/8802/54166536944d3c47b9ec9ed520a40704ced89f8b8484e60d63bbdad7e4f3.jpg",
+            "vendorPath": "v1.jpg"
+          }
+        ],
+        "notices": [
+          {
+            "noticeCategoryName": "기타 재화",
+            "noticeCategoryDetailName": "품명 및 모델명",
+            "content": "상세페이지 참조"
+          },
+          {
+            "noticeCategoryName": "기타 재화",
+            "noticeCategoryDetailName": "인증/허가 사항",
+            "content": "상세페이지 참조"
+          },
+          {
+            "noticeCategoryName": "기타 재화",
+            "noticeCategoryDetailName": "제조국(원산지)",
+            "content": "상세페이지 참조"
+          },
+          {
+            "noticeCategoryName": "기타 재화",
+            "noticeCategoryDetailName": "제조자(수입자)",
+            "content": "상세페이지 참조"
+          },
+          {
+            "noticeCategoryName": "기타 재화",
+            "noticeCategoryDetailName": "소비자상담 관련 전화번호",
+            "content": "상세페이지 참조"
+          }
+        ],
+        "attributes": [
+          {
+            "attributeTypeName": "항목 길이가 더 긴 가장자리",
+            "attributeValueName": "",
+            "exposed": "NONE",
+            "editable": true,
+            "oriClearAttribute": null
+          },
+          {
+            "attributeTypeName": "종이/파일 사이즈",
+            "attributeValueName": "",
+            "exposed": "NONE",
+            "editable": true,
+            "oriClearAttribute": null
+          },
+          {
+            "attributeTypeName": "수량",
+            "attributeValueName": "1",
+            "exposed": "EXPOSED",
+            "editable": true,
+            "oriClearAttribute": null
+          },
+          {
+            "attributeTypeName": "개당 용량",
+            "attributeValueName": "1",
+            "exposed": "EXPOSED",
+            "editable": true,
+            "oriClearAttribute": null
+          },
+          {
+            "attributeTypeName": "개당 중량",
+            "attributeValueName": "1",
+            "exposed": "EXPOSED",
+            "editable": true,
+            "oriClearAttribute": null
+          },
+          {
+            "attributeTypeName": "평량",
+            "attributeValueName": "",
+            "exposed": "NONE",
+            "editable": true,
+            "oriClearAttribute": null
+          },
+          {
+            "attributeTypeName": "항목 너비가 짧은 가장자리",
+            "attributeValueName": "",
+            "exposed": "NONE",
+            "editable": true,
+            "oriClearAttribute": null
+          },
+          {
+            "attributeTypeName": "사용프린터",
+            "attributeValueName": "",
+            "exposed": "NONE",
+            "editable": true,
+            "oriClearAttribute": null
+          }
+        ],
+        "contents": [
+          {
+            "contentsType": "HTML",
+            "contentDetails": [
+              {
+                "content": "<center></center> <center> <p><img src=\"http://image1.coupangcdn.com/image/vendor_inventory/2b73/0c2dcaa4b09b95caf934dfd7633fd230a9da1f05b09a588cba16218a83c9.jpg\"></p> <br> </center> <center> <img src=\"http://image1.coupangcdn.com/image/vendor_inventory/3325/54b3a3d962d72117966389fd45d114d79fc5fc0491b4f3f94a26d00ea7a6.jpg\"> </center> <br> <p align=\"center\" style=\"font-size: 12px; color: #777777; display: block; margin: 20px 0;\">본 제품을 구매하시면 원활한 배송을 위해 꼭 필요한 고객님의 개인정보를 (성함, 주소, 전화번호 등) 택배사 및 제 3업체에서 이용하는 것에 동의하시는 것으로 간주됩니다.<br> 개인정보는 배송 외의 용도로는 절대 사용되지 않으니 안심하시기 바랍니다. 안전하게 배송해 드리겠습니다.</p>",
+                "detailType": "TEXT"
+              }
+            ]
+          }
+        ],
+        "certifications": [],
+        "extraProperties": null,
+        "searchTags": [],
+        "isAutoGenerated": false
+      }
+    ],
+    "requiredDocuments": [],
+    "extraInfoMessage": "",
+    "manufacture": "기타",
+    "productOrigin": "",
+    "roleCode": 2,
+    "status": "APPROVED",
+    "multiShippingInfos": null,
+    "multiReturnInfos": null
+  }
+}

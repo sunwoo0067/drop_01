@@ -6,6 +6,9 @@ from typing import Any
 
 import httpx
 import time
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -267,7 +270,12 @@ class OwnerClanClient:
         page: int = 1,
         limit: int = 20,
     ) -> tuple[int, dict[str, Any]]:
-        """3.2 복수 상품 정보 조회"""
+        """
+        3.2 복수 상품 정보 조회
+        
+        REST API를 먼저 시도하고, 404 발생 시 GraphQL로 대체합니다.
+        """
+        # 1. Try REST API first
         params: dict[str, Any] = {"page": page, "limit": limit}
         if category:
             params["category"] = category
@@ -276,7 +284,113 @@ class OwnerClanClient:
         if keyword:
             params["keyword"] = keyword
 
-        return self.get("/v1/items", params=params)
+        rest_status, rest_data = self.get("/v1/items", params=params)
+        logger.info(f"OwnerClan REST API Status: {rest_status} (keyword={keyword})")
+        
+        # If REST API works, return directly
+        if rest_status == 200:
+            return rest_status, rest_data
+        
+        # 2. Fallback to GraphQL
+        return self._get_products_via_graphql(
+            search=keyword,
+            category=category,
+            status=status,
+            page=page,
+            limit=limit,
+        )
+
+    def _get_products_via_graphql(
+        self,
+        search: str | None = None,
+        category: str | None = None,
+        status: str | None = None,
+        page: int = 1,
+        limit: int = 20,
+    ) -> tuple[int, dict[str, Any]]:
+        """GraphQL을 통한 상품 검색 (REST API 대체용)"""
+        safe_page = max(1, int(page))
+        safe_limit = max(1, int(limit))
+        fetch_limit = safe_limit * safe_page
+
+        query = """
+        query ($first: Int!, $search: String, $category: String) {
+          allItems(first: $first, search: $search, category: $category) {
+            edges {
+              node {
+                key
+                id
+                name
+                model
+                price
+                fixedPrice
+                images
+                status
+                content
+                category {
+                  id
+                  name
+                }
+              }
+            }
+            pageInfo {
+              hasNextPage
+            }
+          }
+        }
+        """
+
+        variables = {
+            "first": fetch_limit,
+            "search": search,
+            "category": category,
+        }
+
+        gql_status, gql_data = self.graphql(query, variables=variables)
+        
+        if gql_status != 200:
+            return gql_status, gql_data
+        
+        # Convert GraphQL response to REST-compatible format
+        data_part = gql_data.get("data")
+        if not data_part:
+            logger.warning("GraphQL response contains no data (or errors): %s", gql_data)
+            return 200, {"items": [], "_source": "graphql", "_raw": gql_data}
+            
+        all_items = data_part.get("allItems")
+        if not all_items:
+            logger.warning("GraphQL response data has no allItems: %s", gql_data)
+            return 200, {"items": [], "_source": "graphql", "_raw": gql_data}
+
+        edges = all_items.get("edges", [])
+        items = []
+        for edge in edges:
+            node = edge.get("node", {})
+            items.append({
+                "item_code": node.get("key"),
+                "item_id": node.get("id"),
+                "name": node.get("name"),
+                "item_name": node.get("name"),  # alias for compatibility
+                "model": node.get("model"),
+                "price": node.get("fixedPrice"),
+                "fixedPrice": node.get("fixedPrice"),
+                "supply_price": node.get("price"),
+                "selling_price": node.get("fixedPrice"),
+                "images": node.get("images") or [],
+                "status": node.get("status"),
+                "content": node.get("content"),
+                "category": node.get("category", {}).get("name") if node.get("category") else None,
+            })
+
+        if status:
+            items = [item for item in items if item.get("status") == status]
+
+        if safe_page > 1 or fetch_limit != safe_limit:
+            start_idx = (safe_page - 1) * safe_limit
+            end_idx = start_idx + safe_limit
+            items = items[start_idx:end_idx]
+
+        return 200, {"items": items, "_source": "graphql"}
 
     def get_product_history(
         self,
