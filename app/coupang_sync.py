@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 
 def _preserve_detail_html() -> bool:
-    return True
+    return False
 
 
 def _name_only_processing() -> bool:
@@ -1220,7 +1220,8 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
                                 if html_has_images:
                                     it["contents"] = preserved
                                 else:
-                                    it["contents"] = new_image_blocks + preserved
+                                    # 원본 HTML/TEXT를 먼저 보여주고, 그 뒤에 보강된 이미지 블록을 배치 (레이아웃 상단 우선)
+                                    it["contents"] = preserved + new_image_blocks
 
                         update_payload = data_obj2
                         update_payload["sellerProductId"] = data_obj2.get("sellerProductId") or int(seller_product_id)

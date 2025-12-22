@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
+import anyio
 from pydantic import BaseModel, Field
 from typing import List
 from datetime import datetime, timezone
@@ -214,15 +215,12 @@ async def _execute_post_promote_actions(product_id: uuid.UUID, auto_register_cou
             bg_session.commit()
 
 
-def _execute_post_promote_actions_bg(product_id: uuid.UUID, auto_register_coupang: bool, min_images_required: int) -> None:
-    import asyncio
-
-    asyncio.run(
-        _execute_post_promote_actions(
-            product_id,
-            bool(auto_register_coupang),
-            int(min_images_required),
-        )
+async def _execute_post_promote_actions_bg(product_id: uuid.UUID, auto_register_coupang: bool, min_images_required: int) -> None:
+    # 이미 비동기 함수인 _execute_post_promote_actions를 직접 호출하거나 태스크로 추가 가능
+    await _execute_post_promote_actions(
+        product_id,
+        bool(auto_register_coupang),
+        int(min_images_required),
     )
 
 @router.get("/candidates")
@@ -308,9 +306,12 @@ async def trigger_keyword_sourcing(
     Triggers sourcing based on a list of keywords.
     Runs in a dedicated background thread to minimize operational risk.
     """
-    background_tasks.add_task(_execute_global_keyword_sourcing, payload.keywords, float(payload.min_margin))
+    background_tasks.add_task(_execute_global_keyword_sourcing_bg, payload.keywords, float(payload.min_margin))
     
     return {"status": "accepted", "message": f"Global keyword sourcing started for {len(payload.keywords)} keywords"}
+
+async def _execute_global_keyword_sourcing_bg(keywords: list[str], min_margin: float) -> None:
+    await anyio.to_thread.run_sync(_execute_global_keyword_sourcing, keywords, min_margin)
 
 def _execute_global_keyword_sourcing(keywords: list[str], min_margin: float) -> None:
     import asyncio
@@ -321,7 +322,7 @@ def _execute_global_keyword_sourcing(keywords: list[str], min_margin: float) -> 
     try:
         with session_factory() as session:
             service = SourcingService(session)
-            asyncio.run(service.execute_keyword_sourcing(keywords, float(min_margin)))
+            anyio.run(service.execute_keyword_sourcing, keywords, float(min_margin))
     except Exception as e:
         error_trace = traceback.format_exc()
         logger.error(f"Error in global keyword sourcing:\n{error_trace}")
@@ -408,10 +409,8 @@ async def trigger_benchmark_sourcing(
     }
 
 
-def _execute_benchmark_sourcing_bg(benchmark_id: uuid.UUID, job_id: uuid.UUID) -> None:
-    import asyncio
-
-    asyncio.run(_execute_benchmark_sourcing(benchmark_id, job_id))
+async def _execute_benchmark_sourcing_bg(benchmark_id: uuid.UUID, job_id: uuid.UUID) -> None:
+    await _execute_benchmark_sourcing(benchmark_id, job_id)
 
 
 @router.patch("/candidates/{candidate_id}")
