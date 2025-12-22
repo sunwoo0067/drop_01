@@ -362,7 +362,7 @@ def augment_product_images_best_effort(session: Session, product: Product, raw: 
 async def ensure_product_ready_for_coupang(
     session: Session,
     product_id: str,
-    min_images_required: int = 5,
+    min_images_required: int = 1,
     force_fetch_ownerclan: bool = True,
     augment_images: bool = True,
 ) -> dict:

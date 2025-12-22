@@ -17,6 +17,9 @@ class ProcessingAgent:
         self.ai_service = AIService()
         self.workflow = self._create_workflow()
 
+    def _name_only_processing(self) -> bool:
+        return True
+
     def _create_workflow(self):
         workflow = StateGraph(AgentState)
 
@@ -27,8 +30,11 @@ class ProcessingAgent:
 
         workflow.set_entry_point("extract_details")
         workflow.add_edge("extract_details", "optimize_seo")
-        workflow.add_edge("optimize_seo", "process_images")
-        workflow.add_edge("process_images", "save_product")
+        if self._name_only_processing():
+            workflow.add_edge("optimize_seo", "save_product")
+        else:
+            workflow.add_edge("optimize_seo", "process_images")
+            workflow.add_edge("process_images", "save_product")
         workflow.add_edge("save_product", END)
 
         return workflow.compile()
@@ -84,6 +90,11 @@ class ProcessingAgent:
 
     def process_images(self, state: AgentState) -> Dict[str, Any]:
         logger.info("[Agent] Processing images...")
+        if self._name_only_processing():
+            return {
+                "final_output": state.get("final_output") or {},
+                "logs": ["Skipped image processing (PROCESS_NAME_ONLY=1)"],
+            }
         input_data = state.get("input_data", {})
         product_id = state.get("target_id")
         raw_images = input_data.get("images", [])

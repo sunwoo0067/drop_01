@@ -14,153 +14,91 @@ from app.services.name_processing import apply_market_name_rules
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-async def register_real_10_final_db_fix():
+from app.coupang_sync import register_product
+
+async def register_real_10_refactored():
     load_dotenv()
     
-    market_engine = create_engine("postgresql+psycopg://sunwoo@/drop01_market?host=/var/run/postgresql&port=5434")
-    MarketSession = sessionmaker(bind=market_engine)
+    # 통합 데이터베이스 drop01 사용
+    db_url = "postgresql+psycopg://sunwoo@/drop01?host=/var/run/postgresql&port=5434"
+    engine = create_engine(db_url)
+    SessionLocal = sessionmaker(bind=engine)
     
     import psycopg
-    source_conn = psycopg.connect("postgresql://sunwoo@/drop01_source?host=/var/run/postgresql&port=5434")
+    source_conn = psycopg.connect("postgresql://sunwoo@/drop01?host=/var/run/postgresql&port=5434")
     raw_products = []
     with source_conn.cursor() as cur:
-        # 배송 지옥 탈출 성공 후, 새로운 10개 상품 시도 (OFFSET 520)
-        cur.execute("SELECT supplier_code, item_code, raw FROM supplier_item_raw WHERE supplier_code = 'ownerclan' OFFSET 520 LIMIT 10;")
+        # 새로운 10개 상품 시도 (OFFSET 600)
+        cur.execute("SELECT id, supplier_code, item_code, raw FROM supplier_item_raw WHERE supplier_code = 'ownerclan' OFFSET 610 LIMIT 10;")
         rows = cur.fetchall()
         for r in rows:
-            raw_products.append({"supplier": r[0], "item_code": r[1], "raw": r[2]})
+            raw_products.append({"raw_id": r[0], "supplier": r[1], "item_code": r[2], "raw": r[3]})
     source_conn.close()
 
     if not raw_products:
         print("No raw products found.")
         return
 
-    mk_session = MarketSession()
+    session = SessionLocal()
     try:
-        account = mk_session.query(MarketAccount).filter(MarketAccount.market_code == "COUPANG").first()
-        creds = account.credentials
+        account = session.query(MarketAccount).filter(MarketAccount.market_code == "COUPANG").first()
+        if not account:
+            print("Coupang account not found.")
+            return
         account_id = account.id
-    finally:
-        mk_session.close()
-
-    client = CoupangClient(creds['access_key'], creds['secret_key'], creds['vendor_id'])
-    
-    outbound_code = 17903308
-    return_code = 1001670198
-    
-    registered_count = 0
-    for item in raw_products:
-        raw = item['raw']
-        item_code = item['item_code']
-        print(f"Processing: {raw.get('name')} ({item_code})")
         
-        try:
-            processed_name = apply_market_name_rules(raw.get('name'))
+        registered_count = 0
+        for item in raw_products:
+            raw = item['raw']
+            item_code = item['item_code']
+            raw_id = item['raw_id']
+            print(f"Processing: {raw.get('name')} ({item_code})")
+            
+            # 1. Product 레코드 확보 또는 생성
+            # Logically we should have a product ID, but here we create/update one
+            product = session.query(Product).filter(Product.supplier_item_id == raw_id).first()
+            if not product:
+                product = Product(
+                    id=uuid.uuid4(),
+                    supplier_item_id=raw_id,
+                    name=raw.get('name'),
+                    brand=raw.get('brand', '기타'),
+                    description=raw.get('content') or raw.get('description'),
+                    cost_price=int(raw.get('price', 0)),
+                    selling_price=(int(raw.get('price', 0) * 1.3)),
+                    status="ACTIVE",
+                    processing_status="COMPLETED"
+                )
+                session.add(product)
+            
+            # 정보 보강 (테스트 목적이므로 강제 업데이트)
+            product.processed_name = apply_market_name_rules(raw.get('name'))
             main_image_url = raw.get('images', [""])[0]
             if main_image_url.startswith("http://"):
                 main_image_url = main_image_url.replace("http://", "https://")
             
-            category_code = int(raw.get('metadata', {}).get('coupangCategoryCode', 78786))
+            product.processed_image_urls = [main_image_url]
+            product.description = raw.get('content', "상세이미지 참조")
             
-            notices = [
-                {"noticeCategoryName": "기타 재화", "noticeCategoryDetailName": "품명 및 모델명", "content": "상세페이지 참조"},
-                {"noticeCategoryName": "기타 재화", "noticeCategoryDetailName": "인증/허가 사항", "content": "상세페이지 참조"},
-                {"noticeCategoryName": "기타 재화", "noticeCategoryDetailName": "제조국(원산지)", "content": "상세페이지 참조"},
-                {"noticeCategoryName": "기타 재화", "noticeCategoryDetailName": "제조자(수입자)", "content": "상세페이지 참조"},
-                {"noticeCategoryName": "기타 재화", "noticeCategoryDetailName": "소비자상담 관련 전화번호", "content": "상세페이지 참조"}
-            ]
-
-            payload = {
-                "displayCategoryCode": category_code,
-                "sellerProductName": processed_name,
-                "vendorId": creds['vendor_id'],
-                "saleStartedAt": "2024-12-25T00:00:00",
-                "saleEndedAt": "2099-12-31T23:59:59",
-                "displayProductName": processed_name,
-                "brand": "기타",
-                "manufacture": "기타",
-                "deliveryMethod": "SEQUENCIAL", 
-                "deliveryCompanyCode": "CJGLS",
-                "deliveryChargeType": "FREE",
-                "deliveryCharge": 0,
-                "freeShipOverAmount": 0,
-                "deliveryChargeOnReturn": 5000,
-                "remoteAreaDeliverable": "Y",
-                "bundlePackingDelivery": 0,
-                "unionDeliveryType": "NOT_UNION_DELIVERY",
-                "returnCenterCode": str(return_code),
-                "outboundShippingPlaceCode": outbound_code,
-                "returnZipCode": "14598",
-                "returnAddress": "경기도 부천시 원미구 부일로199번길 21",
-                "returnAddressDetail": "401 슈가맨워크",
-                "companyContactNumber": "070-4581-8906",
-                "returnChargeName": "송내 반품",
-                "returnCharge": 5000,
-                "vendorUserId": creds.get("vendor_user_id"),
-                "requested": True,
-                "items": [{
-                    "itemName": "단일상품",
-                    "originalPrice": (int(raw.get('price', 10000) * 1.5) // 10) * 10,
-                    "salePrice": (int(raw.get('price', 10000) * 1.3) // 10) * 10,
-                    "maximumBuyCount": 9999,
-                    "maximumBuyForPerson": 0,
-                    "maximumBuyForPersonPeriod": 1,
-                    "outboundShippingTimeDay": 3,
-                    "unitCount": 1,
-                    "adultOnly": "EVERYONE",
-                    "taxType": "TAX",
-                    "parallelImported": "NOT_PARALLEL_IMPORTED",
-                    "overseasPurchased": "NOT_OVERSEAS_PURCHASED",
-                    "externalVendorSku": item_code,
-                    "emptyBarcode": True,
-                    "emptyBarcodeReason": "NONE",
-                    "modelNo": item_code,
-                    "remoteAreaDeliverable": "Y",
-                    "images": [{"imageOrder": 0, "imageType": "REPRESENTATION", "vendorPath": main_image_url}],
-                    "contents": [{
-                        "contentsType": "HTML",
-                        "contentDetails": [{"content": raw.get('content', "상세이미지 참조"), "detailType": "TEXT"}]
-                    }],
-                    "attributes": [
-                        {"attributeTypeName": "개당 용량", "attributeValueName": "1"},
-                        {"attributeTypeName": "개당 중량", "attributeValueName": "1"},
-                        {"attributeTypeName": "수량", "attributeValueName": "1"}
-                    ],
-                    "notices": notices,
-                    "certifications": []
-                }]
-            }
-
-            code, data = client.create_product(payload)
-            if code in [200, 201] and data.get("code") == "SUCCESS":
-                seller_product_id = str(data.get("data") or data.get("sellerProductId"))
-                print(f"Successfully registered: {seller_product_id}")
-                
-                # DB 업데이트 (MarketListing 필드 교정)
-                mk_session = MarketSession()
-                try:
-                    new_listing = MarketListing(
-                        product_id=uuid.uuid4(), # 임시 UUID (연결된 Product가 없으므로)
-                        market_account_id=account_id,
-                        market_item_id=seller_product_id,
-                        status="ACTIVE",
-                        coupang_status="APPROVED"
-                    )
-                    mk_session.add(new_listing)
-                    mk_session.commit()
-                except Exception as db_e:
-                    print(f"DB update failed for {item_code}: {db_e}")
-                finally:
-                    mk_session.close()
-                
+            session.commit()
+            
+            # 2. 중앙화된 register_product 호출
+            success, error = register_product(session, account_id, product.id)
+            
+            if success:
+                print(f"Successfully registered via service: {item_code}")
                 registered_count += 1
             else:
-                print(f"Failed product {item_code}: {data.get('message')}")
+                print(f"Failed to register {item_code}: {error}")
                 
-        except Exception as e:
-            print(f"Exception for {item_code}: {e}")
-
-    print(f"Final total registered: {registered_count}")
+        print(f"Final total registered: {registered_count}")
+        
+    except Exception as e:
+        print(f"Global Error: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        session.close()
 
 if __name__ == "__main__":
-    asyncio.run(register_real_10_final_db_fix())
+    asyncio.run(register_real_10_refactored())

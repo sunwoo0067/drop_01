@@ -38,6 +38,7 @@ const menuGroups = [
             { name: "상품 가공", href: "/processing", icon: Wand2 },
             { name: "상품 등록", href: "/registration", icon: Upload },
             { name: "마켓 상품", href: "/market-products", icon: Store },
+            { name: "주문 동기화", href: "/order-sync", icon: ShoppingBag },
             { name: "상품 소싱", href: "/sourcing", icon: Search },
             { name: "벤치마크", href: "/benchmarks", icon: BarChart3 },
         ]

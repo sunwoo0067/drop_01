@@ -12,6 +12,27 @@ export interface Product {
     market_listings?: MarketListing[];
 }
 
+export interface MarketProduct {
+    id: string;
+    productId?: string | null;
+    marketAccountId: string;
+    marketItemId: string;
+    status: string;
+    coupangStatus?: string | null;
+    rejectionReason?: {
+        statusName?: string;
+        reason?: string;
+        approvalDate?: string;
+        [key: string]: any;
+    } | null;
+    linkedAt?: string | null;
+    name?: string | null;
+    processedName?: string | null;
+    sellingPrice?: number;
+    processedImageUrls?: string[] | null;
+    productStatus?: string | null;
+}
+
 export interface SourcingCandidate {
     id: string;
     supplierCode: string;
@@ -34,7 +55,7 @@ export interface SourcingCandidate {
 
 export interface MarketListing {
     id: string;
-    product_id: string;
+    market_account_id: string;
     market_item_id: string;
     status: string;
     coupang_status?: string | null;

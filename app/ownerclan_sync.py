@@ -23,6 +23,7 @@ from app.models import (
 )
 from app.ownerclan_client import OwnerClanClient
 from app.settings import settings
+from app.services.detail_html_normalizer import normalize_ownerclan_html
 
 
 logger = logging.getLogger(__name__)
@@ -1034,6 +1035,13 @@ query {{
             item_code = node.get("itemCode") or node.get("item_code") or node.get("key")
             if not item_code:
                 continue
+            detail_html = node.get("detail_html") or node.get("detailHtml")
+            if isinstance(detail_html, str) and detail_html.strip():
+                node = {**node, "detail_html": normalize_ownerclan_html(detail_html)}
+            else:
+                content = node.get("content")
+                if isinstance(content, str) and content.strip():
+                    node = {**node, "detail_html": normalize_ownerclan_html(content)}
 
             source_updated_at = _parse_ownerclan_datetime(node.get("updatedAt") or node.get("updated_at"))
 

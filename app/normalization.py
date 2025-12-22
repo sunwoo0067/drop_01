@@ -1,22 +1,14 @@
 import logging
 import uuid
-from typing import Optional
 
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from app.models import SupplierItemRaw, Product
 from app.settings import settings
+from app.services.pricing import calculate_selling_price, parse_int_price, parse_shipping_fee
 
 logger = logging.getLogger(__name__)
-
-def _parse_int_price(value) -> int:
-    if value is None:
-        return 0
-    try:
-        return int(float(value))
-    except Exception:
-        return 0
 
 def normalize_supplier_items(session: Session, batch_size: int = 1000, item_ids: list[uuid.UUID] | None = None) -> int:
     """
@@ -58,7 +50,8 @@ def normalize_supplier_items(session: Session, batch_size: int = 1000, item_ids:
         description = data.get("description") or data.get("content")
         
         # Calculate Selling Price (Simple Logic: Cost * margin_rate)
-        cost = _parse_int_price(supply_price)
+        cost = parse_int_price(supply_price)
+        shipping_fee = parse_shipping_fee(data)
             
         try:
             margin_rate = float(settings.pricing_default_margin_rate or 0.0)
@@ -66,7 +59,7 @@ def normalize_supplier_items(session: Session, batch_size: int = 1000, item_ids:
             margin_rate = 0.0
         if margin_rate < 0:
             margin_rate = 0.0
-        selling_price = int(cost * (1.0 + margin_rate))
+        selling_price = calculate_selling_price(cost, margin_rate, shipping_fee)
         
         # Check if Product exists for this raw item
         # We need a way to look up Product by supplier_item_id.

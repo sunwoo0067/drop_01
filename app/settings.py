@@ -22,6 +22,9 @@ class Settings(BaseSettings):
 
     pricing_default_margin_rate: float = 0.0
 
+    product_name_forbidden_keywords: list[str] = []
+    product_name_replacements: dict[str, str] = {}
+
     
     # AI Settings
     default_ai_provider: str = "openai" # gemini, ollama, or openai
@@ -32,7 +35,7 @@ class Settings(BaseSettings):
     
     # Ollama
     ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "gemma2"
+    ollama_model: str = "gemma3:4b"
 
     # OpenAI
     openai_api_keys: list[str] = [] # List of keys for rotation

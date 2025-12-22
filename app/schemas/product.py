@@ -6,6 +6,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 class MarketListingResponse(BaseModel):
     id: uuid.UUID
+    market_account_id: uuid.UUID
     market_item_id: str
     status: str
     coupang_status: Optional[str] = None

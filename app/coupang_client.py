@@ -629,12 +629,4 @@ class CoupangClient:
         """로켓그로스 상품 조회"""
         return self.get(f"/v2/providers/rocket_growth_api/apis/api/v1/products/{seller_product_id}")
 
-    # --------------------------------------------------------------------------
-    # 11. 물류/배송 정책 조회 (Shipping & Logistics)
-    # --------------------------------------------------------------------------
 
-    def get_outbound_shipping_centers(self, vendor_id: str | None = None) -> tuple[int, dict[str, Any]]:
-        """판매자 출고지 목록 조회 (배송 정책 번호 확인용)"""
-        path = f"/v2/providers/market_api/apis/api/v1/marketplace/vendor-shipping-locations/outbound"
-        params = {"vendorId": vendor_id or self._vendor_id}
-        return self.get(path, params)
