@@ -185,7 +185,8 @@ async def _execute_post_promote_actions(product_id: uuid.UUID, auto_register_cou
     with session_factory() as bg_session:
         service = ProcessingService(bg_session)
         effective_min_images_required = max(1, int(min_images_required))
-        await service.process_product(product_id, min_images_required=effective_min_images_required)
+        # process_product는 동기 함수이므로 to_thread에서 실행 (service 내부적으로 I/O 수행)
+        anyio.from_thread.run(service.process_product, product_id, effective_min_images_required)
 
         if not auto_register_coupang:
             return
@@ -209,6 +210,7 @@ async def _execute_post_promote_actions(product_id: uuid.UUID, auto_register_cou
         if not account:
             return
 
+        # register_product는 동기 함수이므로 직접 호출 (이미 스레드/진입점 분리됨)
         ok, _reason = register_product(bg_session, account.id, product.id)
         if ok:
             product.status = "ACTIVE"
@@ -216,11 +218,21 @@ async def _execute_post_promote_actions(product_id: uuid.UUID, auto_register_cou
 
 
 async def _execute_post_promote_actions_bg(product_id: uuid.UUID, auto_register_coupang: bool, min_images_required: int) -> None:
-    # 이미 비동기 함수인 _execute_post_promote_actions를 직접 호출하거나 태스크로 추가 가능
-    await _execute_post_promote_actions(
+    # 1. Promote 후속 조치(이미지 처리, 등록 등)는 동기 I/O가 많으므로 별도 스레드에서 실행
+    await anyio.to_thread.run_sync(
+        _execute_post_promote_actions_sync_wrapper,
         product_id,
-        bool(auto_register_coupang),
-        int(min_images_required),
+        auto_register_coupang,
+        min_images_required
+    )
+
+def _execute_post_promote_actions_sync_wrapper(product_id: uuid.UUID, auto_register_coupang: bool, min_images_required: int) -> None:
+    # anyio.run을 사용하여 동기 컨텍스트 내에서 비동기 핸들러 실행 (스레드 세이프)
+    anyio.run(
+        _execute_post_promote_actions,
+        product_id,
+        auto_register_coupang,
+        min_images_required
     )
 
 @router.get("/candidates")
@@ -347,6 +359,8 @@ async def _execute_benchmark_sourcing(benchmark_id: uuid.UUID, job_id: uuid.UUID
         logger.info(f"Starting long-running sourcing job {job_id} for benchmark {benchmark_id}")
         with session_factory() as session:
             service = SourcingService(session)
+            # execute_benchmark_sourcing이 내부적으로 비동기이면 anyio.run 사용, 
+            # 여기서는 API가 블로킹되지 않도록 to_thread 진입점에서 이미 분리됨
             await service.execute_benchmark_sourcing(benchmark_id)
             
         # 3. Success
@@ -410,7 +424,11 @@ async def trigger_benchmark_sourcing(
 
 
 async def _execute_benchmark_sourcing_bg(benchmark_id: uuid.UUID, job_id: uuid.UUID) -> None:
-    await _execute_benchmark_sourcing(benchmark_id, job_id)
+    # 오래 걸리는 소싱 작업(DB I/O, API 호출)을 블로킹 없이 처리하기 위해 스레드 오프로딩
+    await anyio.to_thread.run_sync(_execute_benchmark_sourcing_sync_wrapper, benchmark_id, job_id)
+
+def _execute_benchmark_sourcing_sync_wrapper(benchmark_id: uuid.UUID, job_id: uuid.UUID) -> None:
+    anyio.run(_execute_benchmark_sourcing, benchmark_id, job_id)
 
 
 @router.patch("/candidates/{candidate_id}")

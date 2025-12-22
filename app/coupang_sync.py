@@ -38,8 +38,20 @@ from app.settings import settings
 logger = logging.getLogger(__name__)
 
 
-def _preserve_detail_html() -> bool:
-    return False
+def _preserve_detail_html(product: Product | None = None) -> bool:
+    """
+    상품의 상태에 따라 상세페이지 HTML 보존 여부를 결정합니다.
+    - 신규 가공 중(PENDING, PROCESSING)인 경우: 정규화/이미지 보강을 위해 False 반환 (변환 필요)
+    - 이미 완료되었거나 등록된 경우: 기존 레이아웃 유지를 위해 True 반환
+    """
+    if product is None:
+        return False
+    
+    # 신규 등록을 위한 가공 단계에서는 정규화 로직을 태웁니다.
+    if product.processing_status in ("PENDING", "PROCESSING"):
+        return False
+        
+    return True
 
 
 def _name_only_processing() -> bool:
@@ -1158,7 +1170,7 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
 
     # 등록 직후 쿠팡이 내려주는 vendor_inventory 기반 이미지 경로로 상세(contents)를 한 번 더 보강합니다.
     # (내부 저장 포맷/렌더링 이슈 회피 목적)
-    if not _preserve_detail_html():
+    if not _preserve_detail_html(product):
         try:
             for _ in range(10):
                 p_code, p_data = client.get_product(seller_product_id)
@@ -1920,9 +1932,9 @@ def _map_product_to_coupang_payload(
     processed_images = product.processed_image_urls if isinstance(product.processed_image_urls, list) else []
     payload_images = image_urls if isinstance(image_urls, list) and image_urls else processed_images
     
-    # 상세페이지는 원본 HTML 유지 (필수 제한 길이만 적용)
+    # 상세페이지는 원본 HTML 유지 (신규 가공 시에만 정규화 적용)
     raw_desc = product.description or "<p>상세설명 없음</p>"
-    if _preserve_detail_html():
+    if _preserve_detail_html(product):
         description_html = str(raw_desc)[:200000]
     else:
         description_html = _normalize_detail_html_for_coupang(str(raw_desc)[:200000])
@@ -1935,7 +1947,7 @@ def _map_product_to_coupang_payload(
         )
     
     contents_blocks = []
-    if payload_images and (not _preserve_detail_html()) and not _detail_html_has_images(description_html):
+    if payload_images and (not _preserve_detail_html(product)) and not _detail_html_has_images(description_html):
         contents_blocks = _build_contents_image_blocks(payload_images)
     
     # 이미지
