@@ -24,3 +24,9 @@ scripts/test_coupang_bulk_registration.py
 docs/api_docs/coupang/*.pdf
 docs/api_docs/coupang/*.docx
 docs/api_docs/coupang/*:Zone.Identifier
+
+# Ollama
+ollama_update/
+ollama_new
+*.log
+

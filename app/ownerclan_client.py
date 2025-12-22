@@ -6,6 +6,9 @@ from typing import Any
 
 import httpx
 import time
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -282,9 +285,10 @@ class OwnerClanClient:
             params["keyword"] = keyword
 
         rest_status, rest_data = self.get("/v1/items", params=params)
+        logger.info(f"OwnerClan REST API Status: {rest_status} (keyword={keyword})")
         
         # If REST API works, return directly
-        if rest_status != 404:
+        if rest_status == 200:
             return rest_status, rest_data
         
         # 2. Fallback to GraphQL
@@ -348,7 +352,17 @@ class OwnerClanClient:
             return gql_status, gql_data
         
         # Convert GraphQL response to REST-compatible format
-        edges = gql_data.get("data", {}).get("allItems", {}).get("edges", [])
+        data_part = gql_data.get("data")
+        if not data_part:
+            logger.warning("GraphQL response contains no data (or errors): %s", gql_data)
+            return 200, {"items": [], "_source": "graphql", "_raw": gql_data}
+            
+        all_items = data_part.get("allItems")
+        if not all_items:
+            logger.warning("GraphQL response data has no allItems: %s", gql_data)
+            return 200, {"items": [], "_source": "graphql", "_raw": gql_data}
+
+        edges = all_items.get("edges", [])
         items = []
         for edge in edges:
             node = edge.get("node", {})

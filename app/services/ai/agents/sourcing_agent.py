@@ -89,7 +89,7 @@ class SourcingAgent:
         name = benchmark.get("name")
         detail = benchmark.get("detail_html") or name
         
-        pain_points = self.ai_service.analyze_pain_points(detail, provider="gemini")
+        pain_points = self.ai_service.analyze_pain_points(detail, provider="auto")
         specs = self.ai_service.extract_specs(detail, provider="auto")
         
         return {

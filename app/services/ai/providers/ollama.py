@@ -19,12 +19,12 @@ class OllamaProvider(AIProvider):
             "stream": False
         }
         try:
-            with httpx.Client(timeout=60.0) as client:
+            with httpx.Client(timeout=300.0) as client:
                 resp = client.post(url, json=payload)
                 resp.raise_for_status()
                 return resp.json().get("response", "")
         except Exception as e:
-            logger.error(f"Ollama generate_text failed: {e}")
+            logger.error(f"Ollama generate_text failed (model={self.model_name}): {e}")
             return ""
 
     def generate_json(self, prompt: str) -> Dict[str, Any] | List[Any]:
@@ -37,13 +37,13 @@ class OllamaProvider(AIProvider):
             "stream": False
         }
         try:
-            with httpx.Client(timeout=60.0) as client:
+            with httpx.Client(timeout=300.0) as client:
                 resp = client.post(url, json=payload)
                 resp.raise_for_status()
                 text = resp.json().get("response", "")
                 return json.loads(text)
         except Exception as e:
-            logger.error(f"Ollama generate_json failed: {e}")
+            logger.error(f"Ollama generate_json failed (model={self.model_name}): {e}")
             return {}
 
     def describe_image(self, image_data: bytes, prompt: str = "이 이미지를 상세히 설명해주세요. 특히 상품의 특징, 색상, 디자인, 재질 등을 중심으로 설명해주세요.") -> str:
@@ -62,10 +62,10 @@ class OllamaProvider(AIProvider):
             "stream": False
         }
         try:
-            with httpx.Client(timeout=60.0) as client:
+            with httpx.Client(timeout=300.0) as client:
                 resp = client.post(url, json=payload)
                 resp.raise_for_status()
                 return resp.json().get("response", "")
         except Exception as e:
-            logger.error(f"Ollama describe_image failed: {e}")
+            logger.error(f"Ollama describe_image failed (model={model}): {e}")
             return ""

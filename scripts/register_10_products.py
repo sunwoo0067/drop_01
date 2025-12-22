@@ -1,6 +1,7 @@
 import asyncio
 import uuid
 import logging
+import sys
 
 from sqlalchemy import text
 
@@ -12,21 +13,34 @@ from app.services.name_processing import apply_market_name_rules
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-async def register_top_10():
+async def register_top_10(keyword: str = None):
     # 1. 후보 선별
+    keyword_pattern = f"%{keyword}%" if keyword else None
+    query = """
+        select id, supplier_code, supplier_item_id, name, supply_price
+        from sourcing_candidates
+        where status = :status
+    """
+    params = {"status": "PENDING"}
+    if keyword:
+        query += " and name like :keyword_pattern"
+        params["keyword_pattern"] = keyword_pattern
+    
+    query += " order by created_at desc limit 20"
+
     with dropship_engine.connect() as conn:
-        rows = conn.execute(
-            text(
-                """
-                select id, supplier_code, supplier_item_id, name, supply_price
-                from sourcing_candidates
-                where status = :status
-                order by created_at desc
-                limit 10
-                """
-            ),
-            {"status": "PENDING"},
-        ).all()
+        rows = conn.execute(text(query), params).all()
+    # Diversity: pick first 10, but try to avoid duplicates if possible
+    items = []
+    seen_names = set()
+    for row in rows:
+        name_short = row.name[:10] # simple heuristic
+        if name_short not in seen_names:
+            items.append(row)
+            seen_names.add(name_short)
+        if len(items) >= 10:
+            break
+    
     candidate_data = [
         {
             "id": row.id,
@@ -35,7 +49,7 @@ async def register_top_10():
             "item_code": row.supplier_item_id,
             "supplier_code": row.supplier_code,
         }
-        for row in rows
+        for row in items
     ]
 
     if not candidate_data:
@@ -112,4 +126,5 @@ async def register_top_10():
     print(f"Final registered count: {registered_count}")
 
 if __name__ == "__main__":
-    asyncio.run(register_top_10())
+    kw = sys.argv[1] if len(sys.argv) > 1 else None
+    asyncio.run(register_top_10(kw))

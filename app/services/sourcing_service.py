@@ -1,4 +1,5 @@
 import logging
+import asyncio
 import uuid
 from typing import List, Optional
 from sqlalchemy.orm import Session
@@ -18,7 +19,10 @@ class SourcingService:
     def __init__(self, db: Session):
         self.db = db
         self.embedding_service = EmbeddingService()
+        from app.services.ai import AIService
+        self.ai_service = AIService()
         self.sourcing_agent = SourcingAgent(db)
+        self._ai_semaphore = asyncio.Semaphore(5)
 
     def _get_ownerclan_primary_client(self, user_type: str = "seller") -> OwnerClanClient:
         account = (
@@ -157,6 +161,21 @@ class SourcingService:
         logger.info(f"LangGraph Agent sourcing finished for {benchmark.name}")
 
     async def _create_candidate(
+        self,
+        item: dict,
+        strategy: str,
+        benchmark_id: uuid.UUID | None = None,
+        seasonal_score: float | None = None,
+        margin_score: float | None = None,
+        spec_data: dict | None = None,
+        thumbnail_url: str | None = None,
+    ):
+        async with self._ai_semaphore:
+            return await self._execute_create_candidate(
+                item, strategy, benchmark_id, seasonal_score, margin_score, spec_data, thumbnail_url
+            )
+
+    async def _execute_create_candidate(
         self,
         item: dict,
         strategy: str,
