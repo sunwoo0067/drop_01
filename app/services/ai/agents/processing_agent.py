@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 from app.services.ai.agents.state import AgentState
 from app.services.ai import AIService
 from app.services.image_processing import image_processing_service
+from app.services.name_processing import apply_market_name_rules
+from app.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -46,16 +48,38 @@ class ProcessingAgent:
         input_data = state.get("input_data", {})
         name = input_data.get("name")
         brand = input_data.get("brand", "")
-        detail = input_data.get("normalized_detail", "")
         
-        seo_result = self.ai_service.optimize_seo(name, [brand], provider="auto")
+        processed_name = name
+        keywords = []
+        
+        try:
+            seo_result = self.ai_service.optimize_seo(name, [brand], provider="auto")
+            if isinstance(seo_result, dict):
+                raw_title = seo_result.get("title")
+                keywords = seo_result.get("tags") or []
+                if raw_title:
+                    processed_name = apply_market_name_rules(
+                        raw_title,
+                        forbidden_keywords=settings.product_name_forbidden_keywords,
+                        replacements=settings.product_name_replacements,
+                        max_length=100,
+                    )
+        except Exception as e:
+            logger.error(f"[Agent] SEO optimization failed: {e}")
+            # AI 실패 시 기본 규칙만 적용하거나 원본 유지
+            processed_name = apply_market_name_rules(
+                name,
+                forbidden_keywords=settings.product_name_forbidden_keywords,
+                replacements=settings.product_name_replacements,
+                max_length=100,
+            )
         
         return {
             "final_output": {
-                "processed_name": seo_result.get("title"),
-                "processed_keywords": seo_result.get("tags")
+                "processed_name": processed_name,
+                "processed_keywords": keywords
             },
-            "logs": ["SEO optimization completed"]
+            "logs": ["SEO optimization completed (with fallback if needed)"]
         }
 
     def process_images(self, state: AgentState) -> Dict[str, Any]:
@@ -63,7 +87,7 @@ class ProcessingAgent:
         input_data = state.get("input_data", {})
         product_id = state.get("target_id")
         raw_images = input_data.get("images", [])
-        detail_html = input_data.get("normalized_detail", "")
+        detail_html = input_data.get("detail_html") or input_data.get("normalized_detail", "")
         
         processed_urls = image_processing_service.process_and_upload_images(
             image_urls=raw_images,
