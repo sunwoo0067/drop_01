@@ -1,0 +1,30 @@
+INFO:__main__:Selected 5 candidates for registration.
+INFO:__main__:Promoting candidate: 2500 탱탱아이클레이 50g 살구 (WFLA5ZT)
+INFO:__main__:Product created: 465911bf-528c-4fca-804d-21107b96905f
+INFO:app.services.ai.providers.gemini:Switched to Gemini Key Index: 0
+INFO:app.services.ai.providers.openai:Switched to OpenAI Key Index: 0
+INFO:app.services.processing_service:Starting LangGraph processing for product 465911bf-528c-4fca-804d-21107b96905f...
+INFO:app.services.ai.agents.processing_agent:[Agent] Extracting details for processing...
+INFO:app.services.ai.agents.processing_agent:[Agent] Optimizing SEO...
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 401 Unauthorized"
+WARNING:app.services.ai.providers.openai:OpenAI Key 0 error: Error code: 401 - {'error': {'message': 'Incorrect API key provided: sk-test-******-123. You can find your API key at https://platform.openai.com/account/api-keys.', 'type': 'invalid_request_error', 'code': 'invalid_api_key', 'param': None}, 'status': 401}. Rotating.
+INFO:app.services.ai.providers.openai:Switched to OpenAI Key Index: 1
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:app.services.ai.agents.processing_agent:[Agent] Processing images...
+INFO:app.services.image_processing:Processing 1 images for product 465911bf-528c-4fca-804d-21107b96905f...
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/465911bf-528c-4fca-804d-21107b96905f/b840dd70-22bb-42d3-b24a-2c29282562e6.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/465911bf-528c-4fca-804d-21107b96905f/8144570a-15b6-4b5f-b8bc-025e3769d594.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/465911bf-528c-4fca-804d-21107b96905f/5aaeee15-7553-4e05-b3c2-a5f28793a9ac.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/465911bf-528c-4fca-804d-21107b96905f/1e096cb8-1b5b-4753-81e4-97b3a3f9235d.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/465911bf-528c-4fca-804d-21107b96905f/2da768c8-f044-45f9-b6f7-9126070ba70e.jpg "HTTP/2 200 OK"
+INFO:app.services.image_processing:이미지 처리 요약(productId=465911bf-528c-4fca-804d-21107b96905f, target=5, input=1, unique=1, fromHtml=0, downloadOk=1, downloadFail=0, hashFail=0, uploadOk=5, uploadFail=0, exceptions=0, result=5)
+INFO:app.services.ai.agents.processing_agent:[Agent] Saving processed results...
+INFO:app.services.processing_service:Successfully processed product 465911bf-528c-4fca-804d-21107b96905f. Status: COMPLETED
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/77800 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 401 Unauthorized"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932023312 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932023312 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932023312 "HTTP/1.1 400 Bad Request"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932023312 "HTTP/1.1 400 Bad Request"

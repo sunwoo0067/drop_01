@@ -42,14 +42,9 @@ def downgrade_dropship() -> None:
 
 
 def upgrade_market() -> None:
-    op.add_column("benchmark_collect_jobs", sa.Column("category_url", sa.Text(), nullable=True))
-    op.add_column("benchmark_collect_jobs", sa.Column("processed_count", sa.Integer(), nullable=False, server_default="0"))
-    op.add_column("benchmark_collect_jobs", sa.Column("total_count", sa.Integer(), nullable=False, server_default="0"))
-    op.alter_column("benchmark_collect_jobs", "processed_count", server_default=None)
-    op.alter_column("benchmark_collect_jobs", "total_count", server_default=None)
+    # Columns already added in 69e6b333ae6d; keep this migration as a no-op to avoid duplicate DDL.
+    pass
 
 
 def downgrade_market() -> None:
-    op.drop_column("benchmark_collect_jobs", "total_count")
-    op.drop_column("benchmark_collect_jobs", "processed_count")
-    op.drop_column("benchmark_collect_jobs", "category_url")
+    pass

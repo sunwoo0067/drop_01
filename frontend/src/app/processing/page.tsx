@@ -54,7 +54,7 @@ export default function ProcessingPage() {
         setProcessingIds(prev => new Set(prev).add(productId));
         try {
             await api.post(`/products/${productId}/process`, {
-                minImagesRequired: 3,
+                minImagesRequired: 1,
                 forceFetchOwnerClan: false
             });
             // Refresh status after a short delay or poll
@@ -74,7 +74,7 @@ export default function ProcessingPage() {
     const handleProcessPending = async () => {
         try {
             await api.post("/products/process/pending", null, {
-                params: { limit: 10, minImagesRequired: 3 }
+                params: { limit: 10, minImagesRequired: 1 }
             });
             alert("대기 중인 상품들에 대해 가공이 시작되었습니다.");
             setTimeout(fetchProducts, 1000);

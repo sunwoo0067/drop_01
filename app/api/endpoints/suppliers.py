@@ -13,6 +13,7 @@ from app.ownerclan_client import OwnerClanClient
 from app.settings import settings
 from app.ownerclan_sync import start_background_ownerclan_job
 from app.session_factory import session_factory
+from app.services.detail_html_normalizer import normalize_ownerclan_html
 
 router = APIRouter()
 
@@ -271,6 +272,13 @@ def import_ownerclan_item(payload: OwnerClanItemImportIn, session: Session = Dep
         data_obj = {}
 
     source_updated_at = data_obj.get("updatedAt") or data_obj.get("updated_at")
+    detail_html = data_obj.get("detail_html") or data_obj.get("detailHtml")
+    if isinstance(detail_html, str) and detail_html.strip():
+        data_obj = {**data_obj, "detail_html": normalize_ownerclan_html(detail_html)}
+    else:
+        content = data_obj.get("content") or data_obj.get("description")
+        if isinstance(content, str) and content.strip():
+            data_obj = {**data_obj, "detail_html": normalize_ownerclan_html(content)}
 
     stmt = insert(SupplierItemRaw).values(
         supplier_code="ownerclan",

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
 from typing import List
 import uuid
 from urllib.parse import urlparse
@@ -15,26 +15,23 @@ from app.db import get_session
 from app.models import MarketListing, Product, SupplierAccount, SupplierItemRaw, SourcingCandidate
 from app.schemas.product import MarketListingResponse, ProductResponse
 from app.settings import settings
+from app.services.detail_html_checks import find_forbidden_tags
+from app.services.image_validation_report import parse_validation_failures_from_logs
+from app.services.image_validation_log import parse_validation_failures
+from pathlib import Path
+from app.services.pricing import calculate_selling_price, parse_int_price, parse_shipping_fee
 
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
 
 
-def _parse_int_price(value) -> int:
-    if value is None:
-        return 0
-    try:
-        return int(float(value))
-    except Exception:
-        return 0
-
 class ProductFromOwnerClanRawIn(BaseModel):
     supplierItemRawId: uuid.UUID
 
 
 class ProductProcessIn(BaseModel):
-    minImagesRequired: int = Field(default=3, ge=1, le=20)
+    minImagesRequired: int = Field(default=1, ge=1, le=20)
     forceFetchOwnerClan: bool = False
 
 
@@ -45,9 +42,30 @@ class ProductAugmentImagesFromDetailUrlIn(BaseModel):
 
 class ProductProcessFailedIn(BaseModel):
     limit: int = Field(default=50, ge=1, le=500)
-    minImagesRequired: int = Field(default=5, ge=1, le=20)
+    minImagesRequired: int = Field(default=1, ge=1, le=20)
     forceFetchOwnerClan: bool = True
     augmentImages: bool = True
+
+
+class ProductHtmlWarningsIn(BaseModel):
+    productIds: list[uuid.UUID]
+
+
+class ProductHtmlWarningOut(BaseModel):
+    productId: uuid.UUID
+    tags: list[str]
+
+
+class ImageValidationReportOut(BaseModel):
+    counts: dict[str, int]
+
+
+class ImageValidationFailureOut(BaseModel):
+    url: str
+    reason: str
+    size: str
+    width: str
+    height: str
 
 
 def _build_product_responses(session: Session, products: list[Product]) -> list[ProductResponse]:
@@ -163,14 +181,15 @@ def create_product_from_ownerclan_raw(payload: ProductFromOwnerClanRawIn, sessio
             or data.get("price")
             or 0
         )
-        cost = _parse_int_price(supply_price)
+        cost = parse_int_price(supply_price)
+        shipping_fee = parse_shipping_fee(data)
         try:
             margin_rate = float(settings.pricing_default_margin_rate or 0.0)
         except Exception:
             margin_rate = 0.0
         if margin_rate < 0:
             margin_rate = 0.0
-        selling_price = int(cost * (1.0 + margin_rate))
+        selling_price = calculate_selling_price(cost, margin_rate, shipping_fee)
 
         updated = False
         if (existing.selling_price or 0) <= 0 and selling_price > 0:
@@ -197,14 +216,15 @@ def create_product_from_ownerclan_raw(payload: ProductFromOwnerClanRawIn, sessio
     brand_name = data.get("brand") or data.get("brand_name")
     description = data.get("description") or data.get("content")
 
-    cost = _parse_int_price(supply_price)
+    cost = parse_int_price(supply_price)
+    shipping_fee = parse_shipping_fee(data)
     try:
         margin_rate = float(settings.pricing_default_margin_rate or 0.0)
     except Exception:
         margin_rate = 0.0
     if margin_rate < 0:
         margin_rate = 0.0
-    selling_price = int(cost * (1.0 + margin_rate))
+    selling_price = calculate_selling_price(cost, margin_rate, shipping_fee)
 
     product = Product(
         supplier_item_id=raw_item.id,
@@ -221,6 +241,43 @@ def create_product_from_ownerclan_raw(payload: ProductFromOwnerClanRawIn, sessio
     session.commit()
 
     return {"created": True, "productId": str(product.id)}
+
+
+@router.post("/html-warnings", status_code=200, response_model=list[ProductHtmlWarningOut])
+def get_product_html_warnings(
+    payload: ProductHtmlWarningsIn,
+    session: Session = Depends(get_session),
+):
+    if not payload.productIds:
+        return []
+    products = session.scalars(select(Product).where(Product.id.in_(payload.productIds))).all()
+    results: list[ProductHtmlWarningOut] = []
+    for product in products:
+        tags = find_forbidden_tags(product.description)
+        results.append(ProductHtmlWarningOut(productId=product.id, tags=tags))
+    return results
+
+
+@router.get("/image-validation-report", status_code=200, response_model=ImageValidationReportOut)
+def get_image_validation_report():
+    log_path = Path("api.log")
+    if not log_path.exists():
+        return ImageValidationReportOut(counts={})
+
+    lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    counts = parse_validation_failures_from_logs(lines)
+    return ImageValidationReportOut(counts=counts)
+
+
+@router.get("/image-validation-failures", status_code=200, response_model=list[ImageValidationFailureOut])
+def get_image_validation_failures(limit: int = Query(default=100, ge=1, le=500)):
+    log_path = Path("api.log")
+    if not log_path.exists():
+        return []
+
+    lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    failures = parse_validation_failures(lines)
+    return failures[:limit]
 
 
 def _refresh_ownerclan_raw_if_needed(session: Session, product: Product) -> bool:
@@ -881,6 +938,34 @@ async def trigger_process_failed_products(
         "augmentImages": bool(payload.augmentImages),
         "wait": False,
     }
+
+
+@router.post("/registration/pending/clear", status_code=200)
+def clear_registration_pending(
+    session: Session = Depends(get_session),
+) -> dict:
+    """
+    등록 대기(DRAFT + COMPLETED) 상품을 일괄 삭제합니다.
+    """
+    ids = session.scalars(
+        select(Product.id).where(
+            Product.status == "DRAFT",
+            Product.processing_status == "COMPLETED",
+        )
+    ).all()
+
+    if not ids:
+        return {"deletedProducts": 0, "deletedListings": 0}
+
+    deleted_listings = session.execute(
+        delete(MarketListing).where(MarketListing.product_id.in_(ids))
+    ).rowcount or 0
+    deleted_products = session.execute(
+        delete(Product).where(Product.id.in_(ids))
+    ).rowcount or 0
+    session.commit()
+
+    return {"deletedProducts": int(deleted_products), "deletedListings": int(deleted_listings)}
 
 
 def _execute_failed_product_processing_bg(limit: int, min_images_required: int, force_fetch_ownerclan: bool, augment_images: bool) -> None:

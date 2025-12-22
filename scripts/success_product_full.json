@@ -1,0 +1,234 @@
+{
+  "code": "SUCCESS",
+  "message": "",
+  "data": {
+    "trackingId": null,
+    "sellerProductId": 15933031760,
+    "sellerProductName": "학생 백팩 가방 - 데일리 캐주얼 등교용 백팩",
+    "displayCategoryCode": 77800,
+    "categoryId": 6805,
+    "productId": 9257966593,
+    "vendorId": "A01022209",
+    "mdId": "NLUP",
+    "mdName": "dummy",
+    "saleStartedAt": "2025-12-21T13:39:38",
+    "saleEndedAt": "2099-01-01T23:59:59",
+    "displayProductName": "학생 백팩 가방 - 데일리 캐주얼 등교용 백팩",
+    "brand": "Detailed Page",
+    "generalProductName": "학생 백팩 가방 - 데일리 캐주얼 등교용 백팩",
+    "productGroup": "",
+    "statusName": "승인완료",
+    "deliveryMethod": "SEQUENCIAL",
+    "deliveryCompanyCode": "CJGLS",
+    "deliveryChargeType": "FREE",
+    "deliveryCharge": 0,
+    "freeShipOverAmount": 0,
+    "deliveryChargeOnReturn": 5000,
+    "deliverySurcharge": 0,
+    "remoteAreaDeliverable": "Y",
+    "bundlePackingDelivery": 0,
+    "unionDeliveryType": "NOT_UNION_DELIVERY",
+    "returnCenterCode": "1001670198",
+    "returnChargeName": "송내 반품",
+    "companyContactNumber": "070-4581-8906",
+    "returnZipCode": "14598",
+    "returnAddress": "경기도 부천시 원미구 부일로199번길 21",
+    "returnAddressDetail": "401 슈가맨워크",
+    "returnCharge": 5000,
+    "exchangeType": "AFTER",
+    "afterServiceInformation": "",
+    "afterServiceContactNumber": "",
+    "outboundShippingPlaceCode": 17903308,
+    "contributorType": "API_SELLER",
+    "vendorUserId": "0250605r",
+    "requested": false,
+    "items": [
+      {
+        "offerCondition": "NEW",
+        "offerDescription": "",
+        "sellerProductItemId": 36707316985,
+        "vendorItemId": 94355326787,
+        "itemId": 27389522545,
+        "itemName": "학생 백팩 가방 - 데일리 캐주얼 등교용 백팩",
+        "originalPrice": 33300,
+        "salePrice": 33300,
+        "supplyPrice": 0,
+        "maximumBuyCount": 9999,
+        "maximumBuyForPerson": 0,
+        "outboundShippingTimeDay": 3,
+        "maximumBuyForPersonPeriod": 1,
+        "unitCount": 1,
+        "adultOnly": "EVERYONE",
+        "freePriceType": null,
+        "taxType": "TAX",
+        "parallelImported": "NOT_PARALLEL_IMPORTED",
+        "overseasPurchased": "NOT_OVERSEAS_PURCHASED",
+        "externalVendorSku": "",
+        "pccNeeded": false,
+        "bestPriceGuaranteed3P": false,
+        "emptyBarcode": true,
+        "emptyBarcodeReason": "제조사에서 바코드를 제공 받지 못함",
+        "barcode": "",
+        "saleAgentCommission": 0.0,
+        "modelNo": "",
+        "images": [
+          {
+            "imageOrder": 0,
+            "imageType": "REPRESENTATION",
+            "cdnPath": "vendor_inventory/bfb1/7905b1f7eb0a480ab7c28c64b8e313ed682b4e58a0d715847f7458f3bcff.jpg",
+            "vendorPath": "205f1c44-4046-4d80-9df2-fd50d9d6ae27.jpg"
+          },
+          {
+            "imageOrder": 1,
+            "imageType": "DETAIL",
+            "cdnPath": "vendor_inventory/4d4f/810213b698812339773aca7fefe3dfe14112e198d920222148fd1d2f7042.jpg",
+            "vendorPath": "f9bd69c4-9cd6-4e9f-80df-1724c9abf09b.jpg"
+          },
+          {
+            "imageOrder": 2,
+            "imageType": "DETAIL",
+            "cdnPath": "vendor_inventory/a767/cc932849f3292ae2f838bed104087092428d96ec7314f86714deb9191400.jpg",
+            "vendorPath": "7c9920d0-e00a-4aff-9913-135d150ffb63.jpg"
+          },
+          {
+            "imageOrder": 3,
+            "imageType": "DETAIL",
+            "cdnPath": "vendor_inventory/e27a/fd72de21ada04184799ca3ce9195277b2e3da6684076ef1463352ff259be.jpg",
+            "vendorPath": "d98f6188-22b8-4fdd-9186-1a59dde63f54.jpg"
+          },
+          {
+            "imageOrder": 4,
+            "imageType": "DETAIL",
+            "cdnPath": "vendor_inventory/cad3/05ceb1fdb72a64b93e9c83e177d5ca68a173bba24f5758ee3f99a248da62.jpg",
+            "vendorPath": "d1325e5a-9190-47a4-b7e3-85ffe4794714.jpg"
+          },
+          {
+            "imageOrder": 5,
+            "imageType": "DETAIL",
+            "cdnPath": "vendor_inventory/c5b9/24d1d4fa6bfff84049d3e666ce68c93851a895748a0e7b1d2f4549e90cd5.jpg",
+            "vendorPath": "6d8a028d-4616-43d2-b423-59df6349dc17.jpg"
+          },
+          {
+            "imageOrder": 6,
+            "imageType": "DETAIL",
+            "cdnPath": "vendor_inventory/2adc/e8764212f661a539ff0dc686b5ddefa2e032ea5ccf66bf06301bbaa17666.jpg",
+            "vendorPath": "54072b24-c1e6-444e-83b9-3dea7a4a7a91.jpg"
+          },
+          {
+            "imageOrder": 7,
+            "imageType": "DETAIL",
+            "cdnPath": "vendor_inventory/a4c7/73f99d1542ffd6ae263aa71a9193b1dbb6fd20b6140fca98fe6721352d3f.jpg",
+            "vendorPath": "82283ef5-5788-4b29-a99e-7811616ab720.jpg"
+          },
+          {
+            "imageOrder": 8,
+            "imageType": "DETAIL",
+            "cdnPath": "vendor_inventory/a995/d331fda4b14395f17b377ce7a0a826db1c549260a493f36dd835dc170560.jpg",
+            "vendorPath": "e45fd6a9-9815-4c1e-a532-46b61c9da623.jpg"
+          }
+        ],
+        "notices": [
+          {
+            "noticeCategoryName": "기타 재화",
+            "noticeCategoryDetailName": "품명 및 모델명",
+            "content": "상세페이지 참조"
+          },
+          {
+            "noticeCategoryName": "기타 재화",
+            "noticeCategoryDetailName": "인증/허가 사항",
+            "content": "상세페이지 참조"
+          },
+          {
+            "noticeCategoryName": "기타 재화",
+            "noticeCategoryDetailName": "제조국(원산지)",
+            "content": "상세페이지 참조"
+          },
+          {
+            "noticeCategoryName": "기타 재화",
+            "noticeCategoryDetailName": "제조자(수입자)",
+            "content": "상세페이지 참조"
+          },
+          {
+            "noticeCategoryName": "기타 재화",
+            "noticeCategoryDetailName": "소비자상담 관련 전화번호",
+            "content": "상세페이지 참조"
+          }
+        ],
+        "attributes": [],
+        "contents": [
+          {
+            "contentsType": "IMAGE_NO_SPACE",
+            "contentDetails": [
+              {
+                "content": "vendor_inventory/bfb1/7905b1f7eb0a480ab7c28c64b8e313ed682b4e58a0d715847f7458f3bcff.jpg",
+                "detailType": "IMAGE"
+              },
+              {
+                "content": "vendor_inventory/4d4f/810213b698812339773aca7fefe3dfe14112e198d920222148fd1d2f7042.jpg",
+                "detailType": "IMAGE"
+              },
+              {
+                "content": "vendor_inventory/a767/cc932849f3292ae2f838bed104087092428d96ec7314f86714deb9191400.jpg",
+                "detailType": "IMAGE"
+              },
+              {
+                "content": "vendor_inventory/e27a/fd72de21ada04184799ca3ce9195277b2e3da6684076ef1463352ff259be.jpg",
+                "detailType": "IMAGE"
+              },
+              {
+                "content": "vendor_inventory/cad3/05ceb1fdb72a64b93e9c83e177d5ca68a173bba24f5758ee3f99a248da62.jpg",
+                "detailType": "IMAGE"
+              },
+              {
+                "content": "vendor_inventory/c5b9/24d1d4fa6bfff84049d3e666ce68c93851a895748a0e7b1d2f4549e90cd5.jpg",
+                "detailType": "IMAGE"
+              },
+              {
+                "content": "vendor_inventory/2adc/e8764212f661a539ff0dc686b5ddefa2e032ea5ccf66bf06301bbaa17666.jpg",
+                "detailType": "IMAGE"
+              },
+              {
+                "content": "vendor_inventory/a4c7/73f99d1542ffd6ae263aa71a9193b1dbb6fd20b6140fca98fe6721352d3f.jpg",
+                "detailType": "IMAGE"
+              },
+              {
+                "content": "vendor_inventory/a995/d331fda4b14395f17b377ce7a0a826db1c549260a493f36dd835dc170560.jpg",
+                "detailType": "IMAGE"
+              }
+            ]
+          },
+          {
+            "contentsType": "TEXT",
+            "contentDetails": [
+              {
+                "content": "본 제품을 구매하시면 원활한 배송을 위해 꼭 필요한 고객님의 개인정보를 (성함, 주소, 전화번호 등) 택배사 및 제 3업체에서 이용하는 것에 동의하시는 것으로 간주됩니다. 개인정보는 배송 외의 용도로는 절대 사용되지 않으니 안심하시기 바랍니다. 안전하게 배송해 드리겠습니다.",
+                "detailType": "TEXT"
+              }
+            ]
+          },
+          {
+            "contentsType": "HTML",
+            "contentDetails": [
+              {
+                "content": "<center> <div style=\"text-align : center;\"> <img src=\"http://image1.coupangcdn.com/image/vendor_inventory/e1f6/1f3c3113bf9b52b2774ae01971b4ba5ff506ed23f01948af5fe750715e05.jpg\"> <img src=\"http://image1.coupangcdn.com/image/vendor_inventory/55af/607cb3bb5ebba140ec4c6707a36b7d5b491b3002e02830ee92447f3abc77.jpg\"> <img src=\"http://image1.coupangcdn.com/image/vendor_inventory/6895/67905405acfe1c1bf9f59beb86038b39ee5c155b7818844ecea3807a0724.jpg\"> <img src=\"http://image1.coupangcdn.com/image/vendor_inventory/ba9d/cbdd935ad87f4e33f58ac16618b8d80f5b163039a12a285a82807be4dd03.jpg\"> <img src=\"http://image1.coupangcdn.com/image/vendor_inventory/4809/67b6ebdd03183edeeb67688fcc49110e7c9ba1ab85841e0f49271b068635.jpg\"> <img src=\"http://image1.coupangcdn.com/image/vendor_inventory/24b8/010c41de36fbb5650ab8826ba74d5e44dbf8fba361302ccecded22097dd7.jpg\"> <img src=\"http://image1.coupangcdn.com/image/vendor_inventory/d90d/06b61e51329a5001d9b8da120cde407de522cf43febbceff6d237b8b43e8.jpg\"> <img src=\"http://image1.coupangcdn.com/image/vendor_inventory/6b28/d56acb927514489f04af23ca66d1c8fc5e0d170a9906878faf99d3346651.jpg\"> <img src=\"http://image1.coupangcdn.com/image/vendor_inventory/0518/be6c2e18f614749c17030dda484a889ee633ca8bf03de303e6fede329a45.jpg\"> <div> <center> <div style=\"overflow:hidden;width:100%;margin-top:15px\"> <h3 style=\"margin:0;border-top:1px solid #ddd;border-bottom:1px solid #ddd;color:#222;font-size:18px;line-height:50px;padding:0;background-color:#efefef\">상품 정보 제공 고시 <span style=\"display:inline-block;padding-left:10px;font-size:12px;font-weight:400;color:#999;vertical-align:top;line-height:50px;letter-spacing:-0.5px\">- 공정위고시(제2014-49)호</span></h3> <ul style=\"list-style:none;padding:0;margin:0;font-size:16px;color:#333\"> <li style=\"overflow:hidden;border-bottom:1px solid #ddd;line-height:20px;text-align:left;color:#333\"> <span style=\"float:left;width:30%;padding:10px 0 7px 10px;color:#333;background-color:#efefef;font-weight:bold\">상품분류</span> <span style=\"float:left;width:67%;padding:10px 0 7px 10px;color:#666\">가방</span> </li> <li style=\"overflow:hidden;border-bottom:1px solid #ddd;line-height:20px;text-align:left;color:#333\"> <span style=\"float:left;width:30%;padding:10px 0 7px 10px;color:#333;background-color:#efefef;font-weight:bold\">종류</span> <span style=\"float:left;width:67%;padding:10px 0 7px 10px;color:#666\">캐주얼 백팩</span> </li> <li style=\"overflow:hidden;border-bottom:1px solid #ddd;line-height:20px;text-align:left;color:#333\"> <span style=\"float:left;width:30%;padding:10px 0 7px 10px;color:#333;background-color:#efefef;font-weight:bold\">소재</span> <span style=\"float:left;width:67%;padding:10px 0 7px 10px;color:#666\">폴리에스테르</span> </li> <li style=\"overflow:hidden;border-bottom:1px solid #ddd;line-height:20px;text-align:left;color:#333\"> <span style=\"float:left;width:30%;padding:10px 0 7px 10px;color:#333;background-color:#efefef;font-weight:bold\">색상</span> <span style=\"float:left;width:67%;padding:10px 0 7px 10px;color:#666\">아이보리, 블랙, 브라운, 카키</span> </li> <li style=\"overflow:hidden;border-bottom:1px solid #ddd;line-height:20px;text-align:left;color:#333\"> <span style=\"float:left;width:30%;padding:10px 0 7px 10px;color:#333;background-color:#efefef;font-weight:bold\">크기</span> <span style=\"float:left;width:67%;padding:10px 0 7px 10px;color:#666\">가로 30 / 세로 40 / 폭 7 cm</span> </li> <li style=\"overflow:hidden;border-bottom:1px solid #ddd;line-height:20px;text-align:left;color:#333\"> <span style=\"float:left;width:30%;padding:10px 0 7px 10px;color:#333;background-color:#efefef;font-weight:bold\">제조자</span> <span style=\"float:left;width:67%;padding:10px 0 7px 10px;color:#666\">주식회사 우건 (중국 협력사)</span> </li> <li style=\"overflow:hidden;border-bottom:1px solid #ddd;line-height:20px;text-align:left;color:#333\"> <span style=\"float:left;width:30%;padding:10px 0 7px 10px;color:#333;background-color:#efefef;font-weight:bold\">수입품여부(Y/N)</span> <span style=\"float:left;width:67%;padding:10px 0 7px 10px;color:#666\">Y</span> </li> <li style=\"overflow:hidden;border-bottom:1px solid #ddd;line-height:20px;text-align:left;color:#333\"> <span style=\"float:left;width:30%;padding:10px 0 7px 10px;color:#333;background-color:#efefef;font-weight:bold\">수입자</span> <span style=\"float:left;width:67%;padding:10px 0 7px 10px;color:#666\">주식회사 우건</span> </li> <li style=\"overflow:hidden;border-bottom:1px solid #ddd;line-height:20px;text-align:left;color:#333\"> <span style=\"float:left;width:30%;padding:10px 0 7px 10px;color:#333;background-color:#efefef;font-weight:bold\">제조국</span> <span style=\"float:left;width:67%;padding:10px 0 7px 10px;color:#666\">중국</span> </li> <li style=\"overflow:hidden;border-bottom:1px solid #ddd;line-height:20px;text-align:left;color:#333\"> <span style=\"float:left;width:30%;padding:10px 0 7px 10px;color:#333;background-color:#efefef;font-weight:bold\">취급시주의사항</span> <span style=\"float:left;width:67%;padding:10px 0 7px 10px;color:#666\">제품 소재 특성으로 자연스러운 주름이 생길 수 있습니다.</span> </li> <li style=\"overflow:hidden;border-bottom:1px solid #ddd;line-height:20px;text-align:left;color:#333\"> <span style=\"float:left;width:30%;padding:10px 0 7px 10px;color:#333;background-color:#efefef;font-weight:bold\">품질보증기준</span> <span style=\"float:left;width:67%;padding:10px 0 7px 10px;color:#666\">상품 상세정보에 별도 표기</span> </li> <li style=\"overflow:hidden;border-bottom:1px solid #ddd;line-height:20px;text-align:left;color:#333\"> <span style=\"float:left;width:30%;padding:10px 0 7px 10px;color:#333;background-color:#efefef;font-weight:bold\">A/S책임자와 전화번호</span> <span style=\"float:left;width:67%;padding:10px 0 7px 10px;color:#666\">판매자 연락처 참고</span> </li> </ul> </div> </center> </div> <br> <img> </div> </center> <br> <p align=\"center\" style=\"font-size: 12px; color: #777777; display: block; margin: 20px 0;\">본 제품을 구매하시면 원활한 배송을 위해 꼭 필요한 고객님의 개인정보를 (성함, 주소, 전화번호 등) 택배사 및 제 3업체에서 이용하는 것에 동의하시는 것으로 간주됩니다.<br> 개인정보는 배송 외의 용도로는 절대 사용되지 않으니 안심하시기 바랍니다. 안전하게 배송해 드리겠습니다.</p>",
+                "detailType": "TEXT"
+              }
+            ]
+          }
+        ],
+        "certifications": [],
+        "extraProperties": null,
+        "searchTags": [],
+        "isAutoGenerated": false
+      }
+    ],
+    "requiredDocuments": [],
+    "extraInfoMessage": "",
+    "manufacture": "",
+    "productOrigin": "수입산",
+    "roleCode": 2,
+    "status": "APPROVED",
+    "multiShippingInfos": null,
+    "multiReturnInfos": null
+  }
+}

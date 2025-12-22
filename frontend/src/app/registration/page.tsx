@@ -27,6 +27,7 @@ interface RegistrationProduct extends Product {
     imagesCount: number;
     coupangStatus?: string | null;
     rejectionReason?: any;
+    forbiddenTags?: string[];
 }
 
 function normalizeCoupangStatus(status?: string | null): string | null {
@@ -92,10 +93,33 @@ export default function RegistrationPage() {
                     ...p,
                     imagesCount: p.processed_image_urls?.length || 0,
                     coupangStatus: coupangListing?.coupang_status,
-                    rejectionReason: coupangListing?.rejection_reason
+                    rejectionReason: coupangListing?.rejection_reason,
+                    forbiddenTags: []
                 };
             });
-            setItems(processed);
+            const ids = processed.map((p) => p.id);
+            if (ids.length > 0) {
+                try {
+                    const warningsRes = await api.post("/products/html-warnings", {
+                        productIds: ids,
+                    });
+                    const warningsList = Array.isArray(warningsRes.data) ? warningsRes.data : [];
+                    const warningsMap = new Map<string, string[]>();
+                    warningsList.forEach((w: any) => {
+                        if (w?.productId) warningsMap.set(w.productId, w.tags || []);
+                    });
+                    const withWarnings = processed.map((item) => ({
+                        ...item,
+                        forbiddenTags: warningsMap.get(item.id) || [],
+                    }));
+                    setItems(withWarnings);
+                } catch (warnErr) {
+                    console.error("Failed to fetch HTML warnings", warnErr);
+                    setItems(processed);
+                }
+            } else {
+                setItems(processed);
+            }
         } catch (e) {
             console.error("Failed to fetch products", e);
             setError("상품 목록을 불러오지 못했습니다.");
@@ -190,11 +214,25 @@ export default function RegistrationPage() {
         }
     };
 
+    const handleResetPending = async () => {
+        if (!confirm("등록 대기 상품을 모두 삭제하시겠습니까?")) return;
+        try {
+            await api.post("/products/registration/pending/clear");
+            setSearchTerm("");
+            setSelectedIds(new Set());
+            await fetchProducts();
+            alert("등록 대기 상품이 삭제되었습니다.");
+        } catch (e) {
+            console.error("Failed to clear pending products", e);
+            alert("등록 대기 초기화에 실패했습니다.");
+        }
+    };
+
     // 전체 선택/해제
     const toggleSelectAll = (checked: boolean) => {
         if (checked) {
             const readyIds = filteredItems
-                .filter(item => item.imagesCount >= 5)
+                .filter(item => item.imagesCount >= 1)
                 .map(item => item.id);
             setSelectedIds(new Set(readyIds));
         } else {
@@ -215,9 +253,9 @@ export default function RegistrationPage() {
         });
     };
 
-    // 등록 가능 여부 체크 (이미지 5장 이상)
+    // 등록 가능 여부 체크 (이미지 1장 이상)
     const isReadyForRegistration = (item: RegistrationProduct) => {
-        return item.imagesCount >= 5;
+        return item.imagesCount >= 1;
     };
 
     const filteredItems = items.filter(item =>
@@ -241,13 +279,17 @@ export default function RegistrationPage() {
                         상품 등록
                     </h1>
                     <p className="text-muted-foreground max-w-2xl">
-                        가공 완료된 상품을 쿠팡 마켓에 등록합니다. 이미지가 5장 이상인 상품만 등록 가능합니다.
+                        가공 완료된 상품을 쿠팡 마켓에 등록합니다. 이미지가 1장 이상인 상품만 등록 가능합니다.
                     </p>
                 </div>
                 <div className="flex items-center gap-3">
                     <Button variant="outline" className="rounded-xl h-11 px-6 border-2 hover:bg-accent" onClick={fetchProducts}>
                         <RotateCw className="mr-2 h-4 w-4" />
                         새로고침
+                    </Button>
+                    <Button variant="outline" className="rounded-xl h-11 px-6 border-2 hover:bg-accent" onClick={handleResetPending}>
+                        <RefreshCcw className="mr-2 h-4 w-4" />
+                        등록대기 초기화
                     </Button>
                     <Button
                         className="rounded-xl h-11 px-6 shadow-lg shadow-primary/20 hover:scale-105 transition-transform"
@@ -415,19 +457,31 @@ export default function RegistrationPage() {
                                                 isReady ? "bg-emerald-500/80 text-white" : "bg-amber-500/80 text-white"
                                             )}
                                         >
-                                            이미지 {item.imagesCount}/5
+                                            이미지 {item.imagesCount}/1
                                         </Badge>
                                     </div>
                                 </div>
 
                                 <CardContent className="p-5 space-y-4">
                                     <div className="space-y-1">
-                                        <h3 className="font-bold text-lg leading-tight truncate group-hover:text-primary transition-colors">
-                                            {item.processed_name || item.name}
-                                        </h3>
+                                        <div className="flex items-center gap-2">
+                                            <h3 className="font-bold text-lg leading-tight truncate group-hover:text-primary transition-colors">
+                                                {item.processed_name || item.name}
+                                            </h3>
+                                            {item.forbiddenTags && item.forbiddenTags.length > 0 && (
+                                                <Badge variant="warning" className="text-[10px]">
+                                                    금지 태그
+                                                </Badge>
+                                            )}
+                                        </div>
                                         {item.processed_name && (
                                             <p className="text-xs text-muted-foreground line-through opacity-50 truncate">
                                                 {item.name}
+                                            </p>
+                                        )}
+                                        {item.forbiddenTags && item.forbiddenTags.length > 0 && (
+                                            <p className="text-[10px] text-amber-600">
+                                                {item.forbiddenTags.join(", ")}
                                             </p>
                                         )}
                                     </div>

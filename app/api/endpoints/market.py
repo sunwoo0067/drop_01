@@ -9,7 +9,7 @@ from sqlalchemy import select, func
 import uuid
 
 from app.db import get_session
-from app.models import Product, MarketListing, MarketAccount
+from app.models import Product, MarketListing, MarketAccount, MarketProductRaw
 
 router = APIRouter()
 
@@ -141,8 +141,11 @@ def list_market_products(
             items.append({
                 "id": str(listing.id),
                 "productId": str(listing.product_id),
+                "marketAccountId": str(listing.market_account_id),
                 "marketItemId": listing.market_item_id,
                 "status": listing.status,
+                "coupangStatus": listing.coupang_status,
+                "rejectionReason": listing.rejection_reason,
                 "linkedAt": listing.linked_at.isoformat() if listing.linked_at else None,
                 # Product 정보
                 "name": product.name if product else None,
@@ -165,4 +168,101 @@ def list_market_products(
         "offset": offset,
         "marketCode": market_code,
         "accountId": str(account.id),
+    }
+
+
+@router.post("/products/sync", status_code=200)
+def sync_market_products(
+    session: Session = Depends(get_session),
+    deep: bool = Query(default=False),
+) -> dict:
+    from app.coupang_sync import sync_coupang_products
+
+    account = session.scalars(
+        select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
+    ).first()
+    if not account:
+        raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
+
+    processed = sync_coupang_products(session, account.id, deep=bool(deep))
+    return {"status": "success", "processed": int(processed), "deep": bool(deep)}
+
+
+@router.get("/products/raw", status_code=200)
+def list_market_products_raw(
+    session: Session = Depends(get_session),
+    limit: int = Query(default=200, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    account = session.scalars(
+        select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
+    ).first()
+    if not account:
+        raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
+
+    stmt = (
+        select(MarketProductRaw)
+        .where(MarketProductRaw.market_code == "COUPANG")
+        .where(MarketProductRaw.account_id == account.id)
+        .order_by(MarketProductRaw.fetched_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    rows = session.scalars(stmt).all()
+
+    items: list[dict] = []
+    for row in rows:
+        raw = row.raw if isinstance(row.raw, dict) else {}
+        status_name = raw.get("statusName") or raw.get("status_name")
+        approval_status = raw.get("status") or status_name
+        sale_status = None
+        sale_started_at = raw.get("saleStartedAt") or raw.get("sale_started_at")
+        sale_ended_at = raw.get("saleEndedAt") or raw.get("sale_ended_at")
+        try:
+            from datetime import datetime, timezone
+
+            started = datetime.fromisoformat(str(sale_started_at)) if sale_started_at else None
+            ended = datetime.fromisoformat(str(sale_ended_at)) if sale_ended_at else None
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            if started and ended:
+                sale_status = "ACTIVE" if started <= now <= ended else "SUSPENDED"
+        except Exception:
+            sale_status = None
+
+        status_override = str(approval_status or "").strip().upper()
+        if status_override == "SUSPENDED" or "판매중지" in str(status_name or ""):
+            sale_status = "SUSPENDED"
+
+        items.append(
+            {
+                "id": str(row.id),
+                "productId": None,
+                "marketAccountId": str(account.id),
+                "marketItemId": row.market_item_id,
+                "status": sale_status or approval_status,
+                "coupangStatus": approval_status,
+                "rejectionReason": None,
+                "linkedAt": row.fetched_at.isoformat() if row.fetched_at else None,
+                "name": raw.get("sellerProductName") or raw.get("seller_product_name"),
+                "processedName": raw.get("sellerProductName") or raw.get("seller_product_name"),
+                "sellingPrice": raw.get("salePrice") or raw.get("sale_price") or raw.get("price"),
+                "processedImageUrls": [raw.get("imageUrl") or raw.get("image_url")] if raw.get("imageUrl") or raw.get("image_url") else [],
+                "productStatus": None,
+            }
+        )
+
+    total = session.scalar(
+        select(func.count(MarketProductRaw.id))
+        .where(MarketProductRaw.market_code == "COUPANG")
+        .where(MarketProductRaw.account_id == account.id)
+    ) or 0
+
+    return {
+        "items": items,
+        "total": total,
+        "limit": int(limit),
+        "offset": int(offset),
+        "marketCode": "COUPANG",
+        "accountId": str(account.id),
+        "source": "raw",
     }

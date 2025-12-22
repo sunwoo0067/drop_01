@@ -13,6 +13,8 @@ from app.services.sourcing_service import SourcingService
 from app.models import SourcingCandidate, SupplierAccount, SupplierItemRaw, Product, MarketAccount
 from app.ownerclan_client import OwnerClanClient
 from app.settings import settings
+from app.services.pricing import calculate_selling_price, parse_int_price, parse_shipping_fee
+from app.services.detail_html_normalizer import normalize_ownerclan_html
 
 router = APIRouter()
 
@@ -31,16 +33,8 @@ class PromoteCandidateIn(BaseModel):
     autoProcess: bool = False
     autoRegisterCoupang: bool = False
     forceFetchOwnerClan: bool = False
-    minImagesRequired: int = Field(default=3, ge=1, le=20)
+    minImagesRequired: int = Field(default=1, ge=1, le=20)
 
-
-def _parse_int_price(value) -> int:
-    if value is None:
-        return 0
-    try:
-        return int(float(value))
-    except Exception:
-        return 0
 
 
 def _normalize_ownerclan_item_payload(payload: dict) -> dict:
@@ -48,7 +42,17 @@ def _normalize_ownerclan_item_payload(payload: dict) -> dict:
         return {}
     data = payload.get("data")
     if isinstance(data, dict):
-        return data
+        payload = data
+
+    if isinstance(payload, dict):
+        detail_html = payload.get("detail_html") or payload.get("detailHtml")
+        if isinstance(detail_html, str) and detail_html.strip():
+            payload = {**payload, "detail_html": normalize_ownerclan_html(detail_html)}
+        else:
+            content = payload.get("content") or payload.get("description")
+            if isinstance(content, str) and content.strip():
+                payload = {**payload, "detail_html": normalize_ownerclan_html(content)}
+
     return payload
 
 
@@ -148,14 +152,15 @@ def _create_or_get_product_from_raw_item(session: Session, raw_item: SupplierIte
     brand_name = data.get("brand") or data.get("brand_name")
     description = data.get("description") or data.get("content")
 
-    cost = _parse_int_price(supply_price)
+    cost = parse_int_price(supply_price)
+    shipping_fee = parse_shipping_fee(data)
     try:
         margin_rate = float(settings.pricing_default_margin_rate or 0.0)
     except Exception:
         margin_rate = 0.0
     if margin_rate < 0:
         margin_rate = 0.0
-    selling_price = int(cost * (1.0 + margin_rate))
+    selling_price = calculate_selling_price(cost, margin_rate, shipping_fee)
 
     product = Product(
         supplier_item_id=raw_item.id,
@@ -178,9 +183,7 @@ async def _execute_post_promote_actions(product_id: uuid.UUID, auto_register_cou
 
     with session_factory() as bg_session:
         service = ProcessingService(bg_session)
-        effective_min_images_required = int(min_images_required)
-        if auto_register_coupang:
-            effective_min_images_required = 5
+        effective_min_images_required = max(1, int(min_images_required))
         await service.process_product(product_id, min_images_required=effective_min_images_required)
 
         if not auto_register_coupang:
@@ -311,6 +314,7 @@ async def trigger_keyword_sourcing(
     return {"status": "accepted", "message": f"Global keyword sourcing started for {len(payload.keywords)} keywords"}
 
 def _execute_global_keyword_sourcing(keywords: list[str], min_margin: float) -> None:
+    import asyncio
     import traceback
     from app.session_factory import session_factory
     from app.services.sourcing_service import SourcingService
@@ -318,7 +322,7 @@ def _execute_global_keyword_sourcing(keywords: list[str], min_margin: float) -> 
     try:
         with session_factory() as session:
             service = SourcingService(session)
-            service.execute_keyword_sourcing(keywords, float(min_margin))
+            asyncio.run(service.execute_keyword_sourcing(keywords, float(min_margin)))
     except Exception as e:
         error_trace = traceback.format_exc()
         logger.error(f"Error in global keyword sourcing:\n{error_trace}")

@@ -50,7 +50,7 @@ export default function SourcingPage() {
             // 2. Promote to Product
             await api.post(`/sourcing/candidates/${candidateId}/promote`, {
                 autoProcess: true,
-                minImagesRequired: 3
+                minImagesRequired: 1
             });
 
             // 3. Remove from list or refresh

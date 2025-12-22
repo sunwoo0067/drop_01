@@ -1,0 +1,1051 @@
+INFO:__main__:Selected 20 candidates for registration.
+INFO:__main__:Promoting candidate: 심플 칼라필통2000(1개) 필기구파우치 필통 파우치 (WFLA5ZF)
+INFO:__main__:Product created: 0edfce2e-eeec-4201-9823-a114a152c6ea
+INFO:app.services.ai.providers.gemini:Switched to Gemini Key Index: 0
+INFO:app.services.ai.providers.openai:Switched to OpenAI Key Index: 0
+INFO:app.services.processing_service:Starting LangGraph processing for product 0edfce2e-eeec-4201-9823-a114a152c6ea...
+INFO:app.services.ai.agents.processing_agent:[Agent] Extracting details for processing...
+INFO:app.services.ai.agents.processing_agent:[Agent] Optimizing SEO...
+ERROR:app.services.ai.providers.gemini:Gemini generate_json failed (non-retryable): 404 models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.
+INFO:app.services.ai.agents.processing_agent:[Agent] Processing images...
+INFO:app.services.image_processing:Processing 2 images for product 0edfce2e-eeec-4201-9823-a114a152c6ea...
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/0edfce2e-eeec-4201-9823-a114a152c6ea/54235ab7-0196-4803-9127-c80acdc990fb.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/0edfce2e-eeec-4201-9823-a114a152c6ea/b8987885-6975-4ce8-a0f7-45b752aaff8d.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/0edfce2e-eeec-4201-9823-a114a152c6ea/4c2ee381-5b8f-4089-ab35-4c5183f4fe11.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/0edfce2e-eeec-4201-9823-a114a152c6ea/f1c6b397-b260-4d16-91eb-574807320d75.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/0edfce2e-eeec-4201-9823-a114a152c6ea/76ac362d-7418-4483-bf57-d948999d42bf.jpg "HTTP/2 200 OK"
+INFO:app.services.image_processing:이미지 처리 요약(productId=0edfce2e-eeec-4201-9823-a114a152c6ea, target=5, input=2, unique=2, fromHtml=0, downloadOk=2, downloadFail=0, hashFail=0, uploadOk=5, uploadFail=0, exceptions=0, result=5)
+INFO:app.services.ai.agents.processing_agent:[Agent] Saving processed results...
+INFO:app.services.processing_service:Successfully processed product 0edfce2e-eeec-4201-9823-a114a152c6ea. Status: COMPLETED
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/77800 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 401 Unauthorized"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932019984 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932019984 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932019984 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932019984 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932019984 "HTTP/1.1 400 Bad Request"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932019984 "HTTP/1.1 400 Bad Request"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932019984 "HTTP/1.1 400 Bad Request"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932019984 "HTTP/1.1 400 Bad Request"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932019984 "HTTP/1.1 400 Bad Request"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932019984 "HTTP/1.1 400 Bad Request"
+ERROR:__main__:Failed to process candidate e412231c-efb9-4b84-a0e7-4d5ab517dca3: Unconsumed column names: coupang_status
+Traceback (most recent call last):
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/scripts/register_20_products.py", line 63, in main
+    await _execute_post_promote_actions(
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/api/endpoints/sourcing.py", line 208, in _execute_post_promote_actions
+    ok, _reason = register_product(bg_session, account.id, product.id)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/coupang_sync.py", line 571, in register_product
+    session.execute(stmt)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2362, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2247, in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/bulk_persistence.py", line 1294, in orm_execute_statement
+    result = conn.execute(
+             ^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1418, in execute
+    return meth(
+           ^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 515, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1632, in _execute_clauseelement
+    compiled_sql, extracted_params, cache_hit = elem._compile_w_cache(
+                                                ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 716, in _compile_w_cache
+    compiled_sql = self._compiler(
+                   ^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 316, in _compiler
+    return dialect.statement_compiler(dialect, self, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 1429, in __init__
+    Compiled.__init__(self, dialect, statement, **kwargs)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 870, in __init__
+    self.string = self.process(self.statement, **compile_kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 915, in process
+    return obj._compiler_dispatch(self, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/annotation.py", line 344, in _compiler_dispatch
+    return self.__element.__class__._compiler_dispatch(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py", line 141, in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+           ^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 5789, in visit_insert
+    crud_params_struct = crud._get_crud_params(
+                         ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/crud.py", line 335, in _get_crud_params
+    raise exc.CompileError(
+sqlalchemy.exc.CompileError: Unconsumed column names: coupang_status
+INFO:__main__:Promoting candidate: 20000 탱탱아이클레이 400g 노랑 버켓 (WFLA5ZK)
+INFO:__main__:Product created: bd58d76e-85a1-4961-9771-154395228837
+INFO:app.services.ai.providers.gemini:Switched to Gemini Key Index: 0
+INFO:app.services.ai.providers.openai:Switched to OpenAI Key Index: 0
+INFO:app.services.processing_service:Starting LangGraph processing for product bd58d76e-85a1-4961-9771-154395228837...
+INFO:app.services.ai.agents.processing_agent:[Agent] Extracting details for processing...
+INFO:app.services.ai.agents.processing_agent:[Agent] Optimizing SEO...
+ERROR:app.services.ai.providers.gemini:Gemini generate_json failed (non-retryable): 404 models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.
+INFO:app.services.ai.agents.processing_agent:[Agent] Processing images...
+INFO:app.services.image_processing:Processing 1 images for product bd58d76e-85a1-4961-9771-154395228837...
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/bd58d76e-85a1-4961-9771-154395228837/8de3848e-fa4c-4126-8622-f5171e0eedc3.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/bd58d76e-85a1-4961-9771-154395228837/731f18d0-0dd2-46a4-b49c-b1e970b6d638.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/bd58d76e-85a1-4961-9771-154395228837/732aaff7-3a68-408d-a680-8a1c24465b4c.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/bd58d76e-85a1-4961-9771-154395228837/920d02ce-d05a-423c-8d31-4e69f5babbb5.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/bd58d76e-85a1-4961-9771-154395228837/4acf206e-6678-486a-8b7f-5788e28940e0.jpg "HTTP/2 200 OK"
+INFO:app.services.image_processing:이미지 처리 요약(productId=bd58d76e-85a1-4961-9771-154395228837, target=5, input=1, unique=1, fromHtml=0, downloadOk=1, downloadFail=0, hashFail=0, uploadOk=5, uploadFail=0, exceptions=0, result=5)
+INFO:app.services.ai.agents.processing_agent:[Agent] Saving processed results...
+INFO:app.services.processing_service:Successfully processed product bd58d76e-85a1-4961-9771-154395228837. Status: COMPLETED
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/77800 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 401 Unauthorized"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932020220 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932020220 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932020220 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932020220 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932020220 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: PUT https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 200 OK"
+ERROR:__main__:Failed to process candidate 9e600ee4-106d-4778-bb14-dd7858a64dab: Unconsumed column names: coupang_status
+Traceback (most recent call last):
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/scripts/register_20_products.py", line 63, in main
+    await _execute_post_promote_actions(
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/api/endpoints/sourcing.py", line 208, in _execute_post_promote_actions
+    ok, _reason = register_product(bg_session, account.id, product.id)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/coupang_sync.py", line 571, in register_product
+    session.execute(stmt)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2362, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2247, in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/bulk_persistence.py", line 1294, in orm_execute_statement
+    result = conn.execute(
+             ^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1418, in execute
+    return meth(
+           ^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 515, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1632, in _execute_clauseelement
+    compiled_sql, extracted_params, cache_hit = elem._compile_w_cache(
+                                                ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 716, in _compile_w_cache
+    compiled_sql = self._compiler(
+                   ^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 316, in _compiler
+    return dialect.statement_compiler(dialect, self, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 1429, in __init__
+    Compiled.__init__(self, dialect, statement, **kwargs)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 870, in __init__
+    self.string = self.process(self.statement, **compile_kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 915, in process
+    return obj._compiler_dispatch(self, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/annotation.py", line 344, in _compiler_dispatch
+    return self.__element.__class__._compiler_dispatch(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py", line 141, in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+           ^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 5789, in visit_insert
+    crud_params_struct = crud._get_crud_params(
+                         ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/crud.py", line 335, in _get_crud_params
+    raise exc.CompileError(
+sqlalchemy.exc.CompileError: Unconsumed column names: coupang_status
+INFO:__main__:Promoting candidate: 탱탱아이클레이 400g 갈색 버켓 (WFLA5ZJ)
+INFO:__main__:Product created: 618a19cb-71eb-4d9a-8a8b-a9b9555513c2
+INFO:app.services.ai.providers.gemini:Switched to Gemini Key Index: 0
+INFO:app.services.ai.providers.openai:Switched to OpenAI Key Index: 0
+INFO:app.services.processing_service:Starting LangGraph processing for product 618a19cb-71eb-4d9a-8a8b-a9b9555513c2...
+INFO:app.services.ai.agents.processing_agent:[Agent] Extracting details for processing...
+INFO:app.services.ai.agents.processing_agent:[Agent] Optimizing SEO...
+ERROR:app.services.ai.providers.gemini:Gemini generate_json failed (non-retryable): 404 models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.
+INFO:app.services.ai.agents.processing_agent:[Agent] Processing images...
+INFO:app.services.image_processing:Processing 1 images for product 618a19cb-71eb-4d9a-8a8b-a9b9555513c2...
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/618a19cb-71eb-4d9a-8a8b-a9b9555513c2/ed315600-5f10-4640-b8ba-72437e52cc19.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/618a19cb-71eb-4d9a-8a8b-a9b9555513c2/bca38920-ba4e-4f74-8946-27a010763f31.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/618a19cb-71eb-4d9a-8a8b-a9b9555513c2/a5351335-c54a-4f09-8157-3c5e4101465d.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/618a19cb-71eb-4d9a-8a8b-a9b9555513c2/d3e9d251-b4fc-4618-b484-12ef286ed3cd.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/618a19cb-71eb-4d9a-8a8b-a9b9555513c2/82305168-4772-41a4-999c-8a2caa7d9018.jpg "HTTP/2 200 OK"
+INFO:app.services.image_processing:이미지 처리 요약(productId=618a19cb-71eb-4d9a-8a8b-a9b9555513c2, target=5, input=1, unique=1, fromHtml=0, downloadOk=1, downloadFail=0, hashFail=0, uploadOk=5, uploadFail=0, exceptions=0, result=5)
+INFO:app.services.ai.agents.processing_agent:[Agent] Saving processed results...
+INFO:app.services.processing_service:Successfully processed product 618a19cb-71eb-4d9a-8a8b-a9b9555513c2. Status: COMPLETED
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/77800 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 401 Unauthorized"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932020394 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932020394 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: PUT https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 400 Bad Request"
+ERROR:__main__:Failed to process candidate 07eb33df-de13-48b9-bd20-08578619a1c7: Unconsumed column names: coupang_status
+Traceback (most recent call last):
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/scripts/register_20_products.py", line 63, in main
+    await _execute_post_promote_actions(
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/api/endpoints/sourcing.py", line 208, in _execute_post_promote_actions
+    ok, _reason = register_product(bg_session, account.id, product.id)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/coupang_sync.py", line 571, in register_product
+    session.execute(stmt)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2362, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2247, in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/bulk_persistence.py", line 1294, in orm_execute_statement
+    result = conn.execute(
+             ^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1418, in execute
+    return meth(
+           ^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 515, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1632, in _execute_clauseelement
+    compiled_sql, extracted_params, cache_hit = elem._compile_w_cache(
+                                                ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 716, in _compile_w_cache
+    compiled_sql = self._compiler(
+                   ^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 316, in _compiler
+    return dialect.statement_compiler(dialect, self, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 1429, in __init__
+    Compiled.__init__(self, dialect, statement, **kwargs)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 870, in __init__
+    self.string = self.process(self.statement, **compile_kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 915, in process
+    return obj._compiler_dispatch(self, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/annotation.py", line 344, in _compiler_dispatch
+    return self.__element.__class__._compiler_dispatch(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py", line 141, in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+           ^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 5789, in visit_insert
+    crud_params_struct = crud._get_crud_params(
+                         ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/crud.py", line 335, in _get_crud_params
+    raise exc.CompileError(
+sqlalchemy.exc.CompileError: Unconsumed column names: coupang_status
+INFO:__main__:Promoting candidate: 탱탱아이클레이 400g 검정 버켓 (WFLA5ZI)
+INFO:__main__:Product created: 62fa1e0a-1e1e-4086-bdd7-e301ba93074b
+INFO:app.services.ai.providers.gemini:Switched to Gemini Key Index: 0
+INFO:app.services.ai.providers.openai:Switched to OpenAI Key Index: 0
+INFO:app.services.processing_service:Starting LangGraph processing for product 62fa1e0a-1e1e-4086-bdd7-e301ba93074b...
+INFO:app.services.ai.agents.processing_agent:[Agent] Extracting details for processing...
+INFO:app.services.ai.agents.processing_agent:[Agent] Optimizing SEO...
+ERROR:app.services.ai.providers.gemini:Gemini generate_json failed (non-retryable): 404 models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.
+INFO:app.services.ai.agents.processing_agent:[Agent] Processing images...
+INFO:app.services.image_processing:Processing 1 images for product 62fa1e0a-1e1e-4086-bdd7-e301ba93074b...
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/62fa1e0a-1e1e-4086-bdd7-e301ba93074b/afb89449-9edf-417d-9a85-a5d050563c93.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/62fa1e0a-1e1e-4086-bdd7-e301ba93074b/60fa8ae1-65d2-4534-bf3c-063797933575.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/62fa1e0a-1e1e-4086-bdd7-e301ba93074b/e27a1929-2389-4a14-954b-e0c0e9c98276.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/62fa1e0a-1e1e-4086-bdd7-e301ba93074b/79b66da4-fb12-4921-ae99-86a3c894f1d7.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/62fa1e0a-1e1e-4086-bdd7-e301ba93074b/84933809-57c5-4241-8e18-2f6e5cfba821.jpg "HTTP/2 200 OK"
+INFO:app.services.image_processing:이미지 처리 요약(productId=62fa1e0a-1e1e-4086-bdd7-e301ba93074b, target=5, input=1, unique=1, fromHtml=0, downloadOk=1, downloadFail=0, hashFail=0, uploadOk=5, uploadFail=0, exceptions=0, result=5)
+INFO:app.services.ai.agents.processing_agent:[Agent] Saving processed results...
+INFO:app.services.processing_service:Successfully processed product 62fa1e0a-1e1e-4086-bdd7-e301ba93074b. Status: COMPLETED
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/77800 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 401 Unauthorized"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932020467 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932020467 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: PUT https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 400 Bad Request"
+ERROR:__main__:Failed to process candidate 05263e6d-7e7a-4898-a3b2-4777387ce286: Unconsumed column names: coupang_status
+Traceback (most recent call last):
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/scripts/register_20_products.py", line 63, in main
+    await _execute_post_promote_actions(
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/api/endpoints/sourcing.py", line 208, in _execute_post_promote_actions
+    ok, _reason = register_product(bg_session, account.id, product.id)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/coupang_sync.py", line 571, in register_product
+    session.execute(stmt)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2362, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2247, in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/bulk_persistence.py", line 1294, in orm_execute_statement
+    result = conn.execute(
+             ^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1418, in execute
+    return meth(
+           ^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 515, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1632, in _execute_clauseelement
+    compiled_sql, extracted_params, cache_hit = elem._compile_w_cache(
+                                                ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 716, in _compile_w_cache
+    compiled_sql = self._compiler(
+                   ^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 316, in _compiler
+    return dialect.statement_compiler(dialect, self, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 1429, in __init__
+    Compiled.__init__(self, dialect, statement, **kwargs)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 870, in __init__
+    self.string = self.process(self.statement, **compile_kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 915, in process
+    return obj._compiler_dispatch(self, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/annotation.py", line 344, in _compiler_dispatch
+    return self.__element.__class__._compiler_dispatch(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py", line 141, in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+           ^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 5789, in visit_insert
+    crud_params_struct = crud._get_crud_params(
+                         ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/crud.py", line 335, in _get_crud_params
+    raise exc.CompileError(
+sqlalchemy.exc.CompileError: Unconsumed column names: coupang_status
+INFO:__main__:Promoting candidate: 탱탱아이클레이 400g 분홍 버켓 (WFLA5ZH)
+INFO:__main__:Product created: 98259735-66eb-49b2-8b70-634b77e08087
+INFO:app.services.ai.providers.gemini:Switched to Gemini Key Index: 0
+INFO:app.services.ai.providers.openai:Switched to OpenAI Key Index: 0
+INFO:app.services.processing_service:Starting LangGraph processing for product 98259735-66eb-49b2-8b70-634b77e08087...
+INFO:app.services.ai.agents.processing_agent:[Agent] Extracting details for processing...
+INFO:app.services.ai.agents.processing_agent:[Agent] Optimizing SEO...
+ERROR:app.services.ai.providers.gemini:Gemini generate_json failed (non-retryable): 404 models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.
+INFO:app.services.ai.agents.processing_agent:[Agent] Processing images...
+INFO:app.services.image_processing:Processing 1 images for product 98259735-66eb-49b2-8b70-634b77e08087...
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/98259735-66eb-49b2-8b70-634b77e08087/7a2b0685-a4b8-43ea-9856-70591329a00d.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/98259735-66eb-49b2-8b70-634b77e08087/90a2dc0c-47c4-4e29-a86f-fdbd5ee36f4f.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/98259735-66eb-49b2-8b70-634b77e08087/5ac1a0e3-b624-4170-8562-3be48371b87c.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/98259735-66eb-49b2-8b70-634b77e08087/d496c7f8-88da-476c-ad3f-cbd887d3e132.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/98259735-66eb-49b2-8b70-634b77e08087/e3ab159d-8b1d-442c-95d9-994257352158.jpg "HTTP/2 200 OK"
+INFO:app.services.image_processing:이미지 처리 요약(productId=98259735-66eb-49b2-8b70-634b77e08087, target=5, input=1, unique=1, fromHtml=0, downloadOk=1, downloadFail=0, hashFail=0, uploadOk=5, uploadFail=0, exceptions=0, result=5)
+INFO:app.services.ai.agents.processing_agent:[Agent] Saving processed results...
+INFO:app.services.processing_service:Successfully processed product 98259735-66eb-49b2-8b70-634b77e08087. Status: COMPLETED
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/77800 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 401 Unauthorized"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932020532 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932020532 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932020532 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932020532 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932020532 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: PUT https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 200 OK"
+ERROR:__main__:Failed to process candidate 13f6c139-2243-463e-8e30-72c90e4c2ea7: Unconsumed column names: coupang_status
+Traceback (most recent call last):
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/scripts/register_20_products.py", line 63, in main
+    await _execute_post_promote_actions(
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/api/endpoints/sourcing.py", line 208, in _execute_post_promote_actions
+    ok, _reason = register_product(bg_session, account.id, product.id)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/coupang_sync.py", line 571, in register_product
+    session.execute(stmt)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2362, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2247, in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/bulk_persistence.py", line 1294, in orm_execute_statement
+    result = conn.execute(
+             ^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1418, in execute
+    return meth(
+           ^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 515, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1632, in _execute_clauseelement
+    compiled_sql, extracted_params, cache_hit = elem._compile_w_cache(
+                                                ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 716, in _compile_w_cache
+    compiled_sql = self._compiler(
+                   ^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 316, in _compiler
+    return dialect.statement_compiler(dialect, self, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 1429, in __init__
+    Compiled.__init__(self, dialect, statement, **kwargs)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 870, in __init__
+    self.string = self.process(self.statement, **compile_kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 915, in process
+    return obj._compiler_dispatch(self, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/annotation.py", line 344, in _compiler_dispatch
+    return self.__element.__class__._compiler_dispatch(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py", line 141, in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+           ^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 5789, in visit_insert
+    crud_params_struct = crud._get_crud_params(
+                         ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/crud.py", line 335, in _get_crud_params
+    raise exc.CompileError(
+sqlalchemy.exc.CompileError: Unconsumed column names: coupang_status
+INFO:__main__:Promoting candidate: 탱탱아이클레이 400g 빨강 버켓 (WFLA5ZG)
+INFO:__main__:Product created: 9a9790fc-23b6-4697-9d4b-2085348d7410
+INFO:app.services.ai.providers.gemini:Switched to Gemini Key Index: 0
+INFO:app.services.ai.providers.openai:Switched to OpenAI Key Index: 0
+INFO:app.services.processing_service:Starting LangGraph processing for product 9a9790fc-23b6-4697-9d4b-2085348d7410...
+INFO:app.services.ai.agents.processing_agent:[Agent] Extracting details for processing...
+INFO:app.services.ai.agents.processing_agent:[Agent] Optimizing SEO...
+ERROR:app.services.ai.providers.gemini:Gemini generate_json failed (non-retryable): 404 models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.
+INFO:app.services.ai.agents.processing_agent:[Agent] Processing images...
+INFO:app.services.image_processing:Processing 1 images for product 9a9790fc-23b6-4697-9d4b-2085348d7410...
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/9a9790fc-23b6-4697-9d4b-2085348d7410/4c8d3591-0bfe-494f-98ee-a0fab9d6b2d1.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/9a9790fc-23b6-4697-9d4b-2085348d7410/8f4f6737-cb3f-48d7-afff-750f51d6f397.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/9a9790fc-23b6-4697-9d4b-2085348d7410/fa48b97b-7b47-4133-a9f6-a9b4b280fbf4.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/9a9790fc-23b6-4697-9d4b-2085348d7410/eb3681ed-0f49-44fa-a512-64fedf6e7b17.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/9a9790fc-23b6-4697-9d4b-2085348d7410/dd28ad2a-a09f-46ec-ba50-f9e1a7f629b9.jpg "HTTP/2 200 OK"
+INFO:app.services.image_processing:이미지 처리 요약(productId=9a9790fc-23b6-4697-9d4b-2085348d7410, target=5, input=1, unique=1, fromHtml=0, downloadOk=1, downloadFail=0, hashFail=0, uploadOk=5, uploadFail=0, exceptions=0, result=5)
+INFO:app.services.ai.agents.processing_agent:[Agent] Saving processed results...
+INFO:app.services.processing_service:Successfully processed product 9a9790fc-23b6-4697-9d4b-2085348d7410. Status: COMPLETED
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/77800 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 401 Unauthorized"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932020727 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932020727 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932020727 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932020727 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932020727 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: PUT https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 400 Bad Request"
+ERROR:__main__:Failed to process candidate 305052de-671e-420b-bcc8-869a1705d04c: Unconsumed column names: coupang_status
+Traceback (most recent call last):
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/scripts/register_20_products.py", line 63, in main
+    await _execute_post_promote_actions(
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/api/endpoints/sourcing.py", line 208, in _execute_post_promote_actions
+    ok, _reason = register_product(bg_session, account.id, product.id)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/coupang_sync.py", line 571, in register_product
+    session.execute(stmt)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2362, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2247, in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/bulk_persistence.py", line 1294, in orm_execute_statement
+    result = conn.execute(
+             ^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1418, in execute
+    return meth(
+           ^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 515, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1632, in _execute_clauseelement
+    compiled_sql, extracted_params, cache_hit = elem._compile_w_cache(
+                                                ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 716, in _compile_w_cache
+    compiled_sql = self._compiler(
+                   ^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 316, in _compiler
+    return dialect.statement_compiler(dialect, self, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 1429, in __init__
+    Compiled.__init__(self, dialect, statement, **kwargs)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 870, in __init__
+    self.string = self.process(self.statement, **compile_kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 915, in process
+    return obj._compiler_dispatch(self, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/annotation.py", line 344, in _compiler_dispatch
+    return self.__element.__class__._compiler_dispatch(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py", line 141, in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+           ^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 5789, in visit_insert
+    crud_params_struct = crud._get_crud_params(
+                         ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/crud.py", line 335, in _get_crud_params
+    raise exc.CompileError(
+sqlalchemy.exc.CompileError: Unconsumed column names: coupang_status
+INFO:__main__:Promoting candidate: 탱탱아이클레이 400g 주황 버켓 (WFLA5ZE)
+INFO:__main__:Product created: e0112c5a-589b-4d23-b6a9-653c0cf1ecbe
+INFO:app.services.ai.providers.gemini:Switched to Gemini Key Index: 0
+INFO:app.services.ai.providers.openai:Switched to OpenAI Key Index: 0
+INFO:app.services.processing_service:Starting LangGraph processing for product e0112c5a-589b-4d23-b6a9-653c0cf1ecbe...
+INFO:app.services.ai.agents.processing_agent:[Agent] Extracting details for processing...
+INFO:app.services.ai.agents.processing_agent:[Agent] Optimizing SEO...
+ERROR:app.services.ai.providers.gemini:Gemini generate_json failed (non-retryable): 404 models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.
+INFO:app.services.ai.agents.processing_agent:[Agent] Processing images...
+INFO:app.services.image_processing:Processing 1 images for product e0112c5a-589b-4d23-b6a9-653c0cf1ecbe...
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/e0112c5a-589b-4d23-b6a9-653c0cf1ecbe/8ad85458-503b-4654-a435-7aa0fd64feae.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/e0112c5a-589b-4d23-b6a9-653c0cf1ecbe/27b099be-d08b-4e4a-b278-0e7e6b3456a9.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/e0112c5a-589b-4d23-b6a9-653c0cf1ecbe/e40323fc-a5d7-47eb-b5fd-d53832f230bb.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/e0112c5a-589b-4d23-b6a9-653c0cf1ecbe/cb9ec102-1599-4cb0-ac0c-0e36e579af41.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/e0112c5a-589b-4d23-b6a9-653c0cf1ecbe/3eae0520-2179-4f5a-849b-a356450182d5.jpg "HTTP/2 200 OK"
+INFO:app.services.image_processing:이미지 처리 요약(productId=e0112c5a-589b-4d23-b6a9-653c0cf1ecbe, target=5, input=1, unique=1, fromHtml=0, downloadOk=1, downloadFail=0, hashFail=0, uploadOk=5, uploadFail=0, exceptions=0, result=5)
+INFO:app.services.ai.agents.processing_agent:[Agent] Saving processed results...
+INFO:app.services.processing_service:Successfully processed product e0112c5a-589b-4d23-b6a9-653c0cf1ecbe. Status: COMPLETED
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/77800 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 401 Unauthorized"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932020901 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932020901 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: PUT https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 400 Bad Request"
+ERROR:__main__:Failed to process candidate 20df3aaf-e868-4534-bd54-198488b427f9: Unconsumed column names: coupang_status
+Traceback (most recent call last):
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/scripts/register_20_products.py", line 63, in main
+    await _execute_post_promote_actions(
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/api/endpoints/sourcing.py", line 208, in _execute_post_promote_actions
+    ok, _reason = register_product(bg_session, account.id, product.id)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/coupang_sync.py", line 571, in register_product
+    session.execute(stmt)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2362, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2247, in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/bulk_persistence.py", line 1294, in orm_execute_statement
+    result = conn.execute(
+             ^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1418, in execute
+    return meth(
+           ^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 515, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1632, in _execute_clauseelement
+    compiled_sql, extracted_params, cache_hit = elem._compile_w_cache(
+                                                ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 716, in _compile_w_cache
+    compiled_sql = self._compiler(
+                   ^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 316, in _compiler
+    return dialect.statement_compiler(dialect, self, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 1429, in __init__
+    Compiled.__init__(self, dialect, statement, **kwargs)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 870, in __init__
+    self.string = self.process(self.statement, **compile_kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 915, in process
+    return obj._compiler_dispatch(self, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/annotation.py", line 344, in _compiler_dispatch
+    return self.__element.__class__._compiler_dispatch(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py", line 141, in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+           ^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 5789, in visit_insert
+    crud_params_struct = crud._get_crud_params(
+                         ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/crud.py", line 335, in _get_crud_params
+    raise exc.CompileError(
+sqlalchemy.exc.CompileError: Unconsumed column names: coupang_status
+INFO:__main__:Promoting candidate: 탱탱아이클레이 400g 초록 버켓 (WFLA5ZD)
+INFO:__main__:Product created: 803b2f56-3d7f-4e50-9910-a131f4e4b3a9
+INFO:app.services.ai.providers.gemini:Switched to Gemini Key Index: 0
+INFO:app.services.ai.providers.openai:Switched to OpenAI Key Index: 0
+INFO:app.services.processing_service:Starting LangGraph processing for product 803b2f56-3d7f-4e50-9910-a131f4e4b3a9...
+INFO:app.services.ai.agents.processing_agent:[Agent] Extracting details for processing...
+INFO:app.services.ai.agents.processing_agent:[Agent] Optimizing SEO...
+ERROR:app.services.ai.providers.gemini:Gemini generate_json failed (non-retryable): 404 models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.
+INFO:app.services.ai.agents.processing_agent:[Agent] Processing images...
+INFO:app.services.image_processing:Processing 1 images for product 803b2f56-3d7f-4e50-9910-a131f4e4b3a9...
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/803b2f56-3d7f-4e50-9910-a131f4e4b3a9/1b746b69-9ea7-4807-b18d-bafbb0a0fa9d.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/803b2f56-3d7f-4e50-9910-a131f4e4b3a9/9df27aa2-c7f7-4101-9e5c-3c7febd7da2e.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/803b2f56-3d7f-4e50-9910-a131f4e4b3a9/2a9db92f-b1ef-46a1-8fc3-0e44bf98f7dc.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/803b2f56-3d7f-4e50-9910-a131f4e4b3a9/cd9acf7c-bd45-457f-b60a-56d5272d164c.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/803b2f56-3d7f-4e50-9910-a131f4e4b3a9/8ddf1420-0e6d-471c-9fbc-ae131c621792.jpg "HTTP/2 200 OK"
+INFO:app.services.image_processing:이미지 처리 요약(productId=803b2f56-3d7f-4e50-9910-a131f4e4b3a9, target=5, input=1, unique=1, fromHtml=0, downloadOk=1, downloadFail=0, hashFail=0, uploadOk=5, uploadFail=0, exceptions=0, result=5)
+INFO:app.services.ai.agents.processing_agent:[Agent] Saving processed results...
+INFO:app.services.processing_service:Successfully processed product 803b2f56-3d7f-4e50-9910-a131f4e4b3a9. Status: COMPLETED
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/77800 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 401 Unauthorized"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932020986 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932020986 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: PUT https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 400 Bad Request"
+ERROR:__main__:Failed to process candidate eb4284fe-f68f-408c-aafa-906e2cef2769: Unconsumed column names: coupang_status
+Traceback (most recent call last):
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/scripts/register_20_products.py", line 63, in main
+    await _execute_post_promote_actions(
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/api/endpoints/sourcing.py", line 208, in _execute_post_promote_actions
+    ok, _reason = register_product(bg_session, account.id, product.id)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/coupang_sync.py", line 571, in register_product
+    session.execute(stmt)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2362, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2247, in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/bulk_persistence.py", line 1294, in orm_execute_statement
+    result = conn.execute(
+             ^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1418, in execute
+    return meth(
+           ^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 515, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1632, in _execute_clauseelement
+    compiled_sql, extracted_params, cache_hit = elem._compile_w_cache(
+                                                ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 716, in _compile_w_cache
+    compiled_sql = self._compiler(
+                   ^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 316, in _compiler
+    return dialect.statement_compiler(dialect, self, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 1429, in __init__
+    Compiled.__init__(self, dialect, statement, **kwargs)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 870, in __init__
+    self.string = self.process(self.statement, **compile_kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 915, in process
+    return obj._compiler_dispatch(self, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/annotation.py", line 344, in _compiler_dispatch
+    return self.__element.__class__._compiler_dispatch(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py", line 141, in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+           ^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 5789, in visit_insert
+    crud_params_struct = crud._get_crud_params(
+                         ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/crud.py", line 335, in _get_crud_params
+    raise exc.CompileError(
+sqlalchemy.exc.CompileError: Unconsumed column names: coupang_status
+INFO:__main__:Promoting candidate: 탱탱아이클레이 400g 파랑 버켓 (WFLA5ZC)
+INFO:__main__:Product created: 0d7f7b11-9161-458e-a903-71f944591271
+INFO:app.services.ai.providers.gemini:Switched to Gemini Key Index: 0
+INFO:app.services.ai.providers.openai:Switched to OpenAI Key Index: 0
+INFO:app.services.processing_service:Starting LangGraph processing for product 0d7f7b11-9161-458e-a903-71f944591271...
+INFO:app.services.ai.agents.processing_agent:[Agent] Extracting details for processing...
+INFO:app.services.ai.agents.processing_agent:[Agent] Optimizing SEO...
+ERROR:app.services.ai.providers.gemini:Gemini generate_json failed (non-retryable): 404 models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.
+INFO:app.services.ai.agents.processing_agent:[Agent] Processing images...
+INFO:app.services.image_processing:Processing 1 images for product 0d7f7b11-9161-458e-a903-71f944591271...
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/0d7f7b11-9161-458e-a903-71f944591271/d5488969-5595-46fd-abcb-7a56119df83f.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/0d7f7b11-9161-458e-a903-71f944591271/135c7383-7bb2-4f9a-835a-afd7e0f86231.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/0d7f7b11-9161-458e-a903-71f944591271/67ddcf00-d15f-4343-9c3e-ae144d2b78c8.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/0d7f7b11-9161-458e-a903-71f944591271/2d190d7b-88b8-42b4-a15e-5ae615641886.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/0d7f7b11-9161-458e-a903-71f944591271/94941b20-4cfa-40cd-8c03-49b50dce8ba0.jpg "HTTP/2 200 OK"
+INFO:app.services.image_processing:이미지 처리 요약(productId=0d7f7b11-9161-458e-a903-71f944591271, target=5, input=1, unique=1, fromHtml=0, downloadOk=1, downloadFail=0, hashFail=0, uploadOk=5, uploadFail=0, exceptions=0, result=5)
+INFO:app.services.ai.agents.processing_agent:[Agent] Saving processed results...
+INFO:app.services.processing_service:Successfully processed product 0d7f7b11-9161-458e-a903-71f944591271. Status: COMPLETED
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/77800 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 401 Unauthorized"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932021062 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932021062 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932021062 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: PUT https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 200 OK"
+ERROR:__main__:Failed to process candidate f443859d-b9a1-4a14-a943-c4e9c4ce8e57: Unconsumed column names: coupang_status
+Traceback (most recent call last):
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/scripts/register_20_products.py", line 63, in main
+    await _execute_post_promote_actions(
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/api/endpoints/sourcing.py", line 208, in _execute_post_promote_actions
+    ok, _reason = register_product(bg_session, account.id, product.id)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/coupang_sync.py", line 571, in register_product
+    session.execute(stmt)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2362, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2247, in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/bulk_persistence.py", line 1294, in orm_execute_statement
+    result = conn.execute(
+             ^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1418, in execute
+    return meth(
+           ^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 515, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1632, in _execute_clauseelement
+    compiled_sql, extracted_params, cache_hit = elem._compile_w_cache(
+                                                ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 716, in _compile_w_cache
+    compiled_sql = self._compiler(
+                   ^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 316, in _compiler
+    return dialect.statement_compiler(dialect, self, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 1429, in __init__
+    Compiled.__init__(self, dialect, statement, **kwargs)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 870, in __init__
+    self.string = self.process(self.statement, **compile_kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 915, in process
+    return obj._compiler_dispatch(self, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/annotation.py", line 344, in _compiler_dispatch
+    return self.__element.__class__._compiler_dispatch(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py", line 141, in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+           ^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 5789, in visit_insert
+    crud_params_struct = crud._get_crud_params(
+                         ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/crud.py", line 335, in _get_crud_params
+    raise exc.CompileError(
+sqlalchemy.exc.CompileError: Unconsumed column names: coupang_status
+INFO:__main__:Promoting candidate: 까멜리아 웰컴 80x50cm 발매트 매장 현관 입구 매트 미니러그 (WFLA5ZL)
+INFO:__main__:Product created: fc68661c-0fdc-4294-b457-f0fddc7c5a90
+INFO:app.services.ai.providers.gemini:Switched to Gemini Key Index: 0
+INFO:app.services.ai.providers.openai:Switched to OpenAI Key Index: 0
+INFO:app.services.processing_service:Starting LangGraph processing for product fc68661c-0fdc-4294-b457-f0fddc7c5a90...
+INFO:app.services.ai.agents.processing_agent:[Agent] Extracting details for processing...
+INFO:app.services.ai.agents.processing_agent:[Agent] Optimizing SEO...
+ERROR:app.services.ai.providers.gemini:Gemini generate_json failed (non-retryable): 404 models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.
+INFO:app.services.ai.agents.processing_agent:[Agent] Processing images...
+INFO:app.services.image_processing:Processing 1 images for product fc68661c-0fdc-4294-b457-f0fddc7c5a90...
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/fc68661c-0fdc-4294-b457-f0fddc7c5a90/c9d44836-d381-48c4-bb72-10031c3541a7.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/fc68661c-0fdc-4294-b457-f0fddc7c5a90/62c48a24-27b2-4778-ba41-7059efc555a3.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/fc68661c-0fdc-4294-b457-f0fddc7c5a90/ba1dbc69-75eb-487a-8c16-77a3c9e679ad.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/fc68661c-0fdc-4294-b457-f0fddc7c5a90/cf8e855d-bf9d-44f5-aa92-bfcc911bc123.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/fc68661c-0fdc-4294-b457-f0fddc7c5a90/b6273f28-2818-4bf7-b095-c6d835997f9e.jpg "HTTP/2 200 OK"
+INFO:app.services.image_processing:이미지 처리 요약(productId=fc68661c-0fdc-4294-b457-f0fddc7c5a90, target=5, input=1, unique=1, fromHtml=0, downloadOk=1, downloadFail=0, hashFail=0, uploadOk=5, uploadFail=0, exceptions=0, result=5)
+INFO:app.services.ai.agents.processing_agent:[Agent] Saving processed results...
+INFO:app.services.processing_service:Successfully processed product fc68661c-0fdc-4294-b457-f0fddc7c5a90. Status: COMPLETED
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/77800 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 401 Unauthorized"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932021184 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932021184 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: PUT https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 400 Bad Request"
+ERROR:__main__:Failed to process candidate 3ab1541f-fb8c-4c23-a67c-73909f01863b: Unconsumed column names: coupang_status
+Traceback (most recent call last):
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/scripts/register_20_products.py", line 63, in main
+    await _execute_post_promote_actions(
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/api/endpoints/sourcing.py", line 208, in _execute_post_promote_actions
+    ok, _reason = register_product(bg_session, account.id, product.id)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/coupang_sync.py", line 571, in register_product
+    session.execute(stmt)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2362, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2247, in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/bulk_persistence.py", line 1294, in orm_execute_statement
+    result = conn.execute(
+             ^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1418, in execute
+    return meth(
+           ^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 515, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1632, in _execute_clauseelement
+    compiled_sql, extracted_params, cache_hit = elem._compile_w_cache(
+                                                ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 716, in _compile_w_cache
+    compiled_sql = self._compiler(
+                   ^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 316, in _compiler
+    return dialect.statement_compiler(dialect, self, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 1429, in __init__
+    Compiled.__init__(self, dialect, statement, **kwargs)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 870, in __init__
+    self.string = self.process(self.statement, **compile_kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 915, in process
+    return obj._compiler_dispatch(self, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/annotation.py", line 344, in _compiler_dispatch
+    return self.__element.__class__._compiler_dispatch(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py", line 141, in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+           ^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 5789, in visit_insert
+    crud_params_struct = crud._get_crud_params(
+                         ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/crud.py", line 335, in _get_crud_params
+    raise exc.CompileError(
+sqlalchemy.exc.CompileError: Unconsumed column names: coupang_status
+INFO:__main__:Promoting candidate: 9000 탱탱아이클레이 18g (WFLA5ZZ)
+INFO:__main__:Product created: ac70470a-64fd-456d-bc1f-1c4d1bddad6e
+INFO:app.services.ai.providers.gemini:Switched to Gemini Key Index: 0
+INFO:app.services.ai.providers.openai:Switched to OpenAI Key Index: 0
+INFO:app.services.processing_service:Starting LangGraph processing for product ac70470a-64fd-456d-bc1f-1c4d1bddad6e...
+INFO:app.services.ai.agents.processing_agent:[Agent] Extracting details for processing...
+INFO:app.services.ai.agents.processing_agent:[Agent] Optimizing SEO...
+ERROR:app.services.ai.providers.gemini:Gemini generate_json failed (non-retryable): 404 models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.
+INFO:app.services.ai.agents.processing_agent:[Agent] Processing images...
+INFO:app.services.image_processing:Processing 1 images for product ac70470a-64fd-456d-bc1f-1c4d1bddad6e...
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/ac70470a-64fd-456d-bc1f-1c4d1bddad6e/2f4e6024-10a8-441b-b50f-d3f0c53db286.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/ac70470a-64fd-456d-bc1f-1c4d1bddad6e/e3a5352d-f987-4143-9967-7f2a401bb391.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/ac70470a-64fd-456d-bc1f-1c4d1bddad6e/5dd28383-df76-4864-92ed-bb8f6bbbde8c.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/ac70470a-64fd-456d-bc1f-1c4d1bddad6e/de5849d5-038e-4c3e-bbd4-d7e7875cc0e7.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/ac70470a-64fd-456d-bc1f-1c4d1bddad6e/9f0970db-ea0a-46c8-ac00-41c365c149b6.jpg "HTTP/2 200 OK"
+INFO:app.services.image_processing:이미지 처리 요약(productId=ac70470a-64fd-456d-bc1f-1c4d1bddad6e, target=5, input=1, unique=1, fromHtml=0, downloadOk=1, downloadFail=0, hashFail=0, uploadOk=5, uploadFail=0, exceptions=0, result=5)
+INFO:app.services.ai.agents.processing_agent:[Agent] Saving processed results...
+INFO:app.services.processing_service:Successfully processed product ac70470a-64fd-456d-bc1f-1c4d1bddad6e. Status: COMPLETED
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/77800 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 401 Unauthorized"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932021260 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932021260 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932021260 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932021260 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932021260 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932021260 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932021260 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932021260 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932021260 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932021260 "HTTP/1.1 200 OK"
+ERROR:__main__:Failed to process candidate 7ae15aeb-4576-45ed-859c-5c8b5f5003d2: Unconsumed column names: coupang_status
+Traceback (most recent call last):
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/scripts/register_20_products.py", line 63, in main
+    await _execute_post_promote_actions(
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/api/endpoints/sourcing.py", line 208, in _execute_post_promote_actions
+    ok, _reason = register_product(bg_session, account.id, product.id)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/coupang_sync.py", line 571, in register_product
+    session.execute(stmt)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2362, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2247, in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/bulk_persistence.py", line 1294, in orm_execute_statement
+    result = conn.execute(
+             ^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1418, in execute
+    return meth(
+           ^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 515, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1632, in _execute_clauseelement
+    compiled_sql, extracted_params, cache_hit = elem._compile_w_cache(
+                                                ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 716, in _compile_w_cache
+    compiled_sql = self._compiler(
+                   ^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 316, in _compiler
+    return dialect.statement_compiler(dialect, self, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 1429, in __init__
+    Compiled.__init__(self, dialect, statement, **kwargs)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 870, in __init__
+    self.string = self.process(self.statement, **compile_kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 915, in process
+    return obj._compiler_dispatch(self, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/annotation.py", line 344, in _compiler_dispatch
+    return self.__element.__class__._compiler_dispatch(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py", line 141, in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+           ^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 5789, in visit_insert
+    crud_params_struct = crud._get_crud_params(
+                         ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/crud.py", line 335, in _get_crud_params
+    raise exc.CompileError(
+sqlalchemy.exc.CompileError: Unconsumed column names: coupang_status
+INFO:__main__:Promoting candidate: 7000 탱탱아이클레이 야광 4색 164x188x30mm (WFLA5ZR)
+INFO:__main__:Product created: b4c32cae-2f82-4519-afe3-b72ccf707fee
+INFO:app.services.ai.providers.gemini:Switched to Gemini Key Index: 0
+INFO:app.services.ai.providers.openai:Switched to OpenAI Key Index: 0
+INFO:app.services.processing_service:Starting LangGraph processing for product b4c32cae-2f82-4519-afe3-b72ccf707fee...
+INFO:app.services.ai.agents.processing_agent:[Agent] Extracting details for processing...
+INFO:app.services.ai.agents.processing_agent:[Agent] Optimizing SEO...
+ERROR:app.services.ai.providers.gemini:Gemini generate_json failed (non-retryable): 404 models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.
+INFO:app.services.ai.agents.processing_agent:[Agent] Processing images...
+INFO:app.services.image_processing:Processing 1 images for product b4c32cae-2f82-4519-afe3-b72ccf707fee...
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/b4c32cae-2f82-4519-afe3-b72ccf707fee/4ec58c51-d017-4b24-84b3-fe18949eb9d7.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/b4c32cae-2f82-4519-afe3-b72ccf707fee/6fba7878-e592-47eb-b26e-a06472adea92.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/b4c32cae-2f82-4519-afe3-b72ccf707fee/9fcc7033-f869-4a08-869e-62ce44050ae2.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/b4c32cae-2f82-4519-afe3-b72ccf707fee/a5622a99-6fcd-4cdb-8429-b78a858320ca.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/b4c32cae-2f82-4519-afe3-b72ccf707fee/72aeb884-81b4-4f2e-843e-962fbdb48e50.jpg "HTTP/2 200 OK"
+INFO:app.services.image_processing:이미지 처리 요약(productId=b4c32cae-2f82-4519-afe3-b72ccf707fee, target=5, input=1, unique=1, fromHtml=0, downloadOk=1, downloadFail=0, hashFail=0, uploadOk=5, uploadFail=0, exceptions=0, result=5)
+INFO:app.services.ai.agents.processing_agent:[Agent] Saving processed results...
+INFO:app.services.processing_service:Successfully processed product b4c32cae-2f82-4519-afe3-b72ccf707fee. Status: COMPLETED
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/77800 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 401 Unauthorized"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932021683 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932021683 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932021683 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: PUT https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 200 OK"
+ERROR:__main__:Failed to process candidate 992b7aa1-3c94-4ad9-87b2-5f7b443b21fe: Unconsumed column names: coupang_status
+Traceback (most recent call last):
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/scripts/register_20_products.py", line 63, in main
+    await _execute_post_promote_actions(
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/api/endpoints/sourcing.py", line 208, in _execute_post_promote_actions
+    ok, _reason = register_product(bg_session, account.id, product.id)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/coupang_sync.py", line 571, in register_product
+    session.execute(stmt)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2362, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2247, in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/bulk_persistence.py", line 1294, in orm_execute_statement
+    result = conn.execute(
+             ^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1418, in execute
+    return meth(
+           ^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 515, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1632, in _execute_clauseelement
+    compiled_sql, extracted_params, cache_hit = elem._compile_w_cache(
+                                                ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 716, in _compile_w_cache
+    compiled_sql = self._compiler(
+                   ^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 316, in _compiler
+    return dialect.statement_compiler(dialect, self, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 1429, in __init__
+    Compiled.__init__(self, dialect, statement, **kwargs)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 870, in __init__
+    self.string = self.process(self.statement, **compile_kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 915, in process
+    return obj._compiler_dispatch(self, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/annotation.py", line 344, in _compiler_dispatch
+    return self.__element.__class__._compiler_dispatch(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py", line 141, in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+           ^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 5789, in visit_insert
+    crud_params_struct = crud._get_crud_params(
+                         ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/crud.py", line 335, in _get_crud_params
+    raise exc.CompileError(
+sqlalchemy.exc.CompileError: Unconsumed column names: coupang_status
+INFO:__main__:Promoting candidate: 5000 탱탱아이클레이 110g 형광연두 (WFLA5ZB)
+INFO:__main__:Product created: 08c838a5-159b-4d66-b6aa-7aa11a879413
+INFO:app.services.ai.providers.gemini:Switched to Gemini Key Index: 0
+INFO:app.services.ai.providers.openai:Switched to OpenAI Key Index: 0
+INFO:app.services.processing_service:Starting LangGraph processing for product 08c838a5-159b-4d66-b6aa-7aa11a879413...
+INFO:app.services.ai.agents.processing_agent:[Agent] Extracting details for processing...
+INFO:app.services.ai.agents.processing_agent:[Agent] Optimizing SEO...
+ERROR:app.services.ai.providers.gemini:Gemini generate_json failed (non-retryable): 404 models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.
+INFO:app.services.ai.agents.processing_agent:[Agent] Processing images...
+INFO:app.services.image_processing:Processing 1 images for product 08c838a5-159b-4d66-b6aa-7aa11a879413...
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/08c838a5-159b-4d66-b6aa-7aa11a879413/25e98993-24e7-4d11-8104-a05c95cd6159.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/08c838a5-159b-4d66-b6aa-7aa11a879413/08bb26db-0fcc-48c7-b8cf-85503b469949.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/08c838a5-159b-4d66-b6aa-7aa11a879413/83b9246f-d0cd-4722-98f4-757f5ff9cdc6.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/08c838a5-159b-4d66-b6aa-7aa11a879413/3570d753-a6f4-47b4-aecd-c6e099a6ba54.jpg "HTTP/2 200 OK"
+INFO:httpx:HTTP Request: POST https://tuwqbahkvvidgcbyztop.supabase.co/storage/v1/object/images/market_processing/08c838a5-159b-4d66-b6aa-7aa11a879413/9e93c277-9815-43d2-bb1d-8f7a17f5c6fb.jpg "HTTP/2 200 OK"
+INFO:app.services.image_processing:이미지 처리 요약(productId=08c838a5-159b-4d66-b6aa-7aa11a879413, target=5, input=1, unique=1, fromHtml=0, downloadOk=1, downloadFail=0, hashFail=0, uploadOk=5, uploadFail=0, exceptions=0, result=5)
+INFO:app.services.ai.agents.processing_agent:[Agent] Saving processed results...
+INFO:app.services.processing_service:Successfully processed product 08c838a5-159b-4d66-b6aa-7aa11a879413. Status: COMPLETED
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/77800 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 401 Unauthorized"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code?returnCenterCodes=1001670198 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932021816 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932021816 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/15932021816 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: PUT https://api-gateway.coupang.com/v2/providers/seller_api/apis/api/v1/marketplace/seller-products "HTTP/1.1 200 OK"
+ERROR:__main__:Failed to process candidate c784d083-675e-4be4-a5de-706cddf2cb9c: Unconsumed column names: coupang_status
+Traceback (most recent call last):
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/scripts/register_20_products.py", line 63, in main
+    await _execute_post_promote_actions(
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/api/endpoints/sourcing.py", line 208, in _execute_post_promote_actions
+    ok, _reason = register_product(bg_session, account.id, product.id)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/app/coupang_sync.py", line 571, in register_product
+    session.execute(stmt)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2362, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2247, in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/orm/bulk_persistence.py", line 1294, in orm_execute_statement
+    result = conn.execute(
+             ^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1418, in execute
+    return meth(
+           ^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 515, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1632, in _execute_clauseelement
+    compiled_sql, extracted_params, cache_hit = elem._compile_w_cache(
+                                                ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 716, in _compile_w_cache
+    compiled_sql = self._compiler(
+                   ^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 316, in _compiler
+    return dialect.statement_compiler(dialect, self, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 1429, in __init__
+    Compiled.__init__(self, dialect, statement, **kwargs)
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 870, in __init__
+    self.string = self.process(self.statement, **compile_kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 915, in process
+    return obj._compiler_dispatch(self, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/annotation.py", line 344, in _compiler_dispatch
+    return self.__element.__class__._compiler_dispatch(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/visitors.py", line 141, in _compiler_dispatch
+    return meth(self, **kw)  # type: ignore  # noqa: E501
+           ^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/compiler.py", line 5789, in visit_insert
+    crud_params_struct = crud._get_crud_params(
+                         ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/sunwoo/project/drop/drop_01/drop_01_dev/.venv/lib/python3.12/site-packages/sqlalchemy/sql/crud.py", line 335, in _get_crud_params
+    raise exc.CompileError(
+sqlalchemy.exc.CompileError: Unconsumed column names: coupang_status
+INFO:__main__:Promoting candidate: 5000 탱탱아이클레이 110g 형광분홍 (WFLA5ZA)
+INFO:__main__:Product created: 637514a2-e45a-444c-9a76-57f05cc028db
+INFO:app.services.ai.providers.gemini:Switched to Gemini Key Index: 0
+INFO:app.services.ai.providers.openai:Switched to OpenAI Key Index: 0
+INFO:app.services.processing_service:Starting LangGraph processing for product 637514a2-e45a-444c-9a76-57f05cc028db...
+INFO:app.services.ai.agents.processing_agent:[Agent] Extracting details for processing...
+INFO:app.services.ai.agents.processing_agent:[Agent] Optimizing SEO...
+ERROR:app.services.ai.providers.gemini:Gemini generate_json failed (non-retryable): 404 models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.
+INFO:app.services.ai.agents.processing_agent:[Agent] Processing images...
+INFO:app.services.image_processing:Processing 1 images for product 637514a2-e45a-444c-9a76-57f05cc028db...
