@@ -63,6 +63,23 @@ class SourcingAgent:
 
         return workflow.compile()
 
+    def _extract_items(self, data: dict) -> list[dict]:
+        if not isinstance(data, dict):
+            return []
+
+        if "items" in data and isinstance(data.get("items"), list):
+            return [it for it in data["items"] if isinstance(it, dict)]
+
+        data_obj = data.get("data")
+        if not isinstance(data_obj, dict):
+            return []
+        items_obj = data_obj.get("items")
+        if items_obj is None and isinstance(data_obj.get("data"), dict):
+            items_obj = data_obj.get("data").get("items")
+        if isinstance(items_obj, list):
+            return [it for it in items_obj if isinstance(it, dict)]
+        return []
+
     def analyze_benchmark(self, state: AgentState) -> Dict[str, Any]:
         logger.info("[Agent] Analyzing benchmark...")
         benchmark = state.get("benchmark_data")
@@ -91,13 +108,7 @@ class SourcingAgent:
         status_code, data = self.client.get_products(keyword=query, limit=30)
         items = []
         if status_code == 200:
-            data_obj = data.get("data")
-            if isinstance(data_obj, dict):
-                items_obj = data_obj.get("items")
-                if items_obj is None and isinstance(data_obj.get("data"), dict):
-                    items_obj = data_obj.get("data").get("items")
-                if isinstance(items_obj, list):
-                    items = [it for it in items_obj if isinstance(it, dict)]
+            items = self._extract_items(data)
         
         # 2. Local Vector Search
         vector_items = []
