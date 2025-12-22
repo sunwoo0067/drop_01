@@ -914,183 +914,183 @@ def sync_ownerclan_items_raw(session: Session, job: SupplierSyncJob) -> OwnerCla
     cursor = after
 
     while True:
-        page_count += 1
-        after_fragment = "null" if not cursor else f'"{cursor}"'
-
-        query = f"""
+        # --- 1단계: 상품 키 목록 수집 (최대 5,000개) ---
+        keys_batch = []
+        last_page_info = {}
+        
+        # 100개씩 최대 50번 호출하여 5,000개 확보 시도 (서버 부하 분산)
+        for _ in range(50):
+            page_count += 1
+            after_fragment = "null" if not cursor else f'"{cursor}"'
+            
+            # 키와 업데이트 시간만 가져오는 라이트 쿼리
+            list_query = f"""
 query {{
-  allItems(dateFrom: {date_from_ms}, dateTo: {date_to_ms}, after: {after_fragment}, first: {first}) {{
+  allItems(dateFrom: {date_from_ms}, dateTo: {date_to_ms}, after: {after_fragment}, first: 100) {{
     pageInfo {{
       hasNextPage
       endCursor
     }}
     edges {{
-      cursor
       node {{
-        createdAt
-        updatedAt
         key
-        name
-        model
-        production
-        origin
-        id
-        price
-        pricePolicy
-        fixedPrice
-        searchKeywords
-        category {{
-          key
-          name
-        }}
-        content
-        shippingFee
-        shippingType
-        images(size: large)
-        status
-        options {{
-          optionAttributes {{
-            name
-            value
-          }}
-          price
-          quantity
-          key
-        }}
-        taxFree
-        adultOnly
-        returnable
-        noReturnReason
-        guaranteedShippingPeriod
-        openmarketSellable
-        boxQuantity
-        attributes
-        closingTime
-        metadata
+        updatedAt
       }}
     }}
   }}
 }}
 """
-
-        try:
-            status_code, payload = client.graphql(query)
-        except Exception as e:
-            session.add(
-                SupplierRawFetchLog(
+            try:
+                # API 호출 및 로깅
+                status_code, payload = client.graphql(list_query)
+                session.add(SupplierRawFetchLog(
                     supplier_code="ownerclan",
                     account_id=account_id,
-                    endpoint=settings.ownerclan_graphql_url,
-                    request_payload={
-                        "query": query,
-                        "dateFrom": date_from_ms,
-                        "dateTo": date_to_ms,
-                        "after": cursor,
-                        "first": first,
-                    },
-                    http_status=None,
-                    response_payload=None,
-                    error_message=str(e),
-                )
-            )
-            session.commit()
-            raise
-
-        session.add(
-            SupplierRawFetchLog(
-                supplier_code="ownerclan",
-                account_id=account_id,
-                endpoint=settings.ownerclan_graphql_url,
-                request_payload={
-                    "query": query,
-                    "dateFrom": date_from_ms,
-                    "dateTo": date_to_ms,
-                    "after": cursor,
-                    "first": first,
-                },
-                http_status=status_code,
-                response_payload=_sanitize_json(payload),
-                error_message=None,
-            )
-        )
-
-        session.commit()
-
-        if status_code == 401:
-            raise RuntimeError("오너클랜 인증이 만료되었습니다(401). 토큰을 갱신해 주세요")
-
-        if status_code >= 400:
-            raise RuntimeError(f"오너클랜 GraphQL 호출 실패: HTTP {status_code}")
-
-        if payload.get("errors"):
-            raise RuntimeError(f"오너클랜 GraphQL 오류: {payload.get('errors')}")
-
-        data = payload.get("data") or {}
-        all_items = data.get("allItems") or {}
-        page_info = all_items.get("pageInfo") or {}
-
-        edges = all_items.get("edges") or []
-        for edge in edges:
-            node = (edge or {}).get("node") or {}
-            item_code = node.get("itemCode") or node.get("item_code") or node.get("key")
-            if not item_code:
-                continue
-            detail_html = node.get("detail_html") or node.get("detailHtml")
-            if isinstance(detail_html, str) and detail_html.strip():
-                node = {**node, "detail_html": normalize_ownerclan_html(detail_html)}
-            else:
-                content = node.get("content")
-                if isinstance(content, str) and content.strip():
-                    node = {**node, "detail_html": normalize_ownerclan_html(content)}
-
-            source_updated_at = _parse_ownerclan_datetime(node.get("updatedAt") or node.get("updated_at"))
-
-            stmt = insert(SupplierItemRaw).values(
-                supplier_code="ownerclan",
-                item_code=str(item_code),
-                item_key=str(node.get("key")) if node.get("key") is not None else None,
-                item_id=str(node.get("id")) if node.get("id") is not None else None,
-                source_updated_at=source_updated_at,
-                raw=_sanitize_json(node),
-                fetched_at=datetime.now(timezone.utc),
-            )
-
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["supplier_code", "item_code"],
-                set_={
-                    "item_key": stmt.excluded.item_key,
-                    "item_id": stmt.excluded.item_id,
-                    "raw": stmt.excluded.raw,
-                    "fetched_at": stmt.excluded.fetched_at,
-                },
-            )
-            session.execute(stmt)
-
-            processed += 1
-
-            if max_items > 0 and processed >= max_items:
+                    endpoint=f"{settings.ownerclan_graphql_url} (allItems_batch)",
+                    request_payload={"query": list_query, "after": cursor},
+                    http_status=status_code,
+                    response_payload=_sanitize_json(payload) if status_code == 200 else None,
+                    error_message=None if status_code == 200 else f"HTTP {status_code}"
+                ))
+            except Exception as e:
+                logger.error(f"오너클랜 목록 수집 중 오류: {e}")
+                break # 다음 배치 시도 또는 종료
+            
+            if status_code != 200 or not payload.get("data"):
                 break
+                
+            data = payload["data"]["allItems"]
+            edges = data.get("edges") or []
+            for edge in edges:
+                node = edge.get("node")
+                if node and node.get("key"):
+                    keys_batch.append(node["key"])
+            
+            last_page_info = data.get("pageInfo") or {}
+            cursor = last_page_info.get("endCursor")
+            
+            if not last_page_info.get("hasNextPage") or not cursor:
+                break
+            
+            # API 제한 준수를 위한 미세 대기
+            time.sleep(0.5)
 
-        if max_items > 0 and processed >= max_items:
-            cursor = page_info.get("endCursor")
-            upsert_sync_state(session, "items_raw", date_to_ms, cursor)
-            job.progress = processed
-            session.commit()
+        if not keys_batch:
             break
 
-        cursor = page_info.get("endCursor")
+        # --- 2단계: 수집된 키들에 대한 상세 정보 일괄 조회 ---
+        detail_query = """
+query ($keys: [ID!]!) {
+  itemsByKeys(keys: $keys) {
+    createdAt
+    updatedAt
+    key
+    name
+    model
+    production
+    origin
+    id
+    price
+    pricePolicy
+    fixedPrice
+    searchKeywords
+    category {
+      key
+      name
+    }
+    content
+    shippingFee
+    shippingType
+    images(size: large)
+    status
+    options {
+      optionAttributes {
+        name
+        value
+      }
+      price
+      quantity
+      key
+    }
+    taxFree
+    adultOnly
+    returnable
+    noReturnReason
+    guaranteedShippingPeriod
+    openmarketSellable
+    boxQuantity
+    attributes
+    closingTime
+    metadata
+  }
+}
+"""
+        try:
+            status_code, detail_payload = client.graphql(detail_query, variables={"keys": keys_batch})
+            session.add(SupplierRawFetchLog(
+                supplier_code="ownerclan",
+                account_id=account_id,
+                endpoint=f"{settings.ownerclan_graphql_url} (itemsByKeys_bulk)",
+                request_payload={"query": "itemsByKeys", "key_count": len(keys_batch)},
+                http_status=status_code,
+                response_payload=None, # 상세 정보는 너무 크므로 로깅 생략 또는 요약
+                error_message=None if status_code == 200 else f"HTTP {status_code}"
+            ))
+        except Exception as e:
+            logger.error(f"오너클랜 상세 정보 일괄 수집 중 오류: {e}")
+            continue # 다음 배치 시도
+
+        if status_code == 200 and detail_payload.get("data"):
+            nodes = detail_payload["data"].get("itemsByKeys") or []
+            for node in nodes:
+                item_code = node.get("key")
+                if not item_code:
+                    continue
+                
+                # HTML 정규화
+                detail_html = node.get("detail_html") or node.get("content")
+                if isinstance(detail_html, str) and detail_html.strip():
+                    node["detail_html"] = normalize_ownerclan_html(detail_html)
+                
+                source_updated_at = _parse_ownerclan_datetime(node.get("updatedAt"))
+
+                stmt = insert(SupplierItemRaw).values(
+                    supplier_code="ownerclan",
+                    item_code=str(item_code),
+                    item_key=str(node.get("key")),
+                    item_id=str(node.get("id")),
+                    source_updated_at=source_updated_at,
+                    raw=_sanitize_json(node),
+                    fetched_at=datetime.now(timezone.utc),
+                )
+
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["supplier_code", "item_code"],
+                    set_={
+                        "item_key": stmt.excluded.item_key,
+                        "item_id": stmt.excluded.item_id,
+                        "raw": stmt.excluded.raw,
+                        "fetched_at": stmt.excluded.fetched_at,
+                    },
+                )
+                session.execute(stmt)
+                processed += 1
+
+                if max_items > 0 and processed >= max_items:
+                    break
+
+        # 상태 업데이트 및 커밋
         upsert_sync_state(session, "items_raw", date_to_ms, cursor)
         job.progress = processed
         session.commit()
 
-        if max_pages > 0 and page_count >= max_pages:
+        if (max_items > 0 and processed >= max_items) or \
+           (max_pages > 0 and page_count >= max_pages) or \
+           not (last_page_info.get("hasNextPage") and cursor):
             break
 
-        has_next = bool(page_info.get("hasNextPage"))
-        if not has_next or not cursor:
-            break
+        time.sleep(1.0) # 배치 간 대기
 
-        time.sleep(1.1)
 
     return OwnerClanJobResult(processed=processed)
 
