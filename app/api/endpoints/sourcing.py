@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
+import anyio
 from pydantic import BaseModel, Field
 from typing import List
 from datetime import datetime, timezone
@@ -184,7 +185,8 @@ async def _execute_post_promote_actions(product_id: uuid.UUID, auto_register_cou
     with session_factory() as bg_session:
         service = ProcessingService(bg_session)
         effective_min_images_required = max(1, int(min_images_required))
-        await service.process_product(product_id, min_images_required=effective_min_images_required)
+        # process_product는 동기 함수이므로 to_thread에서 실행 (service 내부적으로 I/O 수행)
+        anyio.from_thread.run(service.process_product, product_id, effective_min_images_required)
 
         if not auto_register_coupang:
             return
@@ -208,21 +210,29 @@ async def _execute_post_promote_actions(product_id: uuid.UUID, auto_register_cou
         if not account:
             return
 
+        # register_product는 동기 함수이므로 직접 호출 (이미 스레드/진입점 분리됨)
         ok, _reason = register_product(bg_session, account.id, product.id)
         if ok:
             product.status = "ACTIVE"
             bg_session.commit()
 
 
-def _execute_post_promote_actions_bg(product_id: uuid.UUID, auto_register_coupang: bool, min_images_required: int) -> None:
-    import asyncio
+async def _execute_post_promote_actions_bg(product_id: uuid.UUID, auto_register_coupang: bool, min_images_required: int) -> None:
+    # 1. Promote 후속 조치(이미지 처리, 등록 등)는 동기 I/O가 많으므로 별도 스레드에서 실행
+    await anyio.to_thread.run_sync(
+        _execute_post_promote_actions_sync_wrapper,
+        product_id,
+        auto_register_coupang,
+        min_images_required
+    )
 
-    asyncio.run(
-        _execute_post_promote_actions(
-            product_id,
-            bool(auto_register_coupang),
-            int(min_images_required),
-        )
+def _execute_post_promote_actions_sync_wrapper(product_id: uuid.UUID, auto_register_coupang: bool, min_images_required: int) -> None:
+    # anyio.run을 사용하여 동기 컨텍스트 내에서 비동기 핸들러 실행 (스레드 세이프)
+    anyio.run(
+        _execute_post_promote_actions,
+        product_id,
+        auto_register_coupang,
+        min_images_required
     )
 
 @router.get("/candidates")
@@ -266,7 +276,6 @@ def list_sourcing_candidates(
                 "specData": row.spec_data,
                 "seoKeywords": row.seo_keywords,
                 "targetEvent": row.target_event,
-                "thumbnailUrl": row.thumbnail_url,
                 "status": row.status,
                 "createdAt": row.created_at.isoformat() if row.created_at else None,
             }
@@ -309,9 +318,12 @@ async def trigger_keyword_sourcing(
     Triggers sourcing based on a list of keywords.
     Runs in a dedicated background thread to minimize operational risk.
     """
-    background_tasks.add_task(_execute_global_keyword_sourcing, payload.keywords, float(payload.min_margin))
+    background_tasks.add_task(_execute_global_keyword_sourcing_bg, payload.keywords, float(payload.min_margin))
     
     return {"status": "accepted", "message": f"Global keyword sourcing started for {len(payload.keywords)} keywords"}
+
+async def _execute_global_keyword_sourcing_bg(keywords: list[str], min_margin: float) -> None:
+    await anyio.to_thread.run_sync(_execute_global_keyword_sourcing, keywords, min_margin)
 
 def _execute_global_keyword_sourcing(keywords: list[str], min_margin: float) -> None:
     import asyncio
@@ -322,7 +334,7 @@ def _execute_global_keyword_sourcing(keywords: list[str], min_margin: float) -> 
     try:
         with session_factory() as session:
             service = SourcingService(session)
-            asyncio.run(service.execute_keyword_sourcing(keywords, float(min_margin)))
+            anyio.run(service.execute_keyword_sourcing, keywords, float(min_margin))
     except Exception as e:
         error_trace = traceback.format_exc()
         logger.error(f"Error in global keyword sourcing:\n{error_trace}")
@@ -347,6 +359,8 @@ async def _execute_benchmark_sourcing(benchmark_id: uuid.UUID, job_id: uuid.UUID
         logger.info(f"Starting long-running sourcing job {job_id} for benchmark {benchmark_id}")
         with session_factory() as session:
             service = SourcingService(session)
+            # execute_benchmark_sourcing이 내부적으로 비동기이면 anyio.run 사용, 
+            # 여기서는 API가 블로킹되지 않도록 to_thread 진입점에서 이미 분리됨
             await service.execute_benchmark_sourcing(benchmark_id)
             
         # 3. Success
@@ -409,10 +423,12 @@ async def trigger_benchmark_sourcing(
     }
 
 
-def _execute_benchmark_sourcing_bg(benchmark_id: uuid.UUID, job_id: uuid.UUID) -> None:
-    import asyncio
+async def _execute_benchmark_sourcing_bg(benchmark_id: uuid.UUID, job_id: uuid.UUID) -> None:
+    # 오래 걸리는 소싱 작업(DB I/O, API 호출)을 블로킹 없이 처리하기 위해 스레드 오프로딩
+    await anyio.to_thread.run_sync(_execute_benchmark_sourcing_sync_wrapper, benchmark_id, job_id)
 
-    asyncio.run(_execute_benchmark_sourcing(benchmark_id, job_id))
+def _execute_benchmark_sourcing_sync_wrapper(benchmark_id: uuid.UUID, job_id: uuid.UUID) -> None:
+    anyio.run(_execute_benchmark_sourcing, benchmark_id, job_id)
 
 
 @router.patch("/candidates/{candidate_id}")

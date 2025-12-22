@@ -101,7 +101,7 @@ class SourcingService:
             if selling_price and selling_price > 0 and supply_price is not None:
                 margin = (selling_price - supply_price) / selling_price
 
-            if margin is None or margin >= min_margin:
+            if margin is not None and margin >= min_margin:
                 thumbnail_url = (
                     item.get("thumbnail_url")
                     or item.get("thumbnailUrl")
