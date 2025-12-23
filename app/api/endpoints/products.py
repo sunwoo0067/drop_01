@@ -189,7 +189,12 @@ def create_product_from_ownerclan_raw(payload: ProductFromOwnerClanRawIn, sessio
             margin_rate = 0.0
         if margin_rate < 0:
             margin_rate = 0.0
-        selling_price = calculate_selling_price(cost, margin_rate, shipping_fee)
+        selling_price = calculate_selling_price(
+            cost, 
+            margin_rate, 
+            shipping_fee, 
+            market_fee_rate=float(settings.pricing_market_fee_rate or 0.13)
+        )
 
         updated = False
         if (existing.selling_price or 0) <= 0 and selling_price > 0:
@@ -224,7 +229,12 @@ def create_product_from_ownerclan_raw(payload: ProductFromOwnerClanRawIn, sessio
         margin_rate = 0.0
     if margin_rate < 0:
         margin_rate = 0.0
-    selling_price = calculate_selling_price(cost, margin_rate, shipping_fee)
+    selling_price = calculate_selling_price(
+        cost, 
+        margin_rate, 
+        shipping_fee, 
+        market_fee_rate=float(settings.pricing_market_fee_rate or 0.13)
+    )
 
     product = Product(
         supplier_item_id=raw_item.id,
@@ -890,6 +900,43 @@ def trigger_process_product(
     )
 
     return {"status": "accepted", "productId": str(product.id), "minImagesRequired": int(payload.minImagesRequired)}
+
+
+@router.post("/{product_id}/premium-optimize", status_code=202)
+def trigger_premium_optimize_product(
+    product_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    """
+    판매된 상품에 대해 프리미엄 가공(이미지 분석 및 상세페이지 고도화)을 수동으로 트리거합니다.
+    """
+    product = session.get(Product, product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="상품을 찾을 수 없습니다.")
+
+    # 상태를 PROCESSING으로 변경하여 중복 작업 방지
+    product.processing_status = "PROCESSING"
+    session.commit()
+
+    async def _run_premium_optimize():
+        from app.services.processing_service import ProcessingService
+        from app.session_factory import session_factory
+        try:
+            with session_factory() as processing_session:
+                service = ProcessingService(processing_session)
+                await service.process_winning_product(product_id)
+        except Exception as e:
+            logger.error(f"Error in premium optimization for {product_id}: {e}")
+            with session_factory() as error_session:
+                prod = error_session.get(Product, product_id)
+                if prod:
+                    prod.processing_status = "FAILED"
+                    error_session.commit()
+
+    background_tasks.add_task(_run_premium_optimize)
+
+    return {"status": "accepted", "productId": str(product_id)}
 
 
 @router.post("/process/pending", status_code=202)

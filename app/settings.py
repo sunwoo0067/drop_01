@@ -6,13 +6,15 @@ class Settings(BaseSettings):
     source_database_url: str = ""
     dropship_database_url: str = ""
     market_database_url: str = ""
-    supabase_url: str = "https://tuwqbahkvvidgcbyztop.supabase.co"
+    supabase_url: str = "https://irxsnhaqathvumbflzme.supabase.co"
     supabase_service_role_key: str = ""
     supabase_bucket: str = "images"
 
     ownerclan_api_base_url: str = "https://api.ownerclan.com"
     ownerclan_auth_url: str = "https://auth.ownerclan.com/auth"
     ownerclan_graphql_url: str = "https://api.ownerclan.com/v1/graphql"
+    ownerclan_use_sef_proxy: bool = True 
+
 
     ownerclan_primary_user_type: str = "seller"
     ownerclan_primary_username: str = ""
@@ -21,6 +23,8 @@ class Settings(BaseSettings):
     ownerclan_secret_key: str = ""
 
     pricing_default_margin_rate: float = 0.0
+    pricing_market_fee_rate: float = 0.13 # 마켓 수수료율 (쿠팡 기본 13%)
+    product_processing_name_only: bool = True
 
     product_name_forbidden_keywords: list[str] = [
         "정품",
@@ -73,6 +77,13 @@ class Settings(BaseSettings):
     # Ollama
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "gemma3:4b"
+    ollama_function_model: str = "functiongemma"
+    ollama_embedding_model: str = "embeddinggemma"
+    ollama_reasoning_model: str = "rnj-1"
+    ollama_vision_model: str = "drop-vision"
+    ollama_ocr_model: str = "drop-ocr"
+    ollama_qwen_vl_model: str = "drop-qwen-vl"
+    ollama_logic_model: str = "granite4"
 
     # OpenAI
     openai_api_keys: list[str] = [] # List of keys for rotation

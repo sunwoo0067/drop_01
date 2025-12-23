@@ -1,10 +1,12 @@
 import logging
 import uuid
+import asyncio
 import json
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
-from app.models import Product, BenchmarkProduct, SupplierItemRaw
+from app.models import Product, BenchmarkProduct, SupplierItemRaw, SourcingCandidate
+from app.settings import settings
 from app.services.ai.agents.processing_agent import ProcessingAgent
 from app.services.image_processing import image_processing_service
 from app.services.detail_html_normalizer import normalize_ownerclan_html
@@ -17,7 +19,7 @@ class ProcessingService:
         self.processing_agent = ProcessingAgent(db)
 
     def _name_only_processing(self) -> bool:
-        return True
+        return settings.product_processing_name_only
 
     async def process_product(self, product_id: uuid.UUID, min_images_required: int = 1) -> bool:
         """
@@ -28,13 +30,13 @@ class ProcessingService:
             
             product = self.db.scalars(select(Product).where(Product.id == product_id)).one_or_none()
             if not product:
-                logger.error(f"Product {product_id} not found.") # Added this line back for better logging
+                logger.error(f"Product {product_id} not found.")
                 return False
 
             product.processing_status = "PROCESSING"
             self.db.commit()
 
-            # 기본 정보 초기화 (에이전트 실패 대비)
+            # 기본 정보 초기화
             if not product.processed_name:
                 product.processed_name = product.name
             
@@ -47,7 +49,6 @@ class ProcessingService:
                         raw_item = self.db.get(SupplierItemRaw, product.supplier_item_id)
                         raw = raw_item.raw if raw_item and isinstance(raw_item.raw, dict) else {}
                         
-                        # 1. 메인 images 리스트 확인
                         images_val = raw.get("images")
                         if isinstance(images_val, str):
                             s = images_val.strip()
@@ -66,7 +67,6 @@ class ProcessingService:
                                         if s.startswith(("http://", "https://")) and s not in raw_images:
                                             raw_images.append(s)
                         
-                        # 2. thumbnail 필드 별도 확인 (중복 제거하며 추가)
                         thumb = raw.get("thumbnail") or raw.get("main_image")
                         if thumb and isinstance(thumb, str) and thumb.strip().startswith("http"):
                             t = thumb.strip()
@@ -85,28 +85,39 @@ class ProcessingService:
 
                         if detail_html and raw_item and raw_item.supplier_code == "ownerclan":
                             detail_html = normalize_ownerclan_html(detail_html)
-                            # 상세 HTML 즉시 반영 (에이전트 실패 시에도 정보 유지)
                             product.description = detail_html
                             self.db.commit()
 
-                            # 이미지 추출 및 업로드
                             detail_html, _detail_imgs = image_processing_service.replace_html_image_urls(
                                 detail_html,
                                 product_id=str(product_id),
                                 limit=20,
                             )
-                            # 상세에서 추출된 이미지를 raw_images에 추가하여 에이전트/가공에 활용
                             if _detail_imgs:
                                 for u in _detail_imgs:
                                     if u not in raw_images:
                                         raw_images.append(u)
                             
-                            # 업로드된 이미지가 포함된 HTML로 한 번 더 업데이트
                             product.description = detail_html
                             self.db.commit()
-
                 except Exception as e:
-                    logger.warning(f"오너클랜 이미지 추출 실패(productId={product_id}): {e}")
+                    logger.error(f"Error extracting data for product {product_id}: {e}")
+
+            # 벤치마크 상품 정보 가져오기 시도
+            benchmark_data = None
+            if product.supplier_item_id:
+                candidate = self.db.scalars(
+                    select(SourcingCandidate).where(SourcingCandidate.supplier_item_id == str(product.supplier_item_id))
+                ).first()
+                
+                if candidate and candidate.benchmark_product_id:
+                    benchmark = self.db.get(BenchmarkProduct, candidate.benchmark_product_id)
+                    if benchmark:
+                        benchmark_data = {
+                            "name": benchmark.name,
+                            "visual_analysis": benchmark.visual_analysis,
+                            "specs": benchmark.specs
+                        }
 
             input_data = {
                 "name": product.name,
@@ -114,14 +125,15 @@ class ProcessingService:
                 "description": product.description,
                 "images": raw_images,
                 "detail_html": detail_html,
+                "category": product.processed_category if hasattr(product, 'processed_category') else "일반",
+                "target_market": "Coupang",
             }
             
             # 에이전트 실행
             try:
-                result = await self.processing_agent.run(str(product_id), input_data)
+                result = await self.processing_agent.run(str(product_id), input_data, benchmark_data=benchmark_data)
                 output = result.get("final_output", {})
                 
-                # 결과 반영
                 if output.get("processed_name"):
                     product.processed_name = output.get("processed_name")
                 if output.get("processed_keywords"):
@@ -130,13 +142,11 @@ class ProcessingService:
                     product.processed_image_urls = output.get("processed_image_urls")
             except Exception as e:
                 logger.error(f"ProcessingAgent 실행 실패(productId={product_id}): {e}")
-                # 에이전트 실패해도 추출된 이미지는 활용 시도
                 if not self._name_only_processing() and (not product.processed_image_urls) and raw_images:
                     product.processed_image_urls = image_processing_service.process_and_upload_images(
                         raw_images, product_id=str(product_id)
                     )
 
-            # 최종 상태 판정 유연화: 이름과 이미지가 최소 1장 이상이면 성공으로 간주
             has_name = bool(product.processed_name or product.name)
             if self._name_only_processing():
                 has_images = True
@@ -147,17 +157,14 @@ class ProcessingService:
                 product.processing_status = "COMPLETED"
             else:
                 product.processing_status = "FAILED"
-                logger.warning(f"상품 가공 불충분: has_name={has_name}, has_images={has_images} (count={len(product.processed_image_urls) if product.processed_image_urls else 0})")
                 
             self.db.commit()
-            logger.info(f"Successfully processed product {product_id}. Status: {product.processing_status}") # Added this line back for better logging
             return True
             
         except Exception as e:
             logger.error(f"Error processing product {product_id}: {e}")
             self.db.rollback()
             try:
-                # Try to key status as failed
                 product.processing_status = "FAILED"
                 self.db.commit()
             except:
@@ -165,14 +172,67 @@ class ProcessingService:
             return False
 
     async def process_pending_products(self, limit: int = 10, min_images_required: int = 1):
-        """
-        Finds pending products and processes them.
-        """
         stmt = select(Product).where(Product.processing_status == "PENDING").limit(limit)
         products = self.db.scalars(stmt).all()
         
-        count = 0
-        for p in products:
-            if await self.process_product(p.id, min_images_required=min_images_required):
-                count += 1
-        return count
+        # 병렬 처리를 위한 세마포어 (API 부하 조절)
+        sem = asyncio.Semaphore(10)
+        
+        async def _limited_process(p_id):
+            async with sem:
+                return await self.process_product(p_id, min_images_required=min_images_required)
+        
+        tasks = [_limited_process(p.id) for p in products]
+        results = await asyncio.gather(*tasks)
+        return sum(1 for r in results if r)
+
+    def get_winning_products_for_processing(self, limit: int = 20) -> list[Product]:
+        from sqlalchemy import func, desc
+        from app.models import OrderItem
+        stmt = (
+            select(Product)
+            .join(OrderItem, Product.id == OrderItem.product_id)
+            .where(Product.processing_status.notin_(["PROCESSING", "PENDING_APPROVAL"]))
+            .group_by(Product.id)
+            .order_by(desc(func.count(OrderItem.id)), desc(func.sum(OrderItem.quantity)))
+            .limit(limit)
+        )
+        return list(self.db.scalars(stmt).all())
+
+    async def process_winning_product(self, product_id: uuid.UUID) -> bool:
+        from app.services.ai.service import AIService
+        ai_service = AIService()
+        try:
+            product = self.db.get(Product, product_id)
+            if not product:
+                return False
+            product.processing_status = "PROCESSING"
+            self.db.commit()
+            image_urls = product.processed_image_urls or []
+            if image_urls:
+                first_image_url = image_urls[0]
+                import httpx
+                async with httpx.AsyncClient() as client:
+                    resp = await client.get(first_image_url)
+                    image_data = resp.content
+                features = ai_service.extract_visual_features(image_data)
+                benchmark_data = None
+                if product.benchmark_product_id:
+                    benchmark = self.db.get(BenchmarkProduct, product.benchmark_product_id)
+                    if benchmark:
+                        benchmark_data = {
+                            "visual_analysis": benchmark.visual_analysis,
+                            "specs": benchmark.specs
+                        }
+                prompts = ai_service.generate_premium_image_prompt(features, benchmark_data)
+                logger.info(f"Generated Premium Prompts for {product.name}: {prompts}")
+                product.processing_status = "PENDING_APPROVAL"
+                self.db.commit()
+                return True
+            product.processing_status = "FAILED"
+            self.db.commit()
+            return False
+        except Exception as e:
+            logger.error(f"Error in premium processing for product {product_id}: {e}")
+            self.db.rollback()
+            return False

@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from langgraph.graph import StateGraph, END
 from sqlalchemy.orm import Session
 
@@ -18,18 +18,41 @@ class ProcessingAgent:
         self.workflow = self._create_workflow()
 
     def _name_only_processing(self) -> bool:
-        return True
+        return settings.product_processing_name_only
+
+    def _get_few_shot_examples(self, category: str = "일반", limit: int = 3) -> List[Dict[str, str]]:
+        """
+        Retrieves successfully processed examples from Product table for Few-shot prompting.
+        Criteria: processing_status == 'COMPLETED' and status == 'ACTIVE' (implies approval/success)
+        """
+        from app.models import Product
+        from sqlalchemy import select
+        
+        try:
+            stmt = (
+                select(Product.name, Product.processed_name)
+                .where(Product.processing_status == "COMPLETED")
+                .limit(limit)
+            )
+            # In real scenario, we would filter by category similarity
+            results = self.db.execute(stmt).all()
+            return [{"original": r[0], "processed": r[1]} for r in results if r[0] and r[1]]
+        except Exception as e:
+            logger.warning(f"Failed to fetch few-shot examples: {e}")
+            return []
 
     def _create_workflow(self):
         workflow = StateGraph(AgentState)
 
         workflow.add_node("extract_details", self.extract_details)
+        workflow.add_node("extract_ocr_details", self.extract_ocr_details)
         workflow.add_node("optimize_seo", self.optimize_seo)
         workflow.add_node("process_images", self.process_images)
         workflow.add_node("save_product", self.save_product)
 
         workflow.set_entry_point("extract_details")
-        workflow.add_edge("extract_details", "optimize_seo")
+        workflow.add_edge("extract_details", "extract_ocr_details")
+        workflow.add_edge("extract_ocr_details", "optimize_seo")
         if self._name_only_processing():
             workflow.add_edge("optimize_seo", "save_product")
         else:
@@ -49,6 +72,35 @@ class ProcessingAgent:
             "logs": ["Details extracted and normalized"]
         }
 
+    def extract_ocr_details(self, state: AgentState) -> Dict[str, Any]:
+        logger.info("[Agent] Extracting OCR details from images...")
+        input_data = state.get("input_data", {})
+        images = input_data.get("images", [])
+        
+        ocr_texts = []
+        # Limit to first 2 images to avoid excessive processing time
+        for img_url in images[:2]:
+            try:
+                # Need to download image bytes
+                import requests
+                resp = requests.get(img_url, timeout=10)
+                if resp.status_code == 200:
+                    text = self.ai_service.extract_text_from_image(resp.content, format="text")
+                    if text:
+                        ocr_texts.append(f"Image Text: {text}")
+            except Exception as e:
+                logger.error(f"[Agent] OCR failed for {img_url}: {e}")
+        
+        combined_ocr = "\n".join(ocr_texts)
+        if combined_ocr:
+            current_detail = input_data.get("normalized_detail", "")
+            input_data["normalized_detail"] = f"{current_detail}\n\n[OCR Data]\n{combined_ocr}"
+            
+        return {
+            "input_data": input_data,
+            "logs": [f"OCR extraction completed for {len(ocr_texts)} images"]
+        }
+
     def optimize_seo(self, state: AgentState) -> Dict[str, Any]:
         logger.info("[Agent] Optimizing SEO...")
         input_data = state.get("input_data", {})
@@ -57,9 +109,25 @@ class ProcessingAgent:
         
         processed_name = name
         keywords = []
+        context = input_data.get("normalized_detail")
+        benchmark_name = (state.get("benchmark_data") or {}).get("name")
+        category = input_data.get("category") or "일반"
+        market = input_data.get("target_market") or "Coupang"
+        
+        # Get Few-shot examples
+        examples = self._get_few_shot_examples(category=category)
         
         try:
-            seo_result = self.ai_service.optimize_seo(name, [brand], provider="auto")
+            seo_result = self.ai_service.optimize_seo(
+                name, 
+                [brand], 
+                context=context, 
+                benchmark_name=benchmark_name,
+                category=category,
+                market=market,
+                examples=examples,
+                provider="auto"
+            )
             if isinstance(seo_result, dict):
                 raw_title = seo_result.get("title")
                 keywords = seo_result.get("tags") or []
@@ -123,12 +191,12 @@ class ProcessingAgent:
             "logs": ["Processing workflow completed and ready to save"]
         }
 
-    async def run(self, product_id: str, input_data: Dict[str, Any]):
+    async def run(self, product_id: str, input_data: Dict[str, Any], benchmark_data: Optional[Dict[str, Any]] = None):
         initial_state: AgentState = {
             "job_id": f"proc_{product_id}",
             "target_id": product_id,
             "input_data": input_data,
-            "benchmark_data": None,
+            "benchmark_data": benchmark_data,
             "collected_items": [],
             "candidate_results": [],
             "pain_points": [],

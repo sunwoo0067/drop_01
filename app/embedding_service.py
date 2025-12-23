@@ -1,29 +1,30 @@
 import logging
 import httpx
 from typing import List, Optional, Dict, Any
+from app.settings import settings
 
 logger = logging.getLogger(__name__)
 
 
 class EmbeddingService:
-    def __init__(self, base_url: str = "http://localhost:11434", model: str = "nomic-embed-text"):
+    def __init__(self, base_url: str = settings.ollama_base_url, model: Optional[str] = None):
         self.base_url = base_url
-        self.model = model
+        self.model = model or settings.ollama_embedding_model
 
     async def generate_embedding(self, text: str) -> Optional[List[float]]:
         """
-        Generates embedding for the given text using Ollama.
+        Generates embedding for the given text using Ollama's /api/embed endpoint.
         """
         if not text:
             return None
 
-        url = f"{self.base_url}/api/embeddings"
+        url = f"{self.base_url}/api/embed"
         payload = {
             "model": self.model,
-            "prompt": text,
+            "input": [text],
         }
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=300.0) as client:
             try:
                 response = await client.post(url, json=payload)
                 if response.status_code != 200:
@@ -31,7 +32,8 @@ class EmbeddingService:
                     return None
 
                 data = response.json()
-                return data.get("embedding")
+                embeddings = data.get("embeddings", [])
+                return embeddings[0] if embeddings else None
 
             except Exception as exc:
                 logger.error("Error generating embedding: %s", exc)
@@ -39,14 +41,30 @@ class EmbeddingService:
 
     async def generate_batch_embeddings(self, texts: List[str]) -> List[Optional[List[float]]]:
         """
-        Generates embeddings for a list of texts.
-        Current Ollama API usually takes one prompt at a time, so we iterate efficiently.
+        Generates embeddings for a list of texts using Ollama's batch capabilities.
         """
-        results: List[Optional[List[float]]] = []
-        for text in texts:
-            emb = await self.generate_embedding(text)
-            results.append(emb)
-        return results
+        if not texts:
+            return []
+
+        url = f"{self.base_url}/api/embed"
+        payload = {
+            "model": self.model,
+            "input": texts,
+        }
+
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            try:
+                response = await client.post(url, json=payload)
+                if response.status_code != 200:
+                    logger.error("Ollama batch embedding failed: %s %s", response.status_code, response.text)
+                    return [None] * len(texts)
+
+                data = response.json()
+                return data.get("embeddings", [None] * len(texts))
+
+            except Exception as exc:
+                logger.error("Error generating batch embeddings: %s", exc)
+                return [None] * len(texts)
 
     async def generate_rich_embedding(
         self,

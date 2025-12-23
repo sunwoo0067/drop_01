@@ -21,6 +21,7 @@ import {
     Store
 } from "lucide-react";
 import { useState } from "react";
+import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 
@@ -84,25 +85,33 @@ export default function Sidebar() {
             </button>
 
             {/* Logo Section */}
-            <div className="flex h-16 items-center border-b px-6">
+            <div className="flex h-20 items-center px-6 mb-2">
                 <div className="flex items-center gap-3">
-                    <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center shrink-0">
-                        <Package className="h-5 w-5 text-primary-foreground" />
-                    </div>
+                    <motion.div
+                        whileHover={{ rotate: 10, scale: 1.1 }}
+                        className="h-10 w-10 rounded-xl bg-gradient-to-br from-primary to-blue-600 flex items-center justify-center shrink-0 shadow-lg shadow-primary/20"
+                    >
+                        <Package className="h-6 w-6 text-primary-foreground" />
+                    </motion.div>
                     {!collapsed && (
-                        <span className="text-xl font-bold bg-gradient-to-r from-primary to-blue-400 bg-clip-text text-transparent transition-all">
-                            DropAutomata
-                        </span>
+                        <div className="flex flex-col">
+                            <span className="text-lg font-black tracking-tighter bg-gradient-to-r from-primary via-blue-500 to-indigo-400 bg-clip-text text-transparent transition-all">
+                                DROP AUTOMATA
+                            </span>
+                            <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest leading-none">
+                                AI Management
+                            </span>
+                        </div>
                     )}
                 </div>
             </div>
 
             {/* Navigation Section */}
-            <nav className="flex-1 overflow-y-auto overflow-x-hidden py-4 px-3 custom-scrollbar">
-                {menuGroups.map((group, groupIdx) => (
-                    <div key={group.title} className={cn("mb-6", groupIdx === 0 && "mt-0")}>
+            <nav className="flex-1 overflow-y-auto overflow-x-hidden py-4 px-3 space-y-8 custom-scrollbar">
+                {menuGroups.map((group) => (
+                    <div key={group.title} className="relative">
                         {!collapsed && (
-                            <h2 className="px-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                            <h2 className="px-4 text-[10px] font-extrabold text-muted-foreground/60 uppercase tracking-[0.2em] mb-3">
                                 {group.title}
                             </h2>
                         )}
@@ -114,26 +123,29 @@ export default function Sidebar() {
                                         key={item.href}
                                         href={item.href}
                                         className={cn(
-                                            "group relative flex items-center rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200",
+                                            "group relative flex items-center rounded-xl px-4 py-3 text-sm font-semibold transition-all duration-300",
                                             isActive
-                                                ? "bg-primary/10 text-primary"
-                                                : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-                                            collapsed && "justify-center"
+                                                ? "bg-primary text-primary-foreground shadow-md shadow-primary/20"
+                                                : "text-muted-foreground hover:bg-accent/80 hover:text-foreground",
+                                            collapsed && "justify-center px-0 h-12 w-12 mx-auto"
                                         )}
                                         title={collapsed ? item.name : ""}
                                     >
                                         <item.icon
                                             className={cn(
-                                                "h-5 w-5 flex-shrink-0 transition-transform duration-200 group-hover:scale-110",
-                                                isActive ? "text-primary" : "text-muted-foreground group-hover:text-foreground",
+                                                "h-5 w-5 flex-shrink-0 transition-all duration-300",
+                                                isActive ? "text-primary-foreground" : "text-muted-foreground group-hover:text-foreground group-hover:scale-110",
                                                 !collapsed && "mr-3"
                                             )}
                                         />
                                         {!collapsed && <span>{item.name}</span>}
 
-                                        {/* Active Indicator */}
+                                        {/* Active Indicator Bar */}
                                         {isActive && !collapsed && (
-                                            <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-primary rounded-r-full" />
+                                            <motion.div
+                                                layoutId="active-nav-indicator"
+                                                className="absolute left-1 h-5 w-1 bg-primary-foreground rounded-full"
+                                            />
                                         )}
                                     </Link>
                                 );
@@ -144,26 +156,26 @@ export default function Sidebar() {
             </nav>
 
             {/* User Profile Section */}
-            <div className="p-4 border-t h-[90px] flex items-center">
+            <div className="p-4 border-t border-glass-border">
                 <div className={cn(
-                    "w-full rounded-xl transition-all duration-200",
-                    !collapsed && "bg-accent/30 p-3 hover:bg-accent/50"
+                    "w-full rounded-2xl transition-all duration-300",
+                    !collapsed && "bg-gradient-to-br from-accent/40 to-accent/10 p-4 border border-glass-border hover:shadow-lg"
                 )}>
                     <div className={cn(
                         "flex items-center",
                         collapsed ? "justify-center" : "gap-3"
                     )}>
-                        <div className="h-9 w-9 rounded-full bg-primary/20 flex items-center justify-center shrink-0 border border-primary/10">
-                            <User className="h-5 w-5 text-primary" />
+                        <div className="h-10 w-10 rounded-full bg-gradient-to-tr from-primary/20 to-blue-500/10 flex items-center justify-center shrink-0 border border-primary/20 shadow-inner">
+                            <User className="h-6 w-6 text-primary" />
                         </div>
                         {!collapsed && (
                             <div className="flex flex-col min-w-0">
-                                <span className="text-sm font-semibold truncate leading-none mb-1">Admin User</span>
-                                <span className="text-xs text-muted-foreground truncate">admin@drop.ai</span>
+                                <span className="text-sm font-bold truncate leading-none mb-1">Admin User</span>
+                                <span className="text-[10px] text-muted-foreground truncate uppercase font-medium tracking-tighter">Premium License</span>
                             </div>
                         )}
                         {!collapsed && (
-                            <Button variant="ghost" size="icon" className="ml-auto h-8 w-8 text-muted-foreground hover:text-destructive transition-colors">
+                            <Button variant="ghost" size="icon" className="ml-auto h-8 w-8 text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10 transition-all duration-300 rounded-lg">
                                 <LogOut className="h-4 w-4" />
                             </Button>
                         )}

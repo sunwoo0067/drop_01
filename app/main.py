@@ -16,7 +16,7 @@ from app.ownerclan_client import OwnerClanClient
 from app.ownerclan_sync import start_background_ownerclan_job
 from app.session_factory import session_factory
 from app.settings import settings
-from app.api.endpoints import sourcing, products, coupang, settings as settings_endpoint, suppliers as suppliers_endpoint, benchmarks, market, benchmark_streams
+from app.api.endpoints import sourcing, products, coupang, settings as settings_endpoint, suppliers as suppliers_endpoint, benchmarks, market, benchmark_streams, orchestration
 from app.schemas.product import ProductResponse
 
 app = FastAPI()
@@ -29,6 +29,7 @@ app.include_router(coupang.router, prefix="/api/coupang", tags=["Coupang"])
 app.include_router(settings_endpoint.router, prefix="/api/settings", tags=["Settings"])
 app.include_router(suppliers_endpoint.router, prefix="/api/suppliers", tags=["Suppliers"])
 app.include_router(market.router, prefix="/api/market", tags=["Market"])
+app.include_router(orchestration.router, prefix="/api/orchestration", tags=["Orchestration"])
 
 
 # Next.js(/api/products) 경로 정규화로 인해 백엔드가 /api/products → /api/products/ 로 307 redirect를 내보내면

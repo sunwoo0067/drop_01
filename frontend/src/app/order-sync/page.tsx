@@ -5,6 +5,20 @@ import api from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue
+} from "@/components/ui/Select";
+import { Badge } from "@/components/ui/Badge";
+
+interface MarketAccount {
+    id: string;
+    name: string;
+    marketCode: string;
+}
 
 interface OrderSyncFailure {
     id: string;
@@ -14,6 +28,8 @@ interface OrderSyncFailure {
     fetchedAt?: string | null;
     requestPayload?: Record<string, any> | null;
     responsePayload?: Record<string, any> | null;
+    marketAccountId: string;
+    accountName: string | null;
 }
 
 interface MappingIssueReport {
@@ -51,11 +67,38 @@ export default function OrderSyncPage() {
     const [retryLoading, setRetryLoading] = useState(false);
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [mappingReport, setMappingReport] = useState<MappingIssueReport | null>(null);
+    const [accounts, setAccounts] = useState<MarketAccount[]>([]);
+    const [selectedAccountId, setSelectedAccountId] = useState<string>("all");
     const [filterEndpoint, setFilterEndpoint] = useState("");
     const [filterError, setFilterError] = useState("");
     const [imageReport, setImageReport] = useState<ImageValidationReport | null>(null);
     const [schedulerState, setSchedulerState] = useState<SchedulerState[]>([]);
     const [imageFailures, setImageFailures] = useState<ImageValidationFailure[]>([]);
+
+    const fetchAccounts = useCallback(async () => {
+        try {
+            const [coupangRes, smartstoreRes] = await Promise.all([
+                api.get("/settings/markets/coupang/accounts"),
+                api.get("/settings/markets/smartstore/accounts")
+            ]);
+
+            const coupangAccounts = (coupangRes.data || []).map((acc: any) => ({
+                id: acc.id,
+                name: acc.name || `쿠팡-${acc.vendorId}`,
+                marketCode: "COUPANG"
+            }));
+
+            const smartstoreAccounts = (smartstoreRes.data || []).map((acc: any) => ({
+                id: acc.id,
+                name: acc.name || `스토어-${acc.id.substring(0, 4)}`,
+                marketCode: "SMARTSTORE"
+            }));
+
+            setAccounts([...coupangAccounts, ...smartstoreAccounts]);
+        } catch (e) {
+            console.error("Failed to fetch accounts", e);
+        }
+    }, []);
 
     const fetchFailures = useCallback(async () => {
         setLoading(true);
@@ -152,18 +195,22 @@ export default function OrderSyncPage() {
     };
 
     useEffect(() => {
+        fetchAccounts();
         fetchFailures();
         fetchMappingReport();
         fetchImageReport();
         fetchSchedulerState();
         fetchImageFailures();
-    }, [fetchFailures, fetchMappingReport, fetchImageReport, fetchSchedulerState, fetchImageFailures]);
+    }, [fetchAccounts, fetchFailures, fetchMappingReport, fetchImageReport, fetchSchedulerState, fetchImageFailures]);
 
     const filteredFailures = failures.filter((item) => {
         if (filterEndpoint && !item.endpoint.toLowerCase().includes(filterEndpoint.toLowerCase())) {
             return false;
         }
         if (filterError && !(item.errorMessage || "").toLowerCase().includes(filterError.toLowerCase())) {
+            return false;
+        }
+        if (selectedAccountId !== "all" && item.marketAccountId !== selectedAccountId) {
             return false;
         }
         return true;
@@ -201,28 +248,53 @@ export default function OrderSyncPage() {
                 </div>
             </div>
 
-            <Card>
-                <CardContent className="py-4">
-                    <div className="grid gap-3 md:grid-cols-2">
-                        <div>
-                            <div className="mb-1 text-xs text-muted-foreground">Endpoint</div>
-                            <Input
-                                value={filterEndpoint}
-                                onChange={(e) => setFilterEndpoint(e.target.value)}
-                                placeholder="upload_invoices, cancel_order..."
-                            />
+            <div className="grid gap-4 md:grid-cols-3">
+                <Card>
+                    <CardContent className="py-4">
+                        <div className="mb-1 text-xs text-muted-foreground">마켓 계정 필터</div>
+                        <Select value={selectedAccountId} onValueChange={setSelectedAccountId}>
+                            <SelectTrigger className="h-10">
+                                <SelectValue placeholder="모든 계정 보기" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">모든 계정 보기</SelectItem>
+                                {accounts.map(acc => (
+                                    <SelectItem key={acc.id} value={acc.id}>
+                                        <span className="flex items-center gap-2">
+                                            <Badge variant="outline" className="text-[10px] py-0 h-4 uppercase">
+                                                {acc.marketCode}
+                                            </Badge>
+                                            {acc.name}
+                                        </span>
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </CardContent>
+                </Card>
+                <Card className="md:col-span-2">
+                    <CardContent className="py-4">
+                        <div className="grid gap-3 md:grid-cols-2">
+                            <div>
+                                <div className="mb-1 text-xs text-muted-foreground">Endpoint</div>
+                                <Input
+                                    value={filterEndpoint}
+                                    onChange={(e) => setFilterEndpoint(e.target.value)}
+                                    placeholder="upload_invoices, cancel_order..."
+                                />
+                            </div>
+                            <div>
+                                <div className="mb-1 text-xs text-muted-foreground">Error</div>
+                                <Input
+                                    value={filterError}
+                                    onChange={(e) => setFilterError(e.target.value)}
+                                    placeholder="오류 메시지 검색"
+                                />
+                            </div>
                         </div>
-                        <div>
-                            <div className="mb-1 text-xs text-muted-foreground">Error</div>
-                            <Input
-                                value={filterError}
-                                onChange={(e) => setFilterError(e.target.value)}
-                                placeholder="오류 메시지 검색"
-                            />
-                        </div>
-                    </div>
-                </CardContent>
-            </Card>
+                    </CardContent>
+                </Card>
+            </div>
 
             {filteredFailures.length === 0 ? (
                 <Card>
@@ -242,10 +314,14 @@ export default function OrderSyncPage() {
                                         checked={selectedIds.includes(item.id)}
                                         onChange={() => toggleSelection(item.id)}
                                     />
-                                    <CardTitle className="text-base">{item.endpoint}</CardTitle>
                                 </div>
-                                <div className="text-xs text-muted-foreground">
-                                    HTTP {item.httpStatus ?? "-"} · {item.fetchedAt ?? "-"}
+                                <div className="flex items-center gap-2 mt-1">
+                                    <Badge variant="secondary" className="text-[10px] py-0 h-4">
+                                        {item.accountName || "Unknown Account"}
+                                    </Badge>
+                                    <div className="text-xs text-muted-foreground">
+                                        HTTP {item.httpStatus ?? "-"} · {item.fetchedAt ?? "-"}
+                                    </div>
                                 </div>
                             </CardHeader>
                             <CardContent className="space-y-3 text-sm">

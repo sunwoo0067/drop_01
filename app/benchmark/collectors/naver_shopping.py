@@ -9,6 +9,8 @@ from bs4 import BeautifulSoup
 from curl_cffi.requests import AsyncSession
 
 from app.benchmark_collector import BenchmarkCollector as SaverCollector
+from app.settings import settings
+
 
 logger = logging.getLogger(__name__)
 
@@ -29,14 +31,20 @@ class NaverShoppingBenchmarkCollector:
             else "https://snxbest.naver.com/product/best/click"
         )
 
-        async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
-            resp = await client.get(url, allow_redirects=True)
+        html = ""
+        if settings.ownerclan_use_sef_proxy:
+            status, html = await self._saver._fetch_via_proxy(url)
+            if status != 200:
+                logger.error(f"네이버쇼핑 BEST 수집 실패 (Proxy): HTTP {status} (url={url})")
+                return []
+        else:
+            async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
+                resp = await client.get(url, allow_redirects=True)
+                if resp.status_code != 200:
+                    logger.error(f"네이버쇼핑 BEST 수집 실패: HTTP {resp.status_code} (url={url})")
+                    return []
+                html = resp.text or ""
 
-        if resp.status_code != 200:
-            logger.error(f"네이버쇼핑 BEST 수집 실패: HTTP {resp.status_code} (url={url})")
-            return []
-
-        html = resp.text or ""
         soup = BeautifulSoup(html, "html.parser")
 
         items: list[dict[str, Any]] = []
@@ -103,27 +111,86 @@ class NaverShoppingBenchmarkCollector:
 
         return items
 
+    async def collect_trending_keywords(self) -> list[str]:
+        """
+        Collects trending keywords from Naver Shopping BEST.
+        """
+        items = await self.collect_ranking(limit=50)
+        keywords: set[str] = set()
+        for item in items:
+            name = item.get("name") or ""
+            # Simple keyword extraction: split by space and take 2+ char words
+            words = [w.strip() for w in name.split() if len(w.strip()) >= 2]
+            # Take first 2-3 significant words as candidate keywords
+            if words:
+                keywords.add(" ".join(words[:2]))
+        return list(keywords)
+
+    async def collect_reviews(self, product_id: str, limit: int = 10) -> list[str]:
+        """
+        Collects customer reviews for a specific product.
+        """
+        # Naver SmartStore Review API endpoint (Common pattern)
+        url = f"https://smartstore.naver.com/v1/products/{product_id}/reviews?page=1&size={limit}&sortType=REVIEW_RANKING"
+        
+        try:
+            if settings.ownerclan_use_sef_proxy:
+                status, raw = await self._saver._fetch_via_proxy(url)
+                if status != 200:
+                    return []
+                data = json.loads(raw)
+            else:
+                async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
+                    resp = await client.get(url)
+                    if resp.status_code != 200:
+                        return []
+                    data = resp.json()
+            
+            reviews = []
+            for item in data.get("contents", []):
+                content = item.get("reviewContent")
+                if content:
+                    reviews.append(content)
+            return reviews
+        except Exception as e:
+            logger.error(f"Failed to collect reviews for {product_id}: {e}")
+            return []
+
     async def collect_detail(self, product_url: str) -> dict[str, Any]:
         url = str(product_url).strip()
         if not url:
             return {"detail_html": "", "image_urls": [], "raw_html": ""}
 
-        async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
-            resp = await client.get(url, allow_redirects=True)
+        html = ""
+        blocked_reason: str | None = None
+        
+        if settings.ownerclan_use_sef_proxy:
+            status, html = await self._saver._fetch_via_proxy(url)
+            if status != 200:
+                logger.error(f"네이버 스마트스토어 상세 수집 실패 (Proxy): HTTP {status} (url={url})")
+                if status in (490, 403):
+                    blocked_reason = "CAPTCHA"
+                return {
+                    "detail_html": "",
+                    "image_urls": [],
+                    "raw_html": html,
+                    "blocked_reason": blocked_reason,
+                }
+        else:
+            async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
+                resp = await client.get(url, allow_redirects=True)
+                if resp.status_code != 200:
+                    logger.error(f"네이버 스마트스토어 상세 수집 실패: HTTP {resp.status_code} (url={url})")
+                    if resp.status_code in (490, 403):
+                        blocked_reason = "CAPTCHA"
+                    return {
+                        "detail_html": "",
+                        "image_urls": [],
+                        "raw_html": resp.text or "",
+                        "blocked_reason": blocked_reason,
+                    }
+                html = resp.text or ""
 
-        if resp.status_code != 200:
-            logger.error(f"네이버 스마트스토어 상세 수집 실패: HTTP {resp.status_code} (url={url})")
-            blocked_reason: str | None = None
-            if resp.status_code in (490, 403):
-                blocked_reason = "CAPTCHA"
-            return {
-                "detail_html": "",
-                "image_urls": [],
-                "raw_html": resp.text or "",
-                "blocked_reason": blocked_reason,
-            }
-
-        html = resp.text or ""
         if ("ncpt.naver.com" in html) or ("WtmCaptcha" in html) or ("title=\"captcha\"" in html):
             logger.error(f"네이버 스마트스토어 상세 수집 차단(CAPTCHA): url={url}")
             return {"detail_html": "", "image_urls": [], "raw_html": html, "blocked_reason": "CAPTCHA"}
@@ -194,7 +261,19 @@ class NaverShoppingBenchmarkCollector:
             if desc:
                 detail_html = f"<div>{desc}</div>"
 
-        return {"detail_html": detail_html, "image_urls": image_urls, "raw_html": html}
+        # Try to extract product_id for reviews
+        m = re.search(r"/products/(\d+)", url)
+        reviews = []
+        if m:
+            product_id = m.group(1)
+            reviews = await self.collect_reviews(product_id)
+
+        return {
+            "detail_html": detail_html, 
+            "image_urls": image_urls, 
+            "raw_html": html,
+            "reviews": reviews
+        }
 
     async def run_ranking_collection(self, limit: int = 10, category_url: str | None = None, job_id: Any = None):
         items = await self.collect_ranking(limit=limit, category_url=category_url)

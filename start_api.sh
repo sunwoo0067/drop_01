@@ -15,7 +15,7 @@ if ss -ltn | grep -qE ":${PORT}\\b"; then
   exit 1
 fi
 
-nohup ./.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port "${PORT}" "${RELOAD_ARGS[@]}" > "${LOG_FILE}" 2>&1 &
+nohup ./.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port "${PORT}" "${RELOAD_ARGS[@]}" > "${LOG_FILE}" 2>&1 &
 echo $! > "${PID_FILE}"
 
 echo "[백엔드] 시작 완료: http://127.0.0.1:${PORT} (pid=$(cat "${PID_FILE}"))"

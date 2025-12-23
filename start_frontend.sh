@@ -12,7 +12,7 @@ fi
 
 (
   cd frontend
-  nohup npm run dev > "../${LOG_FILE}" 2>&1 &
+  nohup npm run dev -- --hostname 0.0.0.0 > "../${LOG_FILE}" 2>&1 &
   echo $! > "../${PID_FILE}"
 )
 

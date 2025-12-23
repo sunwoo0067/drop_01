@@ -1,7 +1,7 @@
 import google.generativeai as genai
 import json
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Literal
 from google.api_core.exceptions import ResourceExhausted, ServiceUnavailable
 from app.services.ai.base import AIProvider
 
@@ -37,16 +37,26 @@ class GeminiProvider(AIProvider):
         self._configure_current_key()
         return True
 
-    def generate_text(self, prompt: str) -> str:
+    def generate_text(self, prompt: str, model: Optional[str] = None) -> str:
         if not self.model:
             return ""
+
+        target_model_name = model or self.model_name
+        # If model is different from the current one, we might need to reconfigure
+        # but for simplicity in this PoC, we assume use of self.model if model is None
+        # OR we could dynamically create a model instance if needed.
+        # Here we'll implement a simple dynamic switch.
+        
+        target_model = self.model
+        if model and model != self.model_name:
+             target_model = genai.GenerativeModel(model)
 
         max_retries = len(self.api_keys)
         attempts = 0
 
         while attempts < max_retries:
             try:
-                response = self.model.generate_content(prompt)
+                response = target_model.generate_content(prompt)
                 return response.text
             except (ResourceExhausted, ServiceUnavailable) as e:
                 logger.warning(f"Gemini Key {self.current_key_index} exhausted/unavailable: {e}")
@@ -59,17 +69,25 @@ class GeminiProvider(AIProvider):
                 return ""
         return ""
 
-    def generate_json(self, prompt: str) -> Dict[str, Any] | List[Any]:
+    def generate_json(self, prompt: str, model: Optional[str] = None, image_data: Optional[bytes] = None) -> Dict[str, Any] | List[Any]:
         if not self.model:
             return {}
+
+        target_model = self.model
+        if model and model != self.model_name:
+             target_model = genai.GenerativeModel(model)
 
         max_retries = len(self.api_keys)
         attempts = 0
 
+        content_to_generate: Any = prompt
+        if image_data:
+            content_to_generate = [prompt, {"mime_type": "image/jpeg", "data": image_data}]
+
         while attempts < max_retries:
             try:
-                response = self.model.generate_content(
-                    prompt,
+                response = target_model.generate_content(
+                    content_to_generate,
                     generation_config={"response_mime_type": "application/json"}
                 )
                 return json.loads(response.text)
@@ -83,30 +101,43 @@ class GeminiProvider(AIProvider):
                 logger.error(f"Gemini generate_json failed (non-retryable): {e}")
                 return {}
         return {}
+    def describe_image(self, image_data: bytes, prompt: str = "이 이미지를 상세히 설명해주세요.", model: Optional[str] = None) -> str:
+        return self._generate_with_image(image_data, prompt, model)
 
-    def describe_image(self, image_data: bytes, prompt: str = "이 이미지를 상세히 설명해주세요. 특히 상품의 특징, 색상, 디자인, 재질 등을 중심으로 설명해주세요.") -> str:
+    def extract_text_from_image(self, image_data: bytes, format: Literal["text", "markdown", "json"] = "text", model: Optional[str] = None) -> str:
+        prompt = f"Extract all text from this image. Output format: {format}."
+        return self._generate_with_image(image_data, prompt, model)
+
+    def _generate_with_image(self, image_data: bytes, prompt: str, model: Optional[str] = None) -> str:
         if not self.model:
             return ""
+
+        target_model_name = model or self.model_name
+        target_model = self.model
+        if model and model != self.model_name:
+             target_model = genai.GenerativeModel(model)
 
         max_retries = len(self.api_keys)
         attempts = 0
 
         while attempts < max_retries:
             try:
-                # Part for Gemini multimodal
-                contents = [
-                    prompt,
-                    {"mime_type": "image/jpeg", "data": image_data}
-                ]
-                response = self.model.generate_content(contents)
+                response = target_model.generate_content([prompt, {"mime_type": "image/jpeg", "data": image_data}])
                 return response.text
             except (ResourceExhausted, ServiceUnavailable) as e:
                 logger.warning(f"Gemini Key {self.current_key_index} exhausted/unavailable: {e}")
                 if not self._rotate_key():
-                    logger.error("All Gemini keys exhausted.")
                     return ""
                 attempts += 1
             except Exception as e:
-                logger.error(f"Gemini describe_image failed: {e}")
+                logger.error(f"Gemini image generation failed: {e}")
                 return ""
         return ""
+
+    def generate_reasoning(self, prompt: str, model: Optional[str] = None) -> str:
+        # Standard Gemini models handle reasoning well within normal chat.
+        return self.generate_text(prompt, model=model)
+
+    def analyze_visual_layout(self, image_data: bytes, prompt: str = "Analyze the visual layout and identify key elements with their positions.", model: Optional[str] = None) -> str:
+        prompt += " Please provide spatial coordinates or describe the layout in detail."
+        return self._generate_with_image(image_data, prompt, model)

@@ -9,6 +9,8 @@ from bs4 import BeautifulSoup
 from curl_cffi.requests import AsyncSession
 
 from app.benchmark_collector import BenchmarkCollector as CoupangBenchmarkCollector
+from app.settings import settings
+
 
 logger = logging.getLogger(__name__)
 
@@ -29,14 +31,20 @@ class ElevenstBenchmarkCollector:
             else "https://www.11st.co.kr/browsing/BestSeller.tmall?method=getBestSellerMain"
         )
 
-        async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
-            resp = await client.get(url, allow_redirects=True)
+        html = ""
+        if settings.ownerclan_use_sef_proxy:
+            status, html = await self._saver._fetch_via_proxy(url)
+            if status != 200:
+                logger.error(f"11번가 랭킹 페이지 수집 실패 (Proxy): HTTP {status} (url={url})")
+                return []
+        else:
+            async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
+                resp = await client.get(url, allow_redirects=True)
+                if resp.status_code != 200:
+                    logger.error(f"11번가 랭킹 페이지 수집 실패: HTTP {resp.status_code} (url={url})")
+                    return []
+                html = resp.text or ""
 
-        if resp.status_code != 200:
-            logger.error(f"11번가 랭킹 페이지 수집 실패: HTTP {resp.status_code} (url={url})")
-            return []
-
-        html = resp.text or ""
         soup = BeautifulSoup(html, "html.parser")
 
         items: list[dict[str, Any]] = []
@@ -111,14 +119,20 @@ class ElevenstBenchmarkCollector:
         if not url:
             return {"detail_html": "", "image_urls": [], "raw_html": ""}
 
-        async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
-            resp = await client.get(url, allow_redirects=True)
+        html = ""
+        if settings.ownerclan_use_sef_proxy:
+            status, html = await self._saver._fetch_via_proxy(url)
+            if status != 200:
+                logger.error(f"11번가 상세 페이지 수집 실패 (Proxy): HTTP {status} (url={url})")
+                return {"detail_html": "", "image_urls": [], "raw_html": html or ""}
+        else:
+            async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
+                resp = await client.get(url, allow_redirects=True)
+                if resp.status_code != 200:
+                    logger.error(f"11번가 상세 페이지 수집 실패: HTTP {resp.status_code} (url={url})")
+                    return {"detail_html": "", "image_urls": [], "raw_html": resp.text or ""}
+                html = resp.text or ""
 
-        if resp.status_code != 200:
-            logger.error(f"11번가 상세 페이지 수집 실패: HTTP {resp.status_code} (url={url})")
-            return {"detail_html": "", "image_urls": [], "raw_html": resp.text or ""}
-
-        html = resp.text or ""
         soup = BeautifulSoup(html, "html.parser")
 
         description: str | None = None

@@ -12,7 +12,9 @@ import {
     Edit,
     Trash2,
     MoreVertical,
-    ArrowLeft
+    ArrowLeft,
+    Zap,
+    Sparkles
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -20,6 +22,19 @@ import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import api from "@/lib/api";
 import { cn } from "@/lib/utils";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue
+} from "@/components/ui/Select";
+
+interface MarketAccount {
+    id: string;
+    name: string;
+    marketCode: string;
+}
 
 interface MarketProduct {
     id: string;
@@ -32,22 +47,57 @@ interface MarketProduct {
     sellingPrice: number;
     processedImageUrls: string[] | null;
     productStatus: string | null;
+    processingStatus: string | null;
+    marketAccountId: string;
+    accountName: string | null;
+    marketCode: string;
 }
 
 export default function MarketProductsPage() {
     const [items, setItems] = useState<MarketProduct[]>([]);
     const [loading, setLoading] = useState(true);
+    const [accounts, setAccounts] = useState<MarketAccount[]>([]);
+    const [selectedAccountId, setSelectedAccountId] = useState<string>("all");
     const [error, setError] = useState<string | null>(null);
     const [searchTerm, setSearchTerm] = useState("");
     const [total, setTotal] = useState(0);
 
-    const fetchMarketProducts = async () => {
+    const fetchAccounts = async () => {
+        try {
+            const [coupangRes, smartstoreRes] = await Promise.all([
+                api.get("/settings/markets/coupang/accounts"),
+                api.get("/settings/markets/smartstore/accounts")
+            ]);
+
+            const coupangAccounts = (coupangRes.data || []).map((acc: any) => ({
+                id: acc.id,
+                name: acc.name || `쿠팡-${acc.vendorId}`,
+                marketCode: "COUPANG"
+            }));
+
+            const smartstoreAccounts = (smartstoreRes.data || []).map((acc: any) => ({
+                id: acc.id,
+                name: acc.name || `스토어-${acc.id.substring(0, 4)}`,
+                marketCode: "SMARTSTORE"
+            }));
+
+            setAccounts([...coupangAccounts, ...smartstoreAccounts]);
+        } catch (e) {
+            console.error("Failed to fetch accounts", e);
+        }
+    };
+
+    const fetchMarketProducts = async (accountId?: string) => {
         setLoading(true);
         setError(null);
         try {
-            const response = await api.get("/market/products", {
-                params: { limit: 100 }
-            });
+            const params: any = { limit: 100 };
+            const effectiveAccountId = accountId !== undefined ? accountId : selectedAccountId;
+            if (effectiveAccountId && effectiveAccountId !== "all") {
+                params.accountId = effectiveAccountId;
+            }
+
+            const response = await api.get("/market/products", { params });
             const data = response.data;
             setItems(Array.isArray(data.items) ? data.items : []);
             setTotal(data.total || 0);
@@ -60,13 +110,31 @@ export default function MarketProductsPage() {
     };
 
     useEffect(() => {
+        fetchAccounts();
         fetchMarketProducts();
     }, []);
+
+    const handleAccountChange = (value: string) => {
+        setSelectedAccountId(value);
+        fetchMarketProducts(value);
+    };
 
     // 쿠팡 상품 상세 보기 (새 탭)
     const handleViewOnCoupang = (sellerProductId: string) => {
         // 쿠팡 Wing 판매자 센터 상품 조회 URL (로그인 필요)
         window.open(`https://wing.coupang.com/product/${sellerProductId}`, '_blank');
+    };
+
+    const handlePremiumOptimize = async (productId: string) => {
+        try {
+            await api.post(`/products/${productId}/premium-optimize`);
+            // 상태 업데이트를 위해 목록 새로고침
+            fetchMarketProducts();
+            alert("프리미엄 고도화 작업이 시작되었습니다. 결과는 잠시 후 확인하실 수 있습니다.");
+        } catch (e) {
+            console.error("Failed to trigger premium optimize", e);
+            alert("작업 요청에 실패했습니다.");
+        }
     };
 
     const filteredItems = items.filter(item =>
@@ -149,8 +217,28 @@ export default function MarketProductsPage() {
                 </Card>
             </div>
 
-            {/* 검색 */}
+            {/* 필터 및 검색 */}
             <div className="flex flex-col md:flex-row gap-4 items-center">
+                <div className="w-full md:w-64">
+                    <Select value={selectedAccountId} onValueChange={handleAccountChange}>
+                        <SelectTrigger className="h-12 rounded-2xl bg-accent/50 border-none focus:ring-2 focus:ring-primary/20">
+                            <SelectValue placeholder="모든 계정 보기" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">모든 계정 보기</SelectItem>
+                            {accounts.map(acc => (
+                                <SelectItem key={acc.id} value={acc.id}>
+                                    <span className="flex items-center gap-2">
+                                        <Badge variant="outline" className="text-[10px] py-0 h-4 uppercase">
+                                            {acc.marketCode}
+                                        </Badge>
+                                        {acc.name}
+                                    </span>
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </div>
                 <div className="relative flex-1 group w-full">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground group-focus-within:text-primary transition-colors" />
                     <Input
@@ -222,6 +310,18 @@ export default function MarketProductsPage() {
                                     </Badge>
                                 </div>
 
+                                {/* 마켓 계정 배지 */}
+                                <div className="absolute top-4 right-4">
+                                    <Badge
+                                        className={cn(
+                                            "backdrop-blur-md border-0 text-[10px] font-bold py-1",
+                                            item.marketCode === "COUPANG" ? "bg-orange-500/80 text-white" : "bg-green-600/80 text-white"
+                                        )}
+                                    >
+                                        {item.accountName || (item.marketCode === "COUPANG" ? "쿠팡" : "스토어")}
+                                    </Badge>
+                                </div>
+
                                 {/* 외부 링크 */}
                                 <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
                                     <Button
@@ -241,7 +341,7 @@ export default function MarketProductsPage() {
                                         {item.processedName || item.name || "상품명 없음"}
                                     </h3>
                                     <p className="text-xs text-muted-foreground truncate">
-                                        쿠팡 ID: {item.marketItemId}
+                                        마켓 ID: {item.marketItemId}
                                     </p>
                                 </div>
 
@@ -265,7 +365,30 @@ export default function MarketProductsPage() {
                                     onClick={() => handleViewOnCoupang(item.marketItemId)}
                                 >
                                     <ExternalLink className="mr-2 h-4 w-4" />
-                                    쿠팡에서 보기
+                                    조회
+                                </Button>
+                                <Button
+                                    className={cn(
+                                        "flex-[1.5] rounded-2xl font-black transition-all",
+                                        item.processingStatus === "PROCESSING"
+                                            ? "bg-amber-100 text-amber-600 cursor-not-allowed"
+                                            : "bg-emerald-500 text-white hover:bg-emerald-600 hover:shadow-lg hover:shadow-emerald-500/30"
+                                    )}
+                                    size="sm"
+                                    disabled={item.processingStatus === "PROCESSING"}
+                                    onClick={() => handlePremiumOptimize(item.productId)}
+                                >
+                                    {item.processingStatus === "PROCESSING" ? (
+                                        <>
+                                            <RotateCw className="mr-2 h-4 w-4 animate-spin" />
+                                            가공 중
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Sparkles className="mr-2 h-4 w-4 fill-current" />
+                                            프리미엄 최적화
+                                        </>
+                                    )}
                                 </Button>
                             </CardFooter>
                         </Card>

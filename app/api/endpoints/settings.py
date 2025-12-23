@@ -6,10 +6,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, delete
 
 from app.db import get_session
-from app.models import APIKey, MarketAccount, SupplierAccount
+from app.models import APIKey, MarketAccount, SupplierAccount, MarketListing, MarketOrderRaw, MarketProductRaw, Order, OrderItem
 from app.ownerclan_client import OwnerClanClient
 from app.settings import settings
 
@@ -126,6 +126,7 @@ def set_ownerclan_primary_account(payload: OwnerClanPrimaryAccountIn, session: S
         session.add(account)
         session.flush()
 
+    session.commit()
     return {
         "accountId": str(account.id),
         "username": account.username,
@@ -213,6 +214,7 @@ def upsert_ownerclan_account(payload: OwnerClanAccountIn, session: Session = Dep
         session.add(account)
         session.flush()
 
+    session.commit()
     return {
         "accountId": str(account.id),
         "userType": account.user_type,
@@ -281,7 +283,8 @@ def create_coupang_account(payload: CoupangAccountIn, session: Session = Depends
         should_activate = bool(payload.is_active)
 
     if should_activate:
-        session.query(MarketAccount).filter(MarketAccount.market_code == "COUPANG").update({"is_active": False})
+        # 다중 계정 지원을 위해 기존 계정 비활성화 로직 제거
+        pass
 
     account = MarketAccount(
         market_code="COUPANG",
@@ -297,11 +300,7 @@ def create_coupang_account(payload: CoupangAccountIn, session: Session = Depends
 
     session.add(account)
 
-    try:
-        session.flush()
-    except IntegrityError:
-        raise HTTPException(status_code=400, detail="이미 존재하는 쿠팡 계정 이름입니다")
-
+    session.commit()
     creds = account.credentials or {}
     return {
         "id": str(account.id),
@@ -351,13 +350,13 @@ def update_coupang_account(account_id: uuid.UUID, payload: CoupangAccountUpdateI
     account.credentials = creds
 
     if payload.is_active is True:
-        session.query(MarketAccount).filter(MarketAccount.market_code == "COUPANG").update({"is_active": False})
+        # 다중 계정 지원을 위해 기존 계정 비활성화 로직 제거
         account.is_active = True
     elif payload.is_active is False:
         account.is_active = False
 
     try:
-        session.flush()
+        session.commit()
     except IntegrityError:
         raise HTTPException(status_code=400, detail="이미 존재하는 쿠팡 계정 이름입니다")
 
@@ -381,9 +380,9 @@ def activate_coupang_account(account_id: uuid.UUID, session: Session = Depends(g
     if not account or account.market_code != "COUPANG":
         raise HTTPException(status_code=404, detail="쿠팡 계정을 찾을 수 없습니다")
 
-    session.query(MarketAccount).filter(MarketAccount.market_code == "COUPANG").update({"is_active": False})
+    # 다중 계정 지원을 위해 기존 계정 비활성화 로직 제거
     account.is_active = True
-    session.flush()
+    session.commit()
 
     creds = dict(account.credentials or {})
     return {
@@ -401,6 +400,221 @@ def activate_coupang_account(account_id: uuid.UUID, session: Session = Depends(g
             "updatedAt": _to_iso(account.updated_at),
         },
     }
+
+
+@router.delete("/markets/coupang/accounts/{account_id}")
+def delete_coupang_account(account_id: uuid.UUID, session: Session = Depends(get_session)) -> dict:
+    account = session.get(MarketAccount, account_id)
+    if not account or account.market_code != "COUPANG":
+        raise HTTPException(status_code=404, detail="쿠팡 계정을 찾을 수 없습니다")
+
+    # 1. OrderItem 중 이 계정의 Listing을 참조하는 항목의 연결 해제
+    listing_ids_stmt = select(MarketListing.id).where(MarketListing.market_account_id == account_id)
+    listing_ids = session.scalars(listing_ids_stmt).all()
+    if listing_ids:
+        session.query(OrderItem).filter(OrderItem.market_listing_id.in_(listing_ids)).update({"market_listing_id": None}, synchronize_session=False)
+
+    # 2. Order 중 이 계정의 OrderRaw를 참조하는 항목의 연결 해제
+    order_raw_ids_stmt = select(MarketOrderRaw.id).where(MarketOrderRaw.account_id == account_id)
+    order_raw_ids = session.scalars(order_raw_ids_stmt).all()
+    if order_raw_ids:
+        session.query(Order).filter(Order.market_order_id.in_(order_raw_ids)).update({"market_order_id": None}, synchronize_session=False)
+
+    # 3. 연관된 Raw 데이터 및 Listing 삭제
+    session.execute(delete(MarketListing).where(MarketListing.market_account_id == account_id))
+    session.execute(delete(MarketOrderRaw).where(MarketOrderRaw.account_id == account_id))
+    session.execute(delete(MarketProductRaw).where(MarketProductRaw.account_id == account_id))
+
+    # 4. 최종적으로 계정 삭제
+    session.delete(account)
+    session.commit()
+    return {"deleted": True, "id": str(account_id)}
+
+
+class SmartStoreAccountIn(BaseModel):
+    name: str
+    client_id: str
+    client_secret: str
+    is_active: bool | None = None
+
+
+@router.get("/markets/smartstore/accounts")
+def list_smartstore_accounts(session: Session = Depends(get_session)) -> list[dict]:
+    stmt = select(MarketAccount).where(MarketAccount.market_code == "SMARTSTORE").order_by(MarketAccount.created_at.desc())
+    accounts = session.scalars(stmt).all()
+
+    result: list[dict] = []
+    for account in accounts:
+        creds = account.credentials or {}
+        result.append(
+            {
+                "id": str(account.id),
+                "marketCode": account.market_code,
+                "name": account.name,
+                "isActive": bool(account.is_active),
+                "clientIdMasked": _mask_secret(creds.get("client_id")),
+                "clientSecretMasked": _mask_secret(creds.get("client_secret")),
+                "createdAt": _to_iso(account.created_at),
+                "updatedAt": _to_iso(account.updated_at),
+            }
+        )
+    return result
+
+
+@router.post("/markets/smartstore/accounts")
+def create_smartstore_account(payload: SmartStoreAccountIn, session: Session = Depends(get_session)) -> dict:
+    if not payload.name:
+        raise HTTPException(status_code=400, detail="계정 이름이 필요합니다")
+    if not payload.client_id or not payload.client_secret:
+        raise HTTPException(status_code=400, detail="스마트스토어 Client ID/Secret이 필요합니다")
+
+    should_activate: bool
+    if payload.is_active is None:
+        has_active = (
+            session.query(MarketAccount)
+            .filter(MarketAccount.market_code == "SMARTSTORE")
+            .filter(MarketAccount.is_active.is_(True))
+            .first()
+        )
+        should_activate = has_active is None
+    else:
+        should_activate = bool(payload.is_active)
+
+    if should_activate:
+        # 다중 계정 지원을 위해 기존 계정 비활성화 로직 제거
+        pass
+
+    account = MarketAccount(
+        market_code="SMARTSTORE",
+        name=payload.name,
+        credentials={
+            "client_id": payload.client_id,
+            "client_secret": payload.client_secret,
+        },
+        is_active=should_activate,
+    )
+
+    session.add(account)
+    try:
+        session.commit()
+    except IntegrityError:
+        raise HTTPException(status_code=400, detail="이미 존재하는 스마트스토어 계정 이름입니다")
+
+    creds = account.credentials or {}
+    return {
+        "id": str(account.id),
+        "marketCode": account.market_code,
+        "name": account.name,
+        "isActive": bool(account.is_active),
+        "clientIdMasked": _mask_secret(creds.get("client_id")),
+        "clientSecretMasked": _mask_secret(creds.get("client_secret")),
+        "createdAt": _to_iso(account.created_at),
+        "updatedAt": _to_iso(account.updated_at),
+    }
+
+
+class SmartStoreAccountUpdateIn(BaseModel):
+    name: str | None = None
+    client_id: str | None = None
+    client_secret: str | None = None
+    is_active: bool | None = None
+
+
+@router.patch("/markets/smartstore/accounts/{account_id}")
+def update_smartstore_account(account_id: uuid.UUID, payload: SmartStoreAccountUpdateIn, session: Session = Depends(get_session)) -> dict:
+    account = session.get(MarketAccount, account_id)
+    if not account or account.market_code != "SMARTSTORE":
+        raise HTTPException(status_code=404, detail="스마트스토어 계정을 찾을 수 없습니다")
+
+    if payload.name is not None:
+        if not payload.name:
+            raise HTTPException(status_code=400, detail="계정 이름이 필요합니다")
+        account.name = payload.name
+
+    creds = dict(account.credentials or {})
+    if payload.client_id is not None:
+        creds["client_id"] = payload.client_id
+    if payload.client_secret is not None:
+        creds["client_secret"] = payload.client_secret
+    
+    account.credentials = creds
+
+    if payload.is_active is True:
+        # 다중 계정 지원을 위해 기존 계정 비활성화 로직 제거
+        account.is_active = True
+    elif payload.is_active is False:
+        account.is_active = False
+
+    try:
+        session.commit()
+    except IntegrityError:
+        raise HTTPException(status_code=400, detail="이미 존재하는 스마트스토어 계정 이름입니다")
+
+    return {
+        "id": str(account.id),
+        "marketCode": account.market_code,
+        "name": account.name,
+        "isActive": bool(account.is_active),
+        "clientIdMasked": _mask_secret(creds.get("client_id")),
+        "clientSecretMasked": _mask_secret(creds.get("client_secret")),
+        "createdAt": _to_iso(account.created_at),
+        "updatedAt": _to_iso(account.updated_at),
+    }
+
+
+@router.post("/markets/smartstore/accounts/{account_id}/activate")
+def activate_smartstore_account(account_id: uuid.UUID, session: Session = Depends(get_session)) -> dict:
+    account = session.get(MarketAccount, account_id)
+    if not account or account.market_code != "SMARTSTORE":
+        raise HTTPException(status_code=404, detail="스마트스토어 계정을 찾을 수 없습니다")
+
+    # 다중 계정 지원을 위해 기존 계정 비활성화 로직 제거
+    account.is_active = True
+    session.commit()
+
+    creds = dict(account.credentials or {})
+    return {
+        "activatedAccountId": str(account.id),
+        "account": {
+            "id": str(account.id),
+            "marketCode": account.market_code,
+            "name": account.name,
+            "isActive": bool(account.is_active),
+            "clientIdMasked": _mask_secret(creds.get("client_id")),
+            "clientSecretMasked": _mask_secret(creds.get("client_secret")),
+            "createdAt": _to_iso(account.created_at),
+            "updatedAt": _to_iso(account.updated_at),
+        },
+    }
+
+
+@router.delete("/markets/smartstore/accounts/{account_id}")
+def delete_smartstore_account(account_id: uuid.UUID, session: Session = Depends(get_session)) -> dict:
+    account = session.get(MarketAccount, account_id)
+    if not account or account.market_code != "SMARTSTORE":
+        raise HTTPException(status_code=404, detail="스마트스토어 계정을 찾을 수 없습니다")
+
+    # 1. OrderItem 중 이 계정의 Listing을 참조하는 항목의 연결 해제
+    listing_ids_stmt = select(MarketListing.id).where(MarketListing.market_account_id == account_id)
+    listing_ids = session.scalars(listing_ids_stmt).all()
+    if listing_ids:
+        session.query(OrderItem).filter(OrderItem.market_listing_id.in_(listing_ids)).update({"market_listing_id": None}, synchronize_session=False)
+
+    # 2. Order 중 이 계정의 OrderRaw를 참조하는 항목의 연결 해제
+    order_raw_ids_stmt = select(MarketOrderRaw.id).where(MarketOrderRaw.account_id == account_id)
+    order_raw_ids = session.scalars(order_raw_ids_stmt).all()
+    if order_raw_ids:
+        session.query(Order).filter(Order.market_order_id.in_(order_raw_ids)).update({"market_order_id": None}, synchronize_session=False)
+
+    # 3. 연관된 Raw 데이터 및 Listing 삭제
+    session.execute(delete(MarketListing).where(MarketListing.market_account_id == account_id))
+    session.execute(delete(MarketOrderRaw).where(MarketOrderRaw.account_id == account_id))
+    session.execute(delete(MarketProductRaw).where(MarketProductRaw.account_id == account_id))
+
+    # 4. 최종적으로 계정 삭제
+    session.delete(account)
+    session.commit()
+    return {"deleted": True, "id": str(account_id)}
 
 
 AIProvider = Literal["openai", "gemini"]
@@ -438,7 +652,7 @@ def create_ai_key(payload: AIKeyIn, session: Session = Depends(get_session)) -> 
 
     row = APIKey(provider=str(payload.provider).lower(), key=payload.key, is_active=bool(payload.is_active))
     session.add(row)
-    session.flush()
+    session.commit()
 
     return {
         "id": str(row.id),
@@ -460,7 +674,7 @@ def update_ai_key(key_id: uuid.UUID, payload: AIKeyUpdateIn, session: Session = 
         raise HTTPException(status_code=404, detail="API Key를 찾을 수 없습니다")
 
     row.is_active = bool(payload.is_active)
-    session.flush()
+    session.commit()
 
     return {
         "id": str(row.id),
@@ -478,6 +692,6 @@ def delete_ai_key(key_id: uuid.UUID, session: Session = Depends(get_session)) ->
         raise HTTPException(status_code=404, detail="API Key를 찾을 수 없습니다")
 
     session.delete(row)
-    session.flush()
+    session.commit()
 
     return {"deleted": True, "id": str(key_id)}

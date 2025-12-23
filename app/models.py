@@ -231,7 +231,8 @@ class Product(DropshipBase):
     processed_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     processed_keywords: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     processed_image_urls: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
-    processing_status: Mapped[str] = mapped_column(Text, nullable=False, default="PENDING") # PENDING, PROCESSING, COMPLETED, FAILED
+    processing_status: Mapped[str] = mapped_column(Text, nullable=False, default="PENDING") # PENDING, PROCESSING, COMPLETED, FAILED, PENDING_APPROVAL
+    benchmark_product_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -249,6 +250,7 @@ class MarketListing(MarketBase):
     market_item_id: Mapped[str] = mapped_column(Text, nullable=False)  # e.g. sellerProductId
     status: Mapped[str] = mapped_column(Text, nullable=False, default="ACTIVE")
     linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    store_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     coupang_status: Mapped[str | None] = mapped_column(Text, nullable=True)
     rejection_reason: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
@@ -283,6 +285,24 @@ class Order(MarketBase):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class OrderItem(MarketBase):
+    __tablename__ = "order_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    order_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("orders.id"), nullable=False)
+    product_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    market_listing_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("market_listings.id"), nullable=True)
+
+    external_item_id: Mapped[str | None] = mapped_column(Text, nullable=True)  # e.g. Coupang orderItemId
+    product_name: Mapped[str] = mapped_column(Text, nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    unit_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class OrderStatusHistory(MarketBase):
     __tablename__ = "order_status_history"
 
@@ -311,11 +331,23 @@ class BenchmarkProduct(MarketBase):
     detail_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_data: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     
+    # Ranking & Stats
+    category_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rating: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    quality_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+    
     # Advanced Sourcing Fields
     review_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     pain_points: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True) # e.g. ["heavy", "breaks easily"]
+    specs: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    visual_analysis: Mapped[str | None] = mapped_column(Text, nullable=True)
     
     embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
+    embedding_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -348,6 +380,7 @@ class SourcingCandidate(DropshipBase):
     spec_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True) # Extracted specs
     seo_keywords: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True) # High value keywords
     target_event: Mapped[str | None] = mapped_column(Text, nullable=True) # e.g. "Christmas"
+    visual_analysis: Mapped[str | None] = mapped_column(Text, nullable=True) # Spatial analysis from Qwen-VL
 
     embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
     
@@ -362,4 +395,18 @@ class APIKey(DropshipBase):
     provider: Mapped[str] = mapped_column(Text, nullable=False) # 'gemini', 'openai'
     key: Mapped[str] = mapped_column(Text, nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class OrchestrationEvent(DropshipBase):
+    """
+    AI 오케스트레이션의 기동 로그를 기록합니다.
+    """
+    __tablename__ = "orchestration_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    step: Mapped[str] = mapped_column(Text, nullable=False) # PLANNING, SOURCING, PROCESSING, LISTING
+    status: Mapped[str] = mapped_column(Text, nullable=False) # START, IN_PROGRESS, SUCCESS, FAIL
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    details: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

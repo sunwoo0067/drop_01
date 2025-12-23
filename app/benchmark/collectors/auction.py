@@ -9,6 +9,8 @@ from bs4 import BeautifulSoup
 from curl_cffi.requests import AsyncSession
 
 from app.benchmark_collector import BenchmarkCollector as SaverCollector
+from app.settings import settings
+
 
 logger = logging.getLogger(__name__)
 
@@ -29,14 +31,20 @@ class AuctionBenchmarkCollector:
             else "https://corners.auction.co.kr/corner/categorybest.aspx"
         )
 
-        async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
-            resp = await client.get(url, allow_redirects=True)
+        html = ""
+        if settings.ownerclan_use_sef_proxy:
+            status, html = await self._saver._fetch_via_proxy(url)
+            if status != 200:
+                logger.error(f"옥션 베스트 수집 실패 (Proxy): HTTP {status} (url={url})")
+                return []
+        else:
+            async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
+                resp = await client.get(url, allow_redirects=True)
+                if resp.status_code != 200:
+                    logger.error(f"옥션 베스트 수집 실패: HTTP {resp.status_code} (url={url})")
+                    return []
+                html = resp.text or ""
 
-        if resp.status_code != 200:
-            logger.error(f"옥션 베스트 수집 실패: HTTP {resp.status_code} (url={url})")
-            return []
-
-        html = resp.text or ""
         soup = BeautifulSoup(html, "html.parser")
 
         items: list[dict[str, Any]] = []
@@ -97,22 +105,36 @@ class AuctionBenchmarkCollector:
         if not url:
             return {"detail_html": "", "image_urls": [], "raw_html": ""}
 
-        async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
-            resp = await client.get(url, allow_redirects=True)
+        html = ""
+        blocked_reason: str | None = None
+        
+        if settings.ownerclan_use_sef_proxy:
+            status, html = await self._saver._fetch_via_proxy(url)
+            if status != 200:
+                logger.error(f"옥션 상세 수집 실패 (Proxy): HTTP {status} (url={url})")
+                if status in (403, 429):
+                    blocked_reason = "BOT_DETECTION"
+                return {
+                    "detail_html": "",
+                    "image_urls": [],
+                    "raw_html": html or "",
+                    "blocked_reason": blocked_reason,
+                }
+        else:
+            async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
+                resp = await client.get(url, allow_redirects=True)
+                if resp.status_code != 200:
+                    logger.error(f"옥션 상세 수집 실패: HTTP {resp.status_code} (url={url})")
+                    if resp.status_code in (403, 429):
+                        blocked_reason = "BOT_DETECTION"
+                    return {
+                        "detail_html": "",
+                        "image_urls": [],
+                        "raw_html": resp.text or "",
+                        "blocked_reason": blocked_reason,
+                    }
+                html = resp.text or ""
 
-        if resp.status_code != 200:
-            logger.error(f"옥션 상세 수집 실패: HTTP {resp.status_code} (url={url})")
-            blocked_reason: str | None = None
-            if resp.status_code in (403, 429):
-                blocked_reason = "BOT_DETECTION"
-            return {
-                "detail_html": "",
-                "image_urls": [],
-                "raw_html": resp.text or "",
-                "blocked_reason": blocked_reason,
-            }
-
-        html = resp.text or ""
         if ("사용자 활동 검토 요청" in html) or ("Enable JavaScript" in html) or ("검토번호" in html):
             logger.error(f"옥션 상세 수집 차단(봇 탐지): url={url}")
             return {"detail_html": "", "image_urls": [], "raw_html": html, "blocked_reason": "BOT_DETECTION"}
