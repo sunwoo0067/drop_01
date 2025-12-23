@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from langgraph.graph import StateGraph, END
 from sqlalchemy.orm import Session
 

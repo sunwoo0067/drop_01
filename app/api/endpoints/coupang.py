@@ -291,11 +291,15 @@ async def register_products_bulk_endpoint(
     If productIds provided, only registers those.
     Otherwise, registers all ready products (DRAFT + COMPLETED processing).
     """
-    stmt = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
-    account = session.scalars(stmt).first()
+    if account_id:
+        accounts = session.scalars(select(MarketAccount).where(MarketAccount.id == account_id)).all()
+    else:
+        accounts = session.scalars(
+            select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
+        ).all()
     
-    if not account:
-        raise HTTPException(status_code=400, detail="Active Coupang account not found.")
+    if not accounts:
+        raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
 
     if payload.productIds and not auto_fix and not wait:
         products = session.scalars(select(Product).where(Product.id.in_(payload.productIds))).all()
@@ -337,72 +341,80 @@ async def register_products_bulk_endpoint(
         registered_fail_items: list[dict] = []
         blocked_ids: list[str] = []
 
-        for p in products:
-            total += 1
+        for account in accounts:
+            for p in products:
+                total += 1
 
-            if not p.supplier_item_id:
-                blocked += 1
-                blocked_ids.append(str(p.id))
-                continue
+                if not p.supplier_item_id:
+                    blocked += 1
+                    blocked_ids.append(str(p.id))
+                    continue
 
-            if auto_fix:
-                ready = await ensure_product_ready_for_coupang(
-                    session,
-                    str(p.id),
-                    min_images_required=1,
-                    force_fetch_ownerclan=bool(force_fetch_ownerclan),
-                    augment_images=bool(augment_images),
-                )
-                if not ready.get("ok"):
+                if auto_fix:
+                    ready = await ensure_product_ready_for_coupang(
+                        session,
+                        str(p.id),
+                        min_images_required=1,
+                        force_fetch_ownerclan=bool(force_fetch_ownerclan),
+                        augment_images=bool(augment_images),
+                    )
+                    if not ready.get("ok"):
+                        registered_fail += 1
+                        registered_fail_ids.append(str(p.id))
+                        raw_reason = f"[{account.name}] 자동 보정 실패"
+                        registered_fail_items.append(
+                            {
+                                "productId": str(p.id),
+                                "accountId": str(account.id),
+                                "accountName": account.name,
+                                "reason": _tag_reason(raw_reason),
+                                "reasonRaw": raw_reason,
+                                "ready": ready,
+                            }
+                        )
+                        continue
+
+                if _get_images_count(p) < 1:
                     registered_fail += 1
                     registered_fail_ids.append(str(p.id))
-                    raw_reason = "자동 보정 실패"
+                    raw_reason = f"[{account.name}] 가공/이미지 조건 미달(processingStatus={p.processing_status}, images={_get_images_count(p)})"
                     registered_fail_items.append(
                         {
                             "productId": str(p.id),
+                            "accountId": str(account.id),
+                            "accountName": account.name,
                             "reason": _tag_reason(raw_reason),
                             "reasonRaw": raw_reason,
-                            "ready": ready,
                         }
                     )
                     continue
 
-            if _get_images_count(p) < 1:
-                registered_fail += 1
-                registered_fail_ids.append(str(p.id))
-                raw_reason = f"가공/이미지 조건 미달(processingStatus={p.processing_status}, images={_get_images_count(p)})"
-                registered_fail_items.append(
-                    {
-                        "productId": str(p.id),
-                        "reason": _tag_reason(raw_reason),
-                        "reasonRaw": raw_reason,
-                    }
-                )
-                continue
-
-            ready_ok += 1
-            ok, reason = register_product(session, account.id, p.id)
-            if ok:
-                p.status = "ACTIVE"
-                session.commit()
-                registered_ok += 1
-                registered_ok_ids.append(str(p.id))
-            else:
-                registered_fail += 1
-                registered_fail_ids.append(str(p.id))
-                raw_reason = reason or "쿠팡 등록 실패"
-                registered_fail_items.append(
-                    {
-                        "productId": str(p.id),
-                        "reason": _tag_reason(raw_reason),
-                        "reasonRaw": raw_reason,
-                    }
-                )
+                ready_ok += 1
+                ok, reason = register_product(session, account.id, p.id)
+                if ok:
+                    p.status = "ACTIVE"
+                    session.commit()
+                    registered_ok += 1
+                    registered_ok_ids.append(str(p.id))
+                else:
+                    registered_fail += 1
+                    registered_fail_ids.append(str(p.id))
+                    raw_reason = f"[{account.name}] " + (reason or "쿠팡 등록 실패")
+                    registered_fail_items.append(
+                        {
+                            "productId": str(p.id),
+                            "accountId": str(account.id),
+                            "accountName": account.name,
+                            "reason": _tag_reason(raw_reason),
+                            "reasonRaw": raw_reason,
+                        }
+                    )
 
         return {
             "status": "completed",
             "autoFix": bool(auto_fix),
             "limit": int(limit),
+            "accounts": [account.name for account in accounts],
             "summary": {
                 "total": total,
                 "readyOk": ready_ok,
@@ -416,19 +428,21 @@ async def register_products_bulk_endpoint(
             },
         }
 
-    background_tasks.add_task(
-        execute_bulk_coupang_registration,
-        account.id,
-        payload.productIds,
-        bool(auto_fix),
-        bool(force_fetch_ownerclan),
-        bool(augment_images),
-    )
+    for account in accounts:
+        background_tasks.add_task(
+            execute_bulk_coupang_registration,
+            account.id,
+            payload.productIds,
+            bool(auto_fix),
+            bool(force_fetch_ownerclan),
+            bool(augment_images),
+        )
 
     return {
         "status": "accepted",
-        "message": "Bulk registration started.",
+        "message": f"Bulk registration started for {len(accounts)} accounts.",
         "autoFix": bool(auto_fix),
+        "accountIds": [str(a.id) for a in accounts],
     }
 
 
@@ -487,16 +501,20 @@ async def register_product_endpoint(
     wait: bool = Query(default=False),
     force_fetch_ownerclan: bool = Query(default=True, alias="forceFetchOwnerClan"),
     augment_images: bool = Query(default=True, alias="augmentImages"),
+    account_id: uuid.UUID | None = Query(default=None, alias="accountId"),
 ):
     """
     쿠팡 상품 등록을 트리거합니다.
     작업은 백그라운드에서 비동기로 수행됩니다.
     """
-    # 쿠팡 계정 조회
-    stmt = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
-    account = session.scalars(stmt).first()
+    if account_id:
+        accounts = session.scalars(select(MarketAccount).where(MarketAccount.id == account_id)).all()
+    else:
+        accounts = session.scalars(
+            select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
+        ).all()
     
-    if not account:
+    if not accounts:
         raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
 
     product = session.get(Product, product_id)
@@ -521,27 +539,35 @@ async def register_product_endpoint(
             )
 
         if wait:
-            success, reason = register_product(session, account.id, product.id)
-            if success:
-                product.status = "ACTIVE"
-                session.commit()
+            results = []
+            for account in accounts:
+                success, reason = register_product(session, account.id, product.id)
+                if success:
+                    product.status = "ACTIVE"
+                    session.commit()
+                results.append({
+                    "accountId": str(account.id),
+                    "accountName": account.name,
+                    "success": bool(success),
+                    "reason": _tag_reason(reason),
+                    "reasonRaw": (str(reason) if reason is not None else None),
+                })
             return {
                 "status": "completed",
-                "success": bool(success),
-                "reason": _tag_reason(reason),
-                "reasonRaw": (str(reason) if reason is not None else None),
+                "results": results,
                 "ready": ready,
             }
 
-        background_tasks.add_task(
-            execute_coupang_registration,
-            account.id,
-            product.id,
-            True,
-            bool(force_fetch_ownerclan),
-            bool(augment_images),
-        )
-        return {"status": "accepted", "message": "쿠팡 상품 등록 작업이 시작되었습니다.", "autoFix": True}
+        for account in accounts:
+            background_tasks.add_task(
+                execute_coupang_registration,
+                account.id,
+                product.id,
+                True,
+                bool(force_fetch_ownerclan),
+                bool(augment_images),
+            )
+        return {"status": "accepted", "message": f"쿠팡 상품 등록 작업이 {len(accounts)}개 계정에 대해 시작되었습니다.", "autoFix": True}
 
     processed_images = product.processed_image_urls if isinstance(product.processed_image_urls, list) else []
     if product.processing_status != "COMPLETED" or len(processed_images) < 1:
@@ -550,50 +576,62 @@ async def register_product_endpoint(
             detail=f"쿠팡 등록을 위해서는 가공 완료 및 이미지 1장이 필요합니다(processingStatus={product.processing_status}, images={len(processed_images)})",
         )
 
-    background_tasks.add_task(execute_coupang_registration, account.id, product.id, False, False, False)
-    return {"status": "accepted", "message": "쿠팡 상품 등록 작업이 시작되었습니다."}
+    for account in accounts:
+        background_tasks.add_task(execute_coupang_registration, account.id, product.id, False, False, False)
+    return {"status": "accepted", "message": f"쿠팡 상품 등록 작업이 {len(accounts)}개 계정에 대해 시작되었습니다."}
 
 
 @router.post("/sync-status/{product_id}", status_code=200)
 async def sync_coupang_status_endpoint(
     product_id: uuid.UUID,
-    session: Session = Depends(get_session),
+    account_id: uuid.UUID | None = Query(default=None, alias="accountId"),
 ):
     """
     특정 상품의 쿠팡 마켓 상태를 명시적으로 동기화합니다.
     """
-    stmt_acct = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
-    account = session.scalars(stmt_acct).first()
-    if not account:
+    if account_id:
+        accounts = session.scalars(select(MarketAccount).where(MarketAccount.id == account_id)).all()
+    else:
+        accounts = session.scalars(
+            select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
+        ).all()
+    
+    if not accounts:
         raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
+
+    acc_ids = [a.id for a in accounts]
 
     stmt = (
         select(MarketListing)
         .where(MarketListing.product_id == product_id)
-        .where(MarketListing.market_account_id == account.id)
+        .where(MarketListing.market_account_id.in_(acc_ids))
         .order_by(MarketListing.linked_at.desc())
     )
-    listing = session.scalars(stmt).first()
-    if not listing:
+    listings = session.scalars(stmt).all()
+    if not listings:
         raise HTTPException(status_code=404, detail="마켓 등록 정보를 찾을 수 없습니다.")
 
-    previous_rejection_reason = listing.rejection_reason
+    sync_results = []
+    for listing in listings:
+        previous_rejection_reason = listing.rejection_reason
+        success, result = sync_market_listing_status(session, listing.id)
+        
+        try:
+            session.refresh(listing)
+        except Exception:
+            pass
 
-    success, result = sync_market_listing_status(session, listing.id)
-    if not success:
-        raise HTTPException(status_code=400, detail=result)
-
-    try:
-        session.refresh(listing)
-    except Exception:
-        pass
+        sync_results.append({
+            "accountId": str(listing.market_account_id),
+            "coupangStatus": result if success else f"Error: {result}",
+            "sellerProductId": str(listing.market_item_id),
+            "previousRejectionReason": previous_rejection_reason,
+            "rejectionReason": listing.rejection_reason,
+        })
 
     return {
         "status": "success",
-        "coupangStatus": result,
-        "sellerProductId": str(listing.market_item_id),
-        "previousRejectionReason": previous_rejection_reason,
-        "rejectionReason": listing.rejection_reason,
+        "results": sync_results
     }
 
 
@@ -601,64 +639,101 @@ async def sync_coupang_status_endpoint(
 def update_coupang_product_endpoint(
     product_id: uuid.UUID,
     session: Session = Depends(get_session),
+    account_id: uuid.UUID | None = Query(default=None, alias="accountId"),
 ):
     """
     내부 Product 정보를 기반으로 쿠팡에 이미 등록된 상품을 업데이트합니다.
     """
-    stmt = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
-    account = session.scalars(stmt).first()
-    if not account:
-        raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
+    if account_id:
+        accounts = session.scalars(select(MarketAccount).where(MarketAccount.id == account_id)).all()
+    else:
+        # 해당 상품이 등록된 모든 활성 계정을 찾음
+        stmt_accounts = (
+            select(MarketAccount)
+            .join(MarketListing, MarketListing.market_account_id == MarketAccount.id)
+            .where(MarketListing.product_id == product_id)
+            .where(MarketAccount.is_active == True)
+        )
+        accounts = session.scalars(stmt_accounts).all()
+
+    if not accounts:
+        raise HTTPException(status_code=400, detail="해당 상품이 등록된 활성 쿠팡 계정을 찾을 수 없습니다.")
 
     from app.coupang_sync import update_product_on_coupang
-    success, reason = update_product_on_coupang(session, account.id, product_id)
     
-    if not success:
-        raise HTTPException(status_code=400, detail=f"수정 실패: {reason}")
+    results = []
+    for account in accounts:
+        success, reason = update_product_on_coupang(session, account.id, product_id)
+        results.append({
+            "accountId": str(account.id),
+            "accountName": account.name,
+            "success": success,
+            "reason": reason
+        })
     
-    return {"status": "success", "message": "상품 정보가 업데이트되었습니다."}
+    return {"status": "success", "results": results}
 
 
 @router.delete("/products/{seller_product_id}", status_code=200)
 def delete_coupang_product_endpoint(
     seller_product_id: str,
     session: Session = Depends(get_session),
+    account_id: uuid.UUID | None = Query(default=None, alias="accountId"),
 ):
     """
     쿠팡에서 상품을 삭제합니다. (모든 아이템 판매중지 후 삭제)
     """
-    stmt = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
-    account = session.scalars(stmt).first()
-    if not account:
-        raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
+    if account_id:
+        target_account_id = account_id
+    else:
+        # seller_product_id로 해당 계정을 찾음
+        listing = session.scalars(select(MarketListing).where(MarketListing.market_item_id == seller_product_id)).first()
+        if listing:
+            target_account_id = listing.market_account_id
+        else:
+            # 리스팅 정보가 없으면 모든 활성 계정에서 시도 (첫 번째 계정 우선)
+            stmt = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
+            account = session.scalars(stmt).first()
+            if not account:
+                raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
+            target_account_id = account.id
 
     from app.coupang_sync import delete_product_from_coupang
-    success, reason = delete_product_from_coupang(session, account.id, seller_product_id)
+    success, reason = delete_product_from_coupang(session, target_account_id, seller_product_id)
     
     if not success:
         raise HTTPException(status_code=400, detail=f"삭제 실패: {reason}")
     
-    return {"status": "success", "message": "상품이 쿠팡에서 삭제되었습니다."}
+    return {"status": "success", "message": "상품이 쿠팡에서 삭제되었습니다.", "accountId": str(target_account_id)}
 
 
 @router.post("/products/{seller_product_id}/stop-sales", status_code=200)
 def stop_coupang_product_sales_endpoint(
     seller_product_id: str,
     session: Session = Depends(get_session),
+    account_id: uuid.UUID | None = Query(default=None, alias="accountId"),
 ):
     """
     쿠팡 상품 판매를 중지합니다.
     """
-    stmt = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
-    account = session.scalars(stmt).first()
-    if not account:
-        raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
+    if account_id:
+        target_account_id = account_id
+    else:
+        listing = session.scalars(select(MarketListing).where(MarketListing.market_item_id == seller_product_id)).first()
+        if listing:
+            target_account_id = listing.market_account_id
+        else:
+            stmt = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
+            account = session.scalars(stmt).first()
+            if not account:
+                raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
+            target_account_id = account.id
 
     from app.coupang_sync import stop_product_sales
-    success, payload = stop_product_sales(session, account.id, seller_product_id)
+    success, payload = stop_product_sales(session, target_account_id, seller_product_id)
     if not success:
         raise HTTPException(status_code=400, detail=payload or {"message": "판매중지 실패"})
-    return {"status": "success", "result": payload}
+    return {"status": "success", "result": payload, "accountId": str(target_account_id)}
 
 
 def execute_bulk_coupang_registration(
@@ -763,19 +838,24 @@ async def list_coupang_orders_raw(
     session: Session = Depends(get_session),
     limit: int = 50,
     offset: int = 0,
+    account_id: uuid.UUID | None = Query(default=None, alias="accountId"),
 ):
     """
     저장된 쿠팡 주문(ordersheets) raw 목록을 조회합니다(디버깅/점검용).
     """
-    stmt_acct = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
-    account = session.scalars(stmt_acct).first()
-    if not account:
+    if account_id:
+        account_ids = [account_id]
+    else:
+        stmt_acct = select(MarketAccount.id).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
+        account_ids = session.scalars(stmt_acct).all()
+    
+    if not account_ids:
         raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
 
     stmt = (
         select(MarketOrderRaw)
         .where(MarketOrderRaw.market_code == "COUPANG")
-        .where(MarketOrderRaw.account_id == account.id)
+        .where(MarketOrderRaw.account_id.in_(account_ids))
         .order_by(MarketOrderRaw.fetched_at.desc())
         .offset(offset)
         .limit(limit)
@@ -796,9 +876,19 @@ async def list_coupang_orders_raw(
 async def get_coupang_product_detail(
     seller_product_id: str,
     session: Session = Depends(get_session),
+    account_id: uuid.UUID | None = Query(default=None, alias="accountId"),
 ):
-    stmt_acct = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
-    account = session.scalars(stmt_acct).first()
+    if account_id:
+        account = session.get(MarketAccount, account_id)
+    else:
+        # seller_product_id로 해당 계정을 찾음
+        listing = session.scalars(select(MarketListing).where(MarketListing.market_item_id == seller_product_id)).first()
+        if listing:
+            account = session.get(MarketAccount, listing.market_account_id)
+        else:
+            stmt_acct = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
+            account = session.scalars(stmt_acct).first()
+            
     if not account:
         raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
 
@@ -852,9 +942,19 @@ async def fix_coupang_product_contents(
     seller_product_id: str,
     payload: FixCoupangContentsIn,
     session: Session = Depends(get_session),
+    account_id: uuid.UUID | None = Query(default=None, alias="accountId"),
 ):
-    stmt_acct = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
-    account = session.scalars(stmt_acct).first()
+    if account_id:
+        account = session.get(MarketAccount, account_id)
+    else:
+        # seller_product_id로 해당 계정을 찾음
+        listing = session.scalars(select(MarketListing).where(MarketListing.market_item_id == seller_product_id)).first()
+        if listing:
+            account = session.get(MarketAccount, listing.market_account_id)
+        else:
+            stmt_acct = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
+            account = session.scalars(stmt_acct).first()
+            
     if not account:
         raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
 
@@ -1016,9 +1116,14 @@ async def fix_coupang_product_contents(
 async def list_coupang_centers(
     session: Session = Depends(get_session),
     page_size: int = Query(default=10, ge=10, le=50, alias="pageSize"),
+    account_id: uuid.UUID | None = Query(default=None, alias="accountId"),
 ):
-    stmt_acct = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
-    account = session.scalars(stmt_acct).first()
+    if account_id:
+        account = session.get(MarketAccount, account_id)
+    else:
+        stmt_acct = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
+        account = session.scalars(stmt_acct).first()
+    
     if not account:
         raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
 
@@ -1101,33 +1206,45 @@ async def sync_orders_endpoint(
     """
     쿠팡 발주서(주문) raw 동기화를 트리거합니다.
     """
-    stmt = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
-    account = session.scalars(stmt).first()
+    account_id = getattr(payload, "accountId", None) # payload에 accountId가 있다면 사용 (스키마엔 없으나 유연성 위해)
+    
+    if account_id:
+        accounts = session.scalars(select(MarketAccount).where(MarketAccount.id == account_id)).all()
+    else:
+        accounts = session.scalars(
+            select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
+        ).all()
 
-    if not account:
+    if not accounts:
         raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
 
-    background_tasks.add_task(
-        execute_coupang_order_sync,
-        account.id,
-        payload.createdAtFrom,
-        payload.createdAtTo,
-        payload.status,
-        payload.maxPerPage,
-    )
+    for account in accounts:
+        background_tasks.add_task(
+            execute_coupang_order_sync,
+            account.id,
+            payload.createdAtFrom,
+            payload.createdAtTo,
+            payload.status,
+            payload.maxPerPage,
+        )
 
-    return {"status": "accepted", "message": "쿠팡 주문 동기화 작업이 시작되었습니다."}
+    return {"status": "accepted", "message": f"쿠팡 주문 동기화 작업이 {len(accounts)}개 계정에 대해 시작되었습니다."}
 
 
 @router.post("/account/credentials", status_code=200)
 async def update_coupang_credentials(
     payload: CoupangCredentialsUpdateIn,
     session: Session = Depends(get_session),
+    account_id: uuid.UUID | None = Query(default=None, alias="accountId"),
 ):
-    stmt = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
-    account = session.scalars(stmt).first()
+    if account_id:
+        account = session.get(MarketAccount, account_id)
+    else:
+        stmt = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
+        account = session.scalars(stmt).first()
+    
     if not account:
-        raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
+        raise HTTPException(status_code=400, detail="대상 쿠팡 계정을 찾을 수 없습니다.")
 
     creds = account.credentials or {}
     if not isinstance(creds, dict):
@@ -1218,24 +1335,31 @@ async def fulfill_orders_ownerclan_endpoint(
     """
     쿠팡 주문(ordersheets) → 오너클랜 주문 생성(발주) 연동을 트리거합니다.
     """
-    stmt = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
-    account = session.scalars(stmt).first()
+    account_id = getattr(payload, "accountId", None)
 
-    if not account:
+    if account_id:
+        accounts = session.scalars(select(MarketAccount).where(MarketAccount.id == account_id)).all()
+    else:
+        accounts = session.scalars(
+            select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
+        ).all()
+
+    if not accounts:
         raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
 
-    background_tasks.add_task(
-        execute_coupang_ownerclan_fulfill,
-        account.id,
-        payload.createdAtFrom,
-        payload.createdAtTo,
-        payload.status,
-        payload.maxPerPage,
-        payload.dryRun,
-        payload.limit,
-    )
+    for account in accounts:
+        background_tasks.add_task(
+            execute_coupang_ownerclan_fulfill,
+            account.id,
+            payload.createdAtFrom,
+            payload.createdAtTo,
+            payload.status,
+            payload.maxPerPage,
+            payload.dryRun,
+            payload.limit,
+        )
 
-    return {"status": "accepted", "message": "쿠팡→오너클랜 주문 연동 작업이 시작되었습니다."}
+    return {"status": "accepted", "message": f"쿠팡→오너클랜 주문 연동 작업이 {len(accounts)}개 계정에 대해 시작되었습니다."}
 
 
 @router.post("/orders/fulfill/ownerclan/preview", status_code=200)
@@ -1252,8 +1376,12 @@ async def fulfill_orders_ownerclan_preview_endpoint(
     from app.session_factory import session_factory
 
     with session_factory() as preview_session:
-        stmt = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
-        account = preview_session.scalars(stmt).first()
+        account_id = getattr(payload, "accountId", None)
+        if account_id:
+            account = preview_session.get(MarketAccount, account_id)
+        else:
+            stmt = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
+            account = preview_session.scalars(stmt).first()
 
         if not account:
             raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
@@ -1322,21 +1450,28 @@ async def sync_ownerclan_invoices_endpoint(
     """
     오너클랜 주문 송장/취소 정보를 쿠팡에 반영합니다.
     """
-    stmt = select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
-    account = session.scalars(stmt).first()
+    account_id = getattr(payload, "accountId", None)
 
-    if not account:
+    if account_id:
+        accounts = session.scalars(select(MarketAccount).where(MarketAccount.id == account_id)).all()
+    else:
+        accounts = session.scalars(
+            select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
+        ).all()
+
+    if not accounts:
         raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
 
-    background_tasks.add_task(
-        execute_ownerclan_invoice_sync,
-        account.id,
-        payload.limit,
-        payload.dryRun,
-        payload.retryCount,
-    )
+    for account in accounts:
+        background_tasks.add_task(
+            execute_ownerclan_invoice_sync,
+            account.id,
+            payload.limit,
+            payload.dryRun,
+            payload.retryCount,
+        )
 
-    return {"status": "accepted", "message": "오너클랜 송장/취소 → 쿠팡 반영 작업이 시작되었습니다."}
+    return {"status": "accepted", "message": f"오너클랜 송장/취소 → 쿠팡 반영 작업이 {len(accounts)}개 계정에 대해 시작되었습니다."}
 
 
 @router.get("/orders/sync-failures", status_code=200, response_model=list[OrderSyncFailureOut])

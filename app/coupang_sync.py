@@ -285,6 +285,85 @@ def sync_coupang_products(session: Session, account_id: uuid.UUID, deep: bool = 
     logger.info(f"Finished product sync for {account.name}. Total: {total_processed}")
     return total_processed
 
+
+def delete_market_listing(session: Session, account_id: uuid.UUID, market_item_id: str) -> tuple[bool, str | None]:
+    """
+    쿠팡 마켓에서 상품을 삭제하고 DB 상태를 업데이트합니다.
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account:
+        return False, "계정을 찾을 수 없습니다"
+
+    listing = (
+        session.query(MarketListing)
+        .filter(MarketListing.market_account_id == account_id)
+        .filter(MarketListing.market_item_id == market_item_id)
+        .first()
+    )
+
+    try:
+        client = _get_client_for_account(account)
+        code, data = client.delete_product(market_item_id)
+        _log_fetch(session, account, f"delete_product/{market_item_id}", {}, code, data)
+
+        if code == 200:
+            if listing:
+                listing.status = "DELETED"
+                listing.coupang_status = "DELETED"
+                session.commit()
+            return True, None
+        else:
+            # 삭제 실패 시 판매 중지라도 시도
+            logger.info(f"Deletion failed for {market_item_id} (Code: {code}), attempting to stop sales instead.")
+            return stop_sales_on_coupang(session, account_id, market_item_id)
+    except Exception as e:
+        logger.error(f"Error deleting product {market_item_id}: {e}")
+        return False, str(e)
+
+
+def stop_sales_on_coupang(session: Session, account_id: uuid.UUID, market_item_id: str) -> tuple[bool, str | None]:
+    """
+    쿠팡 상품의 모든 아이템에 대해 판매 중지 처리를 수행합니다.
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account:
+        return False, "계정을 찾을 수 없습니다"
+
+    listing = (
+        session.query(MarketListing)
+        .filter(MarketListing.market_account_id == account_id)
+        .filter(MarketListing.market_item_id == market_item_id)
+        .first()
+    )
+
+    try:
+        client = _get_client_for_account(account)
+        # 먼저 상품 정보를 조회하여 vendorItemId 확보
+        code, data = client.get_product(market_item_id)
+        if code != 200:
+            return False, f"조회 실패: {data.get('message')}"
+
+        items = data.get("data", {}).get("items", [])
+        success_count = 0
+        for item in items:
+            v_id = str(item.get("vendorItemId"))
+            s_code, s_data = client.stop_sales(v_id)
+            if s_code == 200:
+                success_count += 1
+            _log_fetch(session, account, f"stop_sales/{v_id}", {}, s_code, s_data)
+
+        if success_count > 0:
+            if listing:
+                listing.status = "SUSPENDED"
+                listing.coupang_status = "STOP_SALES"
+                session.commit()
+            return True, None
+        
+        return False, "판매 중지 처리된 아이템이 없습니다"
+    except Exception as e:
+        logger.error(f"Error stopping sales for {market_item_id}: {e}")
+        return False, str(e)
+
 def _extract_tracking_from_ownerclan_raw(raw: dict[str, Any]) -> tuple[str | None, str | None]:
     if not isinstance(raw, dict):
         return None, None

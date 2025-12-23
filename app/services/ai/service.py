@@ -218,6 +218,49 @@ class AIService:
         """
         return target_provider.generate_json(prompt, model=target_model)
 
+    def plan_seasonal_strategy(self, context_products: Optional[List[Dict[str, Any]]] = None, provider: ProviderType = "auto") -> Dict[str, Any]:
+        """
+        현재 날짜 및 과거 판매 데이터를 기반으로 이커머스 시즌 전략을 수립합니다.
+        오케스트레이터의 1단계(Planning)에서 사용됩니다.
+        """
+        import datetime
+        now = datetime.datetime.now()
+        current_date = now.strftime("%Y-%m-%d")
+        
+        target_provider = self._get_provider(provider)
+        target_model = None
+        if provider == "ollama" or (provider == "auto" and self.default_provider_name == "ollama"):
+            target_model = settings.ollama_logic_model
+
+        context_str = ""
+        if context_products:
+            context_str = "\n[과거 베스트셀러 참고 데이터]\n"
+            for p in context_products:
+                context_str += f"- 상품명: {p.get('name')}, 판매량: {p.get('sales_count')}\n"
+
+        prompt = f"""
+        당신은 전문적인 이커머스 MD 및 전략가입니다.
+        오늘 날짜({current_date})를 기준으로 현재 시즌 및 다가오는 이벤트를 분석하여 최적의 판매 전략을 수립해주세요.
+        {context_str}
+
+        [분석 요청 사항]
+        1. 현재 시즌 이름 및 주요 이벤트를 식별하세요.
+        2. 지금 즉시 소싱하여 등록해야 할 '집중 소싱 키워드' 리스트를 생성하세요. (과거 데이터가 있다면 참고하여 가중치를 주세요)
+        3. 이제 수명이 다했거나 시즌이 지나서 삭제를 검토해야 할 '아웃데이트 키워드' 리스트를 생성하세요.
+        4. 상품 가공 및 마케팅 시 강조해야 할 '핵심 테마'를 정하세요.
+
+        결과는 반드시 다음과 같은 JSON 구조로만 답변하세요:
+        {{
+            "season_name": "...",
+            "upcoming_events": ["...", "..."],
+            "target_keywords": ["키워드1", "키워드2", ...],
+            "out_dated_keywords": ["지난시즌키워드1", ...],
+            "strategy_theme": "...",
+            "action_priority": ["작업1", "작업2"]
+        }}
+        """
+        return target_provider.generate_json(prompt, model=target_model)
+
     def generate_json(self, prompt: str, model: Optional[str] = None, provider: ProviderType = "auto") -> Dict[str, Any]:
         """Generic JSON generation method for agents"""
         target_provider = self._get_provider(provider)

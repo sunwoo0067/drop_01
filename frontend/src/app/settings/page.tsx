@@ -48,6 +48,17 @@ type CoupangAccount = {
     updatedAt: string | null;
 };
 
+type SmartStoreAccount = {
+    id: string;
+    marketCode: string;
+    name: string;
+    isActive: boolean;
+    clientIdMasked: string | null;
+    clientSecretMasked: string | null;
+    createdAt: string | null;
+    updatedAt: string | null;
+};
+
 type AIKey = {
     id: string;
     provider: "openai" | "gemini";
@@ -117,6 +128,23 @@ export default function SettingsPage() {
     });
     const [coupangEditLoading, setCoupangEditLoading] = useState(false);
 
+    const [smartstoreLoading, setSmartstoreLoading] = useState(false);
+    const [smartstoreAccounts, setSmartstoreAccounts] = useState<SmartStoreAccount[]>([]);
+    const [smartstoreCreateForm, setSmartstoreCreateForm] = useState({
+        name: "",
+        clientId: "",
+        clientSecret: "",
+        activate: false,
+    });
+    const [editingSmartstoreId, setEditingSmartstoreId] = useState<string | null>(null);
+    const [smartstoreEditForm, setSmartstoreEditForm] = useState({
+        name: "",
+        clientId: "",
+        clientSecret: "",
+        activate: false,
+    });
+    const [smartstoreEditLoading, setSmartstoreEditLoading] = useState(false);
+
     const [aiLoading, setAiLoading] = useState(false);
     const [aiKeys, setAiKeys] = useState<AIKey[]>([]);
     const [aiCreateLoading, setAiCreateLoading] = useState(false);
@@ -174,6 +202,19 @@ export default function SettingsPage() {
         }
     };
 
+    const fetchSmartstoreAccounts = async () => {
+        setSmartstoreLoading(true);
+        try {
+            const res = await api.get<SmartStoreAccount[]>("/settings/markets/smartstore/accounts");
+            setSmartstoreAccounts(res.data);
+        } catch (e) {
+            console.error(e);
+            alert(getErrorMessage(e));
+        } finally {
+            setSmartstoreLoading(false);
+        }
+    };
+
     const fetchAIKeys = async () => {
         setAiLoading(true);
         try {
@@ -191,6 +232,7 @@ export default function SettingsPage() {
         fetchOwnerClanStatus();
         fetchOwnerClanAccounts();
         fetchCoupangAccounts();
+        fetchSmartstoreAccounts();
         fetchAIKeys();
     }, []);
 
@@ -273,7 +315,7 @@ export default function SettingsPage() {
     };
 
     const handleActivateCoupang = async (id: string) => {
-        if (!confirm("이 계정을 활성화하시겠습니까? (기존 활성 계정은 비활성 처리됩니다)")) return;
+        if (!confirm("이 계정을 활성화하시겠습니까?")) return;
 
         setCoupangLoading(true);
         try {
@@ -331,6 +373,109 @@ export default function SettingsPage() {
             alert(getErrorMessage(e));
         } finally {
             setCoupangEditLoading(false);
+        }
+    };
+
+    const handleCreateSmartstoreAccount = async () => {
+        if (!smartstoreCreateForm.name || !smartstoreCreateForm.clientId || !smartstoreCreateForm.clientSecret) {
+            alert("계정 이름, Client ID, Client Secret은 필수입니다.");
+            return;
+        }
+
+        setSmartstoreLoading(true);
+        try {
+            await api.post("/settings/markets/smartstore/accounts", {
+                name: smartstoreCreateForm.name,
+                client_id: smartstoreCreateForm.clientId,
+                client_secret: smartstoreCreateForm.clientSecret,
+                is_active: smartstoreCreateForm.activate,
+            });
+            setSmartstoreCreateForm({ name: "", clientId: "", clientSecret: "", activate: false });
+            await fetchSmartstoreAccounts();
+            alert("스마트스토어 계정이 추가되었습니다.");
+        } catch (e) {
+            console.error(e);
+            alert(getErrorMessage(e));
+        } finally {
+            setSmartstoreLoading(false);
+        }
+    };
+
+    const handleActivateSmartstore = async (id: string) => {
+        if (!confirm("이 계정을 활성화하시겠습니까?")) return;
+
+        setSmartstoreLoading(true);
+        try {
+            await api.post(`/settings/markets/smartstore/accounts/${id}/activate`);
+            await fetchSmartstoreAccounts();
+        } catch (e) {
+            console.error(e);
+            alert(getErrorMessage(e));
+        } finally {
+            setSmartstoreLoading(false);
+        }
+    };
+
+    const startEditSmartstore = (account: SmartStoreAccount) => {
+        setEditingSmartstoreId(account.id);
+        setSmartstoreEditForm({
+            name: account.name,
+            clientId: "",
+            clientSecret: "",
+            activate: account.isActive,
+        });
+    };
+
+    const cancelEditSmartstore = () => {
+        setEditingSmartstoreId(null);
+        setSmartstoreEditForm({ name: "", clientId: "", clientSecret: "", activate: false });
+    };
+
+    const saveEditSmartstore = async () => {
+        if (!editingSmartstoreId) return;
+        if (!smartstoreEditForm.name) {
+            alert("계정 이름은 필수입니다.");
+            return;
+        }
+
+        setSmartstoreEditLoading(true);
+        try {
+            const payload: any = {
+                name: smartstoreEditForm.name,
+                is_active: smartstoreEditForm.activate,
+            };
+            if (smartstoreEditForm.clientId) payload.client_id = smartstoreEditForm.clientId;
+            if (smartstoreEditForm.clientSecret) payload.client_secret = smartstoreEditForm.clientSecret;
+
+            await api.patch(`/settings/markets/smartstore/accounts/${editingSmartstoreId}`, payload);
+            cancelEditSmartstore();
+            await fetchSmartstoreAccounts();
+            alert("스마트스토어 계정 정보가 수정되었습니다.");
+        } catch (e) {
+            console.error(e);
+            alert(getErrorMessage(e));
+        } finally {
+            setSmartstoreEditLoading(false);
+        }
+    };
+
+    const handleDeleteMarketAccount = async (marketCode: string, id: string) => {
+        if (!confirm(`이 ${marketCode === "COUPANG" ? "쿠팡" : "스마트스토어"} 계정을 삭제하시겠습니까?`)) return;
+
+        const loadingFn = marketCode === "COUPANG" ? setCoupangLoading : setSmartstoreLoading;
+        const fetchFn = marketCode === "COUPANG" ? fetchCoupangAccounts : fetchSmartstoreAccounts;
+        const endpoint = marketCode === "COUPANG" ? "coupang" : "smartstore";
+
+        loadingFn(true);
+        try {
+            await api.delete(`/settings/markets/${endpoint}/accounts/${id}`);
+            await fetchFn();
+            alert("계정이 삭제되었습니다.");
+        } catch (e) {
+            console.error(e);
+            alert(getErrorMessage(e));
+        } finally {
+            loadingFn(false);
         }
     };
 
@@ -406,6 +551,7 @@ export default function SettingsPage() {
                             fetchOwnerClanStatus();
                             fetchOwnerClanAccounts();
                             fetchCoupangAccounts();
+                            fetchSmartstoreAccounts();
                             fetchAIKeys();
                         }}
                     >
@@ -648,11 +794,9 @@ export default function SettingsPage() {
                                 <table className="w-full caption-bottom text-sm text-left">
                                     <thead className="[&_tr]:border-b">
                                         <tr className="border-b">
+                                            <th className="h-12 px-4 align-middle font-medium text-muted-foreground">마켓</th>
                                             <th className="h-12 px-4 align-middle font-medium text-muted-foreground">이름</th>
                                             <th className="h-12 px-4 align-middle font-medium text-muted-foreground">vendorId</th>
-                                            <th className="h-12 px-4 align-middle font-medium text-muted-foreground">vendorUserId</th>
-                                            <th className="h-12 px-4 align-middle font-medium text-muted-foreground">Access Key</th>
-                                            <th className="h-12 px-4 align-middle font-medium text-muted-foreground">Secret Key</th>
                                             <th className="h-12 px-4 align-middle font-medium text-muted-foreground">상태</th>
                                             <th className="h-12 px-4 align-middle font-medium text-muted-foreground text-right">작업</th>
                                         </tr>
@@ -670,6 +814,9 @@ export default function SettingsPage() {
                                             coupangAccounts.map((account) => (
                                                 <tr key={account.id} className="border-b transition-colors hover:bg-muted/50">
                                                     <td className="p-4 align-middle">
+                                                        <Badge variant="outline" className="uppercase text-[10px]">COUPANG</Badge>
+                                                    </td>
+                                                    <td className="p-4 align-middle">
                                                         {editingCoupangId === account.id ? (
                                                             <Input
                                                                 value={coupangEditForm.name}
@@ -679,7 +826,7 @@ export default function SettingsPage() {
                                                             <div className="font-medium">{account.name}</div>
                                                         )}
                                                     </td>
-                                                    <td className="p-4 align-middle">
+                                                    <td className="p-4 align-middle whitespace-nowrap">
                                                         {editingCoupangId === account.id ? (
                                                             <Input
                                                                 value={coupangEditForm.vendorId}
@@ -687,40 +834,6 @@ export default function SettingsPage() {
                                                             />
                                                         ) : (
                                                             account.vendorId
-                                                        )}
-                                                    </td>
-                                                    <td className="p-4 align-middle">
-                                                        {editingCoupangId === account.id ? (
-                                                            <Input
-                                                                value={coupangEditForm.vendorUserId}
-                                                                onChange={(e) => setCoupangEditForm((prev) => ({ ...prev, vendorUserId: e.target.value }))}
-                                                            />
-                                                        ) : (
-                                                            account.vendorUserId || "-"
-                                                        )}
-                                                    </td>
-                                                    <td className="p-4 align-middle">
-                                                        {editingCoupangId === account.id ? (
-                                                            <Input
-                                                                type="password"
-                                                                value={coupangEditForm.accessKey}
-                                                                onChange={(e) => setCoupangEditForm((prev) => ({ ...prev, accessKey: e.target.value }))}
-                                                                placeholder="변경 시에만 입력"
-                                                            />
-                                                        ) : (
-                                                            account.accessKeyMasked || "-"
-                                                        )}
-                                                    </td>
-                                                    <td className="p-4 align-middle">
-                                                        {editingCoupangId === account.id ? (
-                                                            <Input
-                                                                type="password"
-                                                                value={coupangEditForm.secretKey}
-                                                                onChange={(e) => setCoupangEditForm((prev) => ({ ...prev, secretKey: e.target.value }))}
-                                                                placeholder="변경 시에만 입력"
-                                                            />
-                                                        ) : (
-                                                            account.secretKeyMasked || "-"
                                                         )}
                                                     </td>
                                                     <td className="p-4 align-middle">
@@ -734,9 +847,9 @@ export default function SettingsPage() {
                                                                 활성
                                                             </label>
                                                         ) : account.isActive ? (
-                                                            <Badge variant="success">활성</Badge>
+                                                            <Badge variant="success" className="bg-green-500/10 text-green-500 hover:bg-green-500/20">활성</Badge>
                                                         ) : (
-                                                            <Badge variant="secondary">비활성</Badge>
+                                                            <Badge variant="secondary" className="opacity-50">비활성</Badge>
                                                         )}
                                                     </td>
                                                     <td className="p-4 align-middle text-right">
@@ -769,6 +882,183 @@ export default function SettingsPage() {
                                                                     <Button size="sm" variant="ghost" onClick={() => startEditCoupang(account)}>
                                                                         수정
                                                                     </Button>
+                                                                    <Button
+                                                                        size="sm"
+                                                                        variant="danger"
+                                                                        disabled={coupangLoading}
+                                                                        onClick={() => handleDeleteMarketAccount("COUPANG", account.id)}
+                                                                    >
+                                                                        삭제
+                                                                    </Button>
+                                                                </>
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ))
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>스마트스토어 계정 추가</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="space-y-1">
+                                    <div className="text-sm font-medium">계정 이름</div>
+                                    <Input
+                                        value={smartstoreCreateForm.name}
+                                        onChange={(e) => setSmartstoreCreateForm((prev) => ({ ...prev, name: e.target.value }))}
+                                        placeholder="예: 메인 계정"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <div className="text-sm font-medium">Client ID</div>
+                                    <Input
+                                        value={smartstoreCreateForm.clientId}
+                                        onChange={(e) => setSmartstoreCreateForm((prev) => ({ ...prev, clientId: e.target.value }))}
+                                        placeholder="네이버 Client ID"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <div className="text-sm font-medium">Client Secret</div>
+                                    <Input
+                                        type="password"
+                                        value={smartstoreCreateForm.clientSecret}
+                                        onChange={(e) => setSmartstoreCreateForm((prev) => ({ ...prev, clientSecret: e.target.value }))}
+                                        placeholder="네이버 Client Secret"
+                                    />
+                                </div>
+                                <div className="flex items-end">
+                                    <label className="flex items-center gap-2 text-sm">
+                                        <input
+                                            type="checkbox"
+                                            checked={smartstoreCreateForm.activate}
+                                            onChange={(e) => setSmartstoreCreateForm((prev) => ({ ...prev, activate: e.target.checked }))}
+                                        />
+                                        이 계정을 활성화
+                                    </label>
+                                </div>
+                            </div>
+                        </CardContent>
+                        <CardFooter className="flex justify-end">
+                            <Button onClick={handleCreateSmartstoreAccount} isLoading={smartstoreLoading}>
+                                추가
+                            </Button>
+                        </CardFooter>
+                    </Card>
+
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>스마트스토어 계정 목록</CardTitle>
+                        </CardHeader>
+                        <CardContent className="p-0">
+                            <div className="overflow-x-auto">
+                                <table className="w-full caption-bottom text-sm text-left">
+                                    <thead className="[&_tr]:border-b">
+                                        <tr className="border-b">
+                                            <th className="h-12 px-4 align-middle font-medium text-muted-foreground">마켓</th>
+                                            <th className="h-12 px-4 align-middle font-medium text-muted-foreground">이름</th>
+                                            <th className="h-12 px-4 align-middle font-medium text-muted-foreground">Client ID</th>
+                                            <th className="h-12 px-4 align-middle font-medium text-muted-foreground">상태</th>
+                                            <th className="h-12 px-4 align-middle font-medium text-muted-foreground text-right">작업</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="[&_tr:last-child]:border-0">
+                                        {smartstoreLoading && smartstoreAccounts.length === 0 ? (
+                                            <tr>
+                                                <td colSpan={5} className="h-24 text-center text-muted-foreground">불러오는 중...</td>
+                                            </tr>
+                                        ) : smartstoreAccounts.length === 0 ? (
+                                            <tr>
+                                                <td colSpan={5} className="h-24 text-center text-muted-foreground">등록된 스마트스토어 계정이 없습니다.</td>
+                                            </tr>
+                                        ) : (
+                                            smartstoreAccounts.map((account) => (
+                                                <tr key={account.id} className="border-b transition-colors hover:bg-muted/50">
+                                                    <td className="p-4 align-middle">
+                                                        <Badge variant="outline" className="uppercase text-[10px]">SMARTSTORE</Badge>
+                                                    </td>
+                                                    <td className="p-4 align-middle">
+                                                        {editingSmartstoreId === account.id ? (
+                                                            <Input
+                                                                value={smartstoreEditForm.name}
+                                                                onChange={(e) => setSmartstoreEditForm((prev) => ({ ...prev, name: e.target.value }))}
+                                                            />
+                                                        ) : (
+                                                            <div className="font-medium">{account.name}</div>
+                                                        )}
+                                                    </td>
+                                                    <td className="p-4 align-middle whitespace-nowrap">
+                                                        {editingSmartstoreId === account.id ? (
+                                                            <Input
+                                                                value={smartstoreEditForm.clientId}
+                                                                onChange={(e) => setSmartstoreEditForm((prev) => ({ ...prev, clientId: e.target.value }))}
+                                                                placeholder="변경 시에만 입력"
+                                                            />
+                                                        ) : (
+                                                            account.clientIdMasked || "-"
+                                                        )}
+                                                    </td>
+                                                    <td className="p-4 align-middle">
+                                                        {editingSmartstoreId === account.id ? (
+                                                            <label className="flex items-center gap-2 text-sm">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={smartstoreEditForm.activate}
+                                                                    onChange={(e) => setSmartstoreEditForm((prev) => ({ ...prev, activate: e.target.checked }))}
+                                                                />
+                                                                활성
+                                                            </label>
+                                                        ) : account.isActive ? (
+                                                            <Badge variant="success" className="bg-green-500/10 text-green-500 hover:bg-green-500/20">활성</Badge>
+                                                        ) : (
+                                                            <Badge variant="secondary" className="opacity-50">비활성</Badge>
+                                                        )}
+                                                    </td>
+                                                    <td className="p-4 align-middle text-right">
+                                                        <div className="flex justify-end gap-2">
+                                                            {editingSmartstoreId === account.id ? (
+                                                                <>
+                                                                    <Button
+                                                                        size="sm"
+                                                                        isLoading={smartstoreEditLoading}
+                                                                        onClick={saveEditSmartstore}
+                                                                    >
+                                                                        저장
+                                                                    </Button>
+                                                                    <Button size="sm" variant="outline" onClick={cancelEditSmartstore}>
+                                                                        취소
+                                                                    </Button>
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    {!account.isActive && (
+                                                                        <Button
+                                                                            size="sm"
+                                                                            variant="outline"
+                                                                            disabled={smartstoreLoading}
+                                                                            onClick={() => handleActivateSmartstore(account.id)}
+                                                                        >
+                                                                            활성화
+                                                                        </Button>
+                                                                    )}
+                                                                    <Button size="sm" variant="ghost" onClick={() => startEditSmartstore(account)}>
+                                                                        수정
+                                                                    </Button>
+                                                                    <Button
+                                                                        size="sm"
+                                                                        variant="danger"
+                                                                        disabled={smartstoreLoading}
+                                                                        onClick={() => handleDeleteMarketAccount("SMARTSTORE", account.id)}
+                                                                    >
+                                                                        삭제
+                                                                    </Button>
                                                                 </>
                                                             )}
                                                         </div>
@@ -782,119 +1072,122 @@ export default function SettingsPage() {
                         </CardContent>
                     </Card>
                 </div>
-            )}
+            )
+            }
 
-            {tab === "ai" && (
-                <div className="space-y-6">
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>AI API Key 추가</CardTitle>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div className="space-y-1">
-                                    <div className="text-sm font-medium">Provider</div>
-                                    <select
-                                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                                        value={aiCreateForm.provider}
-                                        onChange={(e) => setAiCreateForm((prev) => ({ ...prev, provider: e.target.value as any }))}
-                                    >
-                                        <option value="openai">openai</option>
-                                        <option value="gemini">gemini</option>
-                                    </select>
-                                </div>
-                                <div className="space-y-1 md:col-span-2">
-                                    <div className="text-sm font-medium">API Key</div>
-                                    <Input
-                                        type="password"
-                                        value={aiCreateForm.key}
-                                        onChange={(e) => setAiCreateForm((prev) => ({ ...prev, key: e.target.value }))}
-                                        placeholder="API Key"
-                                    />
-                                </div>
-                                <div className="flex items-end">
-                                    <label className="flex items-center gap-2 text-sm">
-                                        <input
-                                            type="checkbox"
-                                            checked={aiCreateForm.isActive}
-                                            onChange={(e) => setAiCreateForm((prev) => ({ ...prev, isActive: e.target.checked }))}
+            {
+                tab === "ai" && (
+                    <div className="space-y-6">
+                        <Card>
+                            <CardHeader>
+                                <CardTitle>AI API Key 추가</CardTitle>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    <div className="space-y-1">
+                                        <div className="text-sm font-medium">Provider</div>
+                                        <select
+                                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                            value={aiCreateForm.provider}
+                                            onChange={(e) => setAiCreateForm((prev) => ({ ...prev, provider: e.target.value as any }))}
+                                        >
+                                            <option value="openai">openai</option>
+                                            <option value="gemini">gemini</option>
+                                        </select>
+                                    </div>
+                                    <div className="space-y-1 md:col-span-2">
+                                        <div className="text-sm font-medium">API Key</div>
+                                        <Input
+                                            type="password"
+                                            value={aiCreateForm.key}
+                                            onChange={(e) => setAiCreateForm((prev) => ({ ...prev, key: e.target.value }))}
+                                            placeholder="API Key"
                                         />
-                                        활성
-                                    </label>
+                                    </div>
+                                    <div className="flex items-end">
+                                        <label className="flex items-center gap-2 text-sm">
+                                            <input
+                                                type="checkbox"
+                                                checked={aiCreateForm.isActive}
+                                                onChange={(e) => setAiCreateForm((prev) => ({ ...prev, isActive: e.target.checked }))}
+                                            />
+                                            활성
+                                        </label>
+                                    </div>
                                 </div>
-                            </div>
-                        </CardContent>
-                        <CardFooter className="flex justify-end">
-                            <Button onClick={handleCreateAIKey} isLoading={aiCreateLoading}>
-                                추가
-                            </Button>
-                        </CardFooter>
-                    </Card>
+                            </CardContent>
+                            <CardFooter className="flex justify-end">
+                                <Button onClick={handleCreateAIKey} isLoading={aiCreateLoading}>
+                                    추가
+                                </Button>
+                            </CardFooter>
+                        </Card>
 
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>AI API Key 목록</CardTitle>
-                        </CardHeader>
-                        <CardContent className="p-0">
-                            <div className="overflow-x-auto">
-                                <table className="w-full caption-bottom text-sm text-left">
-                                    <thead className="[&_tr]:border-b">
-                                        <tr className="border-b">
-                                            <th className="h-12 px-4 align-middle font-medium text-muted-foreground">Provider</th>
-                                            <th className="h-12 px-4 align-middle font-medium text-muted-foreground">Key</th>
-                                            <th className="h-12 px-4 align-middle font-medium text-muted-foreground">상태</th>
-                                            <th className="h-12 px-4 align-middle font-medium text-muted-foreground">등록일</th>
-                                            <th className="h-12 px-4 align-middle font-medium text-muted-foreground text-right">작업</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="[&_tr:last-child]:border-0">
-                                        {aiLoading && aiKeys.length === 0 ? (
-                                            <tr>
-                                                <td colSpan={5} className="h-24 text-center text-muted-foreground">불러오는 중...</td>
+                        <Card>
+                            <CardHeader>
+                                <CardTitle>AI API Key 목록</CardTitle>
+                            </CardHeader>
+                            <CardContent className="p-0">
+                                <div className="overflow-x-auto">
+                                    <table className="w-full caption-bottom text-sm text-left">
+                                        <thead className="[&_tr]:border-b">
+                                            <tr className="border-b">
+                                                <th className="h-12 px-4 align-middle font-medium text-muted-foreground">Provider</th>
+                                                <th className="h-12 px-4 align-middle font-medium text-muted-foreground">Key</th>
+                                                <th className="h-12 px-4 align-middle font-medium text-muted-foreground">상태</th>
+                                                <th className="h-12 px-4 align-middle font-medium text-muted-foreground">등록일</th>
+                                                <th className="h-12 px-4 align-middle font-medium text-muted-foreground text-right">작업</th>
                                             </tr>
-                                        ) : aiKeys.length === 0 ? (
-                                            <tr>
-                                                <td colSpan={5} className="h-24 text-center text-muted-foreground">등록된 AI Key가 없습니다.</td>
-                                            </tr>
-                                        ) : (
-                                            aiKeys.map((k) => (
-                                                <tr key={k.id} className="border-b transition-colors hover:bg-muted/50">
-                                                    <td className="p-4 align-middle font-medium">{k.provider}</td>
-                                                    <td className="p-4 align-middle">{k.keyMasked || "-"}</td>
-                                                    <td className="p-4 align-middle">
-                                                        {k.isActive ? <Badge variant="success">활성</Badge> : <Badge variant="secondary">비활성</Badge>}
-                                                    </td>
-                                                    <td className="p-4 align-middle">{formatDateTime(k.createdAt)}</td>
-                                                    <td className="p-4 align-middle text-right">
-                                                        <div className="flex justify-end gap-2">
-                                                            <Button
-                                                                size="sm"
-                                                                variant="outline"
-                                                                disabled={aiLoading}
-                                                                onClick={() => toggleAIKeyActive(k)}
-                                                            >
-                                                                {k.isActive ? "비활성화" : "활성화"}
-                                                            </Button>
-                                                            <Button
-                                                                size="sm"
-                                                                variant="danger"
-                                                                disabled={aiLoading}
-                                                                onClick={() => deleteAIKey(k)}
-                                                            >
-                                                                삭제
-                                                            </Button>
-                                                        </div>
-                                                    </td>
+                                        </thead>
+                                        <tbody className="[&_tr:last-child]:border-0">
+                                            {aiLoading && aiKeys.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan={5} className="h-24 text-center text-muted-foreground">불러오는 중...</td>
                                                 </tr>
-                                            ))
-                                        )}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </CardContent>
-                    </Card>
-                </div>
-            )}
-        </div>
+                                            ) : aiKeys.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan={5} className="h-24 text-center text-muted-foreground">등록된 AI Key가 없습니다.</td>
+                                                </tr>
+                                            ) : (
+                                                aiKeys.map((k) => (
+                                                    <tr key={k.id} className="border-b transition-colors hover:bg-muted/50">
+                                                        <td className="p-4 align-middle font-medium">{k.provider}</td>
+                                                        <td className="p-4 align-middle">{k.keyMasked || "-"}</td>
+                                                        <td className="p-4 align-middle">
+                                                            {k.isActive ? <Badge variant="success">활성</Badge> : <Badge variant="secondary">비활성</Badge>}
+                                                        </td>
+                                                        <td className="p-4 align-middle">{formatDateTime(k.createdAt)}</td>
+                                                        <td className="p-4 align-middle text-right">
+                                                            <div className="flex justify-end gap-2">
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="outline"
+                                                                    disabled={aiLoading}
+                                                                    onClick={() => toggleAIKeyActive(k)}
+                                                                >
+                                                                    {k.isActive ? "비활성화" : "활성화"}
+                                                                </Button>
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="danger"
+                                                                    disabled={aiLoading}
+                                                                    onClick={() => deleteAIKey(k)}
+                                                                >
+                                                                    삭제
+                                                                </Button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </CardContent>
+                        </Card>
+                    </div>
+                )
+            }
+        </div >
     );
 }

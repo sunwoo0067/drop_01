@@ -3,7 +3,7 @@
 - 마켓에 등록된 상품 목록 조회
 - MarketListing과 Product 조인하여 상품 정보 반환
 """
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 import uuid
@@ -19,6 +19,7 @@ router = APIRouter()
 def list_market_listings(
     session: Session = Depends(get_session),
     market_code: str = Query(default="COUPANG", alias="marketCode"),
+    account_id: uuid.UUID | None = Query(default=None, alias="accountId"),
     status: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -27,14 +28,17 @@ def list_market_listings(
     마켓에 등록된 상품 목록을 조회합니다.
     MarketListing 테이블을 기준으로 조회합니다.
     """
-    # 활성 계정 조회
-    stmt_account = select(MarketAccount).where(
-        MarketAccount.market_code == market_code,
-        MarketAccount.is_active == True
-    )
-    account = session.scalars(stmt_account).first()
+    # 대상 계정 ID 목록 추출
+    if account_id:
+        account_ids = [account_id]
+    else:
+        stmt_accounts = select(MarketAccount.id).where(
+            MarketAccount.market_code == market_code,
+            MarketAccount.is_active == True
+        )
+        account_ids = session.scalars(stmt_accounts).all()
     
-    if not account:
+    if not account_ids:
         return {
             "items": [],
             "total": 0,
@@ -45,7 +49,7 @@ def list_market_listings(
     
     # 카운트 쿼리
     count_stmt = select(func.count(MarketListing.id)).where(
-        MarketListing.market_account_id == account.id
+        MarketListing.market_account_id.in_(account_ids)
     )
     if status:
         count_stmt = count_stmt.where(MarketListing.status == status)
@@ -54,7 +58,7 @@ def list_market_listings(
     # 목록 쿼리
     stmt = (
         select(MarketListing)
-        .where(MarketListing.market_account_id == account.id)
+        .where(MarketListing.market_account_id.in_(account_ids))
         .order_by(MarketListing.linked_at.desc())
         .offset(offset)
         .limit(limit)
@@ -87,6 +91,7 @@ def list_market_listings(
 def list_market_products(
     session: Session = Depends(get_session),
     market_code: str = Query(default="COUPANG", alias="marketCode"),
+    account_id: uuid.UUID | None = Query(default=None, alias="accountId"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ):
@@ -97,14 +102,17 @@ def list_market_products(
     from app.db import get_session as get_dropship_session
     from app.session_factory import session_factory
     
-    # 활성 계정 조회
-    stmt_account = select(MarketAccount).where(
-        MarketAccount.market_code == market_code,
-        MarketAccount.is_active == True
-    )
-    account = session.scalars(stmt_account).first()
+    # 대상 계정 ID 목록 추출
+    if account_id:
+        account_ids = [account_id]
+    else:
+        stmt_accounts = select(MarketAccount.id).where(
+            MarketAccount.market_code == market_code,
+            MarketAccount.is_active == True
+        )
+        account_ids = session.scalars(stmt_accounts).all()
     
-    if not account:
+    if not account_ids:
         return {
             "items": [],
             "total": 0,
@@ -115,7 +123,7 @@ def list_market_products(
     # MarketListing 조회
     stmt = (
         select(MarketListing)
-        .where(MarketListing.market_account_id == account.id)
+        .where(MarketListing.market_account_id.in_(account_ids))
         .order_by(MarketListing.linked_at.desc())
         .offset(offset)
         .limit(limit)
@@ -157,7 +165,7 @@ def list_market_products(
     
     # 총 개수
     count_stmt = select(func.count(MarketListing.id)).where(
-        MarketListing.market_account_id == account.id
+        MarketListing.market_account_id.in_(account_ids)
     )
     total = session.scalar(count_stmt) or 0
     
@@ -167,7 +175,7 @@ def list_market_products(
         "limit": limit,
         "offset": offset,
         "marketCode": market_code,
-        "accountId": str(account.id),
+        "accountIds": [str(aid) for aid in account_ids],
     }
 
 
@@ -175,36 +183,64 @@ def list_market_products(
 def sync_market_products(
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
+    market_code: str = Query(default="COUPANG", alias="marketCode"),
+    account_id: uuid.UUID | None = Query(default=None, alias="accountId"),
     deep: bool = Query(default=False),
 ) -> dict:
-    from app.coupang_sync import sync_coupang_products
+    if market_code == "COUPANG":
+        from app.coupang_sync import sync_coupang_products
+        sync_func = sync_coupang_products
+    elif market_code == "SMARTSTORE":
+        from app.smartstore_sync import sync_smartstore_products
+        sync_func = sync_smartstore_products
+    else:
+        raise HTTPException(status_code=400, detail=f"지원하지 않는 마켓 코드입니다: {market_code}")
 
-    account = session.scalars(
-        select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
-    ).first()
-    if not account:
-        raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
+    if account_id:
+        accounts = session.scalars(select(MarketAccount).where(MarketAccount.id == account_id)).all()
+    else:
+        accounts = session.scalars(
+            select(MarketAccount).where(MarketAccount.market_code == market_code, MarketAccount.is_active == True)
+        ).all()
+        
+    if not accounts:
+        raise HTTPException(status_code=400, detail=f"활성 상태의 {market_code} 계정을 찾을 수 없습니다.")
 
-    background_tasks.add_task(sync_coupang_products, session, account.id, deep=bool(deep))
-    return {"status": "accepted", "message": "쿠팡 상품 동기화가 백그라운드에서 시작되었습니다.", "deep": bool(deep)}
+    for account in accounts:
+        background_tasks.add_task(sync_func, session, account.id, deep=bool(deep))
+        
+    return {"status": "accepted", "message": f"{market_code} 상품 동기화({len(accounts)}개 계정)가 백그라운드에서 시작되었습니다.", "deep": bool(deep)}
 
 
 @router.get("/products/raw", status_code=200)
 def list_market_products_raw(
     session: Session = Depends(get_session),
+    market_code: str = Query(default="COUPANG", alias="marketCode"),
+    account_id: uuid.UUID | None = Query(default=None, alias="accountId"),
     limit: int = Query(default=200, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> dict:
-    account = session.scalars(
-        select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
-    ).first()
-    if not account:
-        raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
+    # 대상 계정 ID 목록 추출
+    if account_id:
+        account_ids = [account_id]
+        # 해당 계정의 market_code를 가져옴
+        acc = session.get(MarketAccount, account_id)
+        current_market_code = acc.market_code if acc else market_code
+    else:
+        stmt_accounts = select(MarketAccount.id).where(
+            MarketAccount.market_code == market_code,
+            MarketAccount.is_active == True
+        )
+        account_ids = session.scalars(stmt_accounts).all()
+        current_market_code = market_code
+    
+    if not account_ids:
+        raise HTTPException(status_code=400, detail=f"활성 상태의 {market_code} 계정을 찾을 수 없습니다.")
 
     stmt = (
         select(MarketProductRaw)
-        .where(MarketProductRaw.market_code == "COUPANG")
-        .where(MarketProductRaw.account_id == account.id)
+        .where(MarketProductRaw.market_code == current_market_code)
+        .where(MarketProductRaw.account_id.in_(account_ids))
         .order_by(MarketProductRaw.fetched_at.desc())
         .offset(offset)
         .limit(limit)
@@ -238,7 +274,7 @@ def list_market_products_raw(
             {
                 "id": str(row.id),
                 "productId": None,
-                "marketAccountId": str(account.id),
+                "marketAccountId": str(row.account_id),
                 "marketItemId": row.market_item_id,
                 "status": sale_status or approval_status,
                 "coupangStatus": approval_status,
@@ -254,8 +290,8 @@ def list_market_products_raw(
 
     total = session.scalar(
         select(func.count(MarketProductRaw.id))
-        .where(MarketProductRaw.market_code == "COUPANG")
-        .where(MarketProductRaw.account_id == account.id)
+        .where(MarketProductRaw.market_code == current_market_code)
+        .where(MarketProductRaw.account_id.in_(account_ids))
     ) or 0
 
     return {
@@ -263,7 +299,7 @@ def list_market_products_raw(
         "total": total,
         "limit": int(limit),
         "offset": int(offset),
-        "marketCode": "COUPANG",
-        "accountId": str(account.id),
+        "marketCode": current_market_code,
+        "accountIds": [str(aid) for aid in account_ids],
         "source": "raw",
     }

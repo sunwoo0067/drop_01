@@ -1,0 +1,13 @@
+
+==================================================
+Verifying SmartStore Account Setup
+==================================================
+Creating test account: Test Naver Account
+Created Account ID: 1cd72e5e-2463-4814-b86e-9a76b6f4c9a7
+Masked Client ID: NAVE****3456
+
+Listing SmartStore accounts...
+Total SmartStore accounts: 1
+- Test Naver Account (Active: True)
+
+SUCCESS: SmartStore account management logic verified.
