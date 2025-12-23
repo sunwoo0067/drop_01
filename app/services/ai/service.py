@@ -119,7 +119,7 @@ class AIService:
             return result
         return []
 
-    def optimize_seo(self, product_name: str, keywords: List[str], provider: ProviderType = "auto") -> Dict[str, Any]:
+    def optimize_seo(self, product_name: str, keywords: List[str], context: Optional[str] = None, provider: ProviderType = "auto") -> Dict[str, Any]:
         clean_keywords = [str(k) for k in keywords if k]
         target_provider = self._get_provider(provider)
         
@@ -128,10 +128,18 @@ class AIService:
         if provider == "ollama" or (provider == "auto" and self.default_provider_name == "ollama"):
             target_model = settings.ollama_logic_model
             
+        context_str = f"\nContext/Details: {context[:5000]}" if context else ""
+        
         prompt = f"""
         Optimize product name for SEO (Coupang).
-        Original: {product_name}
-        Keywords: {', '.join(clean_keywords)}
+        Original Name: {product_name}
+        Keywords: {', '.join(clean_keywords)}{context_str}
+        
+        Instructions:
+        1. Create a professional and searchable product title.
+        2. Extract or refine relevant tags/keywords.
+        3. Use the provided context (description/OCR) to ensure accuracy.
+        
         Return JSON {{ "title": "...", "tags": [...] }}
         """
         return target_provider.generate_json(prompt, model=target_model)
@@ -151,6 +159,16 @@ class AIService:
         Return JSON {{ "months": [int], "current_month_score": float (relevance to month {current_month}) }}
         """
         return target_provider.generate_json(prompt, model=target_model)
+
+    def generate_json(self, prompt: str, model: Optional[str] = None, provider: ProviderType = "auto") -> Dict[str, Any]:
+        """Generic JSON generation method for agents"""
+        target_provider = self._get_provider(provider)
+        
+        # Default to logic model for general JSON tasks if using Ollama and no specific model provided
+        if not model and (provider == "ollama" or (provider == "auto" and self.default_provider_name == "ollama")):
+            model = settings.ollama_logic_model
+            
+        return target_provider.generate_json(prompt, model=model)
 
     def describe_image(self, image_data: bytes, prompt: str = "이 이미지를 상세히 설명해주세요. 특히 상품의 특징, 색상, 디자인, 재질 등을 중심으로 설명해주세요.", provider: ProviderType = "auto") -> str:
         return self._get_provider(provider).describe_image(image_data, prompt)

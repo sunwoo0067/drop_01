@@ -1,126 +1,27 @@
 import logging
-import asyncio
 import uuid
+import asyncio
 from typing import List, Optional
+from sqlalchemy import select
 from sqlalchemy.orm import Session
-from sqlalchemy import select, or_, desc
-from sqlalchemy.dialects.postgresql import insert
 
-from app.embedding_service import EmbeddingService
-from app.models import BenchmarkProduct, SupplierAccount, SupplierItemRaw, SourcingCandidate
-from app.ownerclan_client import OwnerClanClient
-from app.settings import settings
+from app.models import SourcingCandidate, BenchmarkProduct
 from app.services.ai.agents.sourcing_agent import SourcingAgent
+from app.embedding_service import EmbeddingService
+from app.settings import settings
 
 logger = logging.getLogger(__name__)
-
 
 class SourcingService:
     def __init__(self, db: Session):
         self.db = db
-        self.embedding_service = EmbeddingService()
-        from app.services.ai import AIService
-        self.ai_service = AIService()
         self.sourcing_agent = SourcingAgent(db)
-        self._ai_semaphore = asyncio.Semaphore(5)
-
-    def _get_ownerclan_primary_client(self, user_type: str = "seller") -> OwnerClanClient:
-        account = (
-            self.db.query(SupplierAccount)
-            .filter(SupplierAccount.supplier_code == "ownerclan")
-            .filter(SupplierAccount.user_type == user_type)
-            .filter(SupplierAccount.is_primary.is_(True))
-            .filter(SupplierAccount.is_active.is_(True))
-            .one_or_none()
-        )
-        if not account:
-            raise RuntimeError("오너클랜 대표 계정이 설정되어 있지 않습니다")
-
-        return OwnerClanClient(
-            auth_url=settings.ownerclan_auth_url,
-            api_base_url=settings.ownerclan_api_base_url,
-            graphql_url=settings.ownerclan_graphql_url,
-            access_token=account.access_token,
-        )
-
-    def _extract_items(self, data: dict) -> list[dict]:
-        if not isinstance(data, dict):
-            return []
-        
-        # Support GraphQL fallback format: {"items": [...], "_source": "graphql"}
-        if "items" in data and isinstance(data.get("items"), list):
-            return [it for it in data["items"] if isinstance(it, dict)]
-        
-        # Original REST API format: {"data": {"items": [...]}}
-        data_obj = data.get("data")
-        if not isinstance(data_obj, dict):
-            return []
-        items_obj = data_obj.get("items")
-        if items_obj is None and isinstance(data_obj.get("data"), dict):
-            items_obj = data_obj.get("data").get("items")
-        if isinstance(items_obj, list):
-            return [it for it in items_obj if isinstance(it, dict)]
-        return []
-
-    def _to_int(self, value) -> int | None:
-        if value is None:
-            return None
-        try:
-            return int(float(value))
-        except Exception:  # noqa: BLE001
-            return None
-
-    async def execute_keyword_sourcing(self, keywords: List[str], min_margin: float = 0.15):
-        """
-        Strategy 1: Simple Keyword Sourcing
-        Searches OwnerClan for keywords, filters by margin, and creates candidates.
-        """
-        logger.info("Starting Keyword Sourcing for: %s", keywords)
-
-        client = self._get_ownerclan_primary_client(user_type="seller")
-
-        found_items: list[dict] = []
-        for kw in keywords:
-            status_code, data = client.get_products(keyword=kw, limit=50)
-            if status_code != 200:
-                logger.warning("오너클랜 상품 검색 실패: HTTP %s (keyword=%s)", status_code, kw)
-                continue
-            found_items.extend(self._extract_items(data))
-
-        for item in found_items:
-            supply_price = self._to_int(
-                item.get("supply_price")
-                or item.get("supplyPrice")
-                or item.get("fixedPrice")
-                or item.get("price")
-            )
-            selling_price = self._to_int(
-                item.get("selling_price")
-                or item.get("sellingPrice")
-                or item.get("fixedPrice")
-                or item.get("price")
-            )
-
-            margin: float | None = None
-            if selling_price and selling_price > 0 and supply_price is not None:
-                margin = (selling_price - supply_price) / selling_price
-
-            if margin is not None and margin >= min_margin:
-                thumbnail_url = (
-                    item.get("thumbnail_url")
-                    or item.get("thumbnailUrl")
-                    or (item.get("images")[0] if isinstance(item.get("images"), list) and item.get("images") else None)
-                )
-                await self._create_candidate(
-                    item,
-                    strategy="KEYWORD",
-                    margin_score=margin,
-                    thumbnail_url=thumbnail_url,
-                )
+        self.embedding_service = EmbeddingService()
+        self._ai_semaphore = asyncio.Semaphore(1)
 
     async def execute_benchmark_sourcing(self, benchmark_id: uuid.UUID):
         """
-        Strategy 2: Benchmark Sourcing (LangGraph 기반 에이전트 오케스트레이션)
+        Execute high-level sourcing using LangGraph agent.
         """
         benchmark = (
             self.db.execute(select(BenchmarkProduct).where(BenchmarkProduct.id == benchmark_id))
@@ -134,6 +35,7 @@ class SourcingService:
             "name": benchmark.name,
             "detail_html": benchmark.detail_html,
             "price": benchmark.price,
+            "images": benchmark.image_urls or []
         }
 
         try:
@@ -144,6 +46,8 @@ class SourcingService:
 
         candidate_results = (result_state or {}).get("candidate_results") or []
         specs = (result_state or {}).get("specs")
+        visual_analysis = (result_state or {}).get("visual_analysis")
+        
         if not candidate_results:
             logger.warning("Benchmark sourcing agent returned no candidates for %s", benchmark_id)
             return
@@ -156,9 +60,22 @@ class SourcingService:
                 seasonal_score=candidate_data.get("seasonal_score"),
                 spec_data=specs,
                 thumbnail_url=candidate_data.get("thumbnail_url"),
+                visual_analysis=visual_analysis,
+                expert_match_score=candidate_data.get("expert_match_score"),
+                expert_match_reason=candidate_data.get("expert_match_reason"),
             )
         
         logger.info(f"LangGraph Agent sourcing finished for {benchmark.name}")
+
+    def _to_int(self, value: any) -> int:
+        if value is None: return 0
+        try:
+            if isinstance(value, str):
+                import re
+                value = re.sub(r'[^\d]', '', value)
+            return int(value)
+        except:
+            return 0
 
     async def _create_candidate(
         self,
@@ -169,10 +86,13 @@ class SourcingService:
         margin_score: float | None = None,
         spec_data: dict | None = None,
         thumbnail_url: str | None = None,
+        visual_analysis: str | None = None,
+        expert_match_score: float | None = None,
+        expert_match_reason: str | None = None,
     ):
         async with self._ai_semaphore:
             return await self._execute_create_candidate(
-                item, strategy, benchmark_id, seasonal_score, margin_score, spec_data, thumbnail_url
+                item, strategy, benchmark_id, seasonal_score, margin_score, spec_data, thumbnail_url, visual_analysis, expert_match_score, expert_match_reason
             )
 
     async def _execute_create_candidate(
@@ -184,6 +104,9 @@ class SourcingService:
         margin_score: float | None = None,
         spec_data: dict | None = None,
         thumbnail_url: str | None = None,
+        visual_analysis: str | None = None,
+        expert_match_score: float | None = None,
+        expert_match_reason: str | None = None,
     ):
         supplier_id = (
             item.get("item_code")
@@ -205,15 +128,18 @@ class SourcingService:
             .first()
         )
         if exists:
+            # Update existing candidate with new analysis if it was bulk collected
+            if exists.source_strategy == "BULK_COLLECT" and strategy == "BENCHMARK_AGENT":
+                exists.source_strategy = strategy
+                exists.benchmark_product_id = benchmark_id
+                exists.visual_analysis = visual_analysis
+                exists.spec_data = spec_data
+                exists.final_score = expert_match_score
+                self.db.commit()
             return
 
         name = item.get("item_name") or item.get("name") or item.get("itemName") or "Unknown"
-        supply_price = self._to_int(
-            item.get("supply_price")
-            or item.get("supplyPrice")
-            or item.get("fixedPrice")
-            or item.get("price")
-        ) or 0
+        supply_price = self._to_int(item.get("supply_price") or item.get("supplyPrice") or item.get("fixedPrice") or item.get("price")) or 0
 
         final_thumbnail_url = thumbnail_url
         if not final_thumbnail_url:
@@ -231,14 +157,7 @@ class SourcingService:
             if benchmark and benchmark.embedding is not None:
                 candidate_text = f"{name} {item.get('detail_html', '')}".strip()
                 candidate_images = [final_thumbnail_url] if final_thumbnail_url else []
-                if not candidate_images and isinstance(item.get("images"), list):
-                    candidate_images = item.get("images")[:1]
-
-                embedding = await self.embedding_service.generate_rich_embedding(
-                    candidate_text,
-                    image_urls=candidate_images,
-                )
-
+                embedding = await self.embedding_service.generate_rich_embedding(candidate_text, image_urls=candidate_images)
                 if embedding:
                     similarity_score = self.embedding_service.compute_similarity(benchmark.embedding, embedding)
 
@@ -255,18 +174,16 @@ class SourcingService:
             embedding=embedding,
             spec_data=spec_data,
             thumbnail_url=final_thumbnail_url,
+            visual_analysis=visual_analysis,
+            final_score=expert_match_score, # Mapping expert match score to final_score
             status="PENDING",
         )
 
         self.db.add(candidate)
         self.db.commit()
-        similarity_text = f"{similarity_score:.4f}" if similarity_score is not None else "n/a"
-        logger.info("Created candidate: %s (Similarity=%s)", candidate.name, similarity_text)
+        logger.info("Created candidate: %s (Expert Score=%s)", candidate.name, expert_match_score)
 
     def find_similar_items_in_raw(self, embedding: List[float], limit: int = 10) -> List[SourcingCandidate]:
-        """
-        Finds similar items in SourcingCandidate using vector similarity.
-        """
         stmt = (
             select(SourcingCandidate)
             .order_by(SourcingCandidate.embedding.cosine_distance(embedding))
@@ -275,60 +192,4 @@ class SourcingService:
         return list(self.db.scalars(stmt).all())
 
     def import_from_raw(self, limit: int = 1000) -> int:
-        """
-        Converts available SupplierItemRaw data into SourcingCandidate entries.
-        """
-        logger.info("Starting bulk import from SupplierItemRaw...")
-
-        stmt = (
-            select(SupplierItemRaw)
-            .where(SupplierItemRaw.supplier_code == "ownerclan")
-            .order_by(desc(SupplierItemRaw.fetched_at))
-            .limit(limit * 5)
-        )
-
-        raw_items = self.db.scalars(stmt).all()
-        count = 0
-
-        for raw in raw_items:
-            try:
-                if not raw.item_code:
-                    continue
-
-                data = raw.raw if isinstance(raw.raw, dict) else {}
-                name = data.get("item_name") or data.get("name") or data.get("itemName") or "Unknown"
-
-                supply_price = self._to_int(
-                    data.get("supply_price")
-                    or data.get("supplyPrice")
-                    or data.get("fixedPrice")
-                    or data.get("price")
-                ) or 0
-
-                insert_stmt = (
-                    insert(SourcingCandidate)
-                    .values(
-                        supplier_code="ownerclan",
-                        supplier_item_id=str(raw.item_code),
-                        name=str(name),
-                        supply_price=int(supply_price),
-                        thumbnail_url=data.get("thumbnail_url") or (data.get("images")[0] if data.get("images") else None),
-                        source_strategy="BULK_COLLECT",
-                        status="PENDING",
-                    )
-                    .on_conflict_do_nothing()
-                )
-
-                result = self.db.execute(insert_stmt)
-                if result.rowcount:
-                    count += int(result.rowcount)
-
-                if count >= limit:
-                    break
-
-            except Exception as exc:  # noqa: BLE001
-                logger.error("Error converting raw item %s: %s", raw.id, exc)
-
-        self.db.commit()
-        logger.info("Imported %s candidates from raw data.", count)
-        return count
+        pass

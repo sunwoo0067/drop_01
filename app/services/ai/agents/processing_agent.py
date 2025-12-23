@@ -18,7 +18,7 @@ class ProcessingAgent:
         self.workflow = self._create_workflow()
 
     def _name_only_processing(self) -> bool:
-        return True
+        return settings.product_processing_name_only
 
     def _create_workflow(self):
         workflow = StateGraph(AgentState)
@@ -88,9 +88,10 @@ class ProcessingAgent:
         
         processed_name = name
         keywords = []
+        context = input_data.get("normalized_detail")
         
         try:
-            seo_result = self.ai_service.optimize_seo(name, [brand], provider="auto")
+            seo_result = self.ai_service.optimize_seo(name, [brand], context=context, provider="auto")
             if isinstance(seo_result, dict):
                 raw_title = seo_result.get("title")
                 keywords = seo_result.get("tags") or []

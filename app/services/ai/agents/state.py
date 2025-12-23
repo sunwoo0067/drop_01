@@ -18,7 +18,9 @@ class AgentState(TypedDict, total=False):
     # 분석 결과
     pain_points: List[str]
     specs: Dict[str, Any]
+    visual_analysis: str
     seasonality: Dict[str, Any]
+    rank_explanation: str
     
     # 워크플로우 제어
     next_step: str

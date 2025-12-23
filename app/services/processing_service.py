@@ -17,7 +17,7 @@ class ProcessingService:
         self.processing_agent = ProcessingAgent(db)
 
     def _name_only_processing(self) -> bool:
-        return True
+        return settings.product_processing_name_only
 
     async def process_product(self, product_id: uuid.UUID, min_images_required: int = 1) -> bool:
         """
