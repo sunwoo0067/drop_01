@@ -161,7 +161,12 @@ def _create_or_get_product_from_raw_item(session: Session, raw_item: SupplierIte
         margin_rate = 0.0
     if margin_rate < 0:
         margin_rate = 0.0
-    selling_price = calculate_selling_price(cost, margin_rate, shipping_fee)
+    selling_price = calculate_selling_price(
+        cost, 
+        margin_rate, 
+        shipping_fee, 
+        market_fee_rate=float(settings.pricing_market_fee_rate or 0.13)
+    )
 
     product = Product(
         supplier_item_id=raw_item.id,

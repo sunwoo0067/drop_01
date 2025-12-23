@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 
 from app.models import Product, BenchmarkProduct, SupplierItemRaw
+from app.settings import settings
 from app.services.ai.agents.processing_agent import ProcessingAgent
 from app.services.image_processing import image_processing_service
 from app.services.detail_html_normalizer import normalize_ownerclan_html

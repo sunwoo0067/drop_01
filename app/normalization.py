@@ -59,7 +59,12 @@ def normalize_supplier_items(session: Session, batch_size: int = 1000, item_ids:
             margin_rate = 0.0
         if margin_rate < 0:
             margin_rate = 0.0
-        selling_price = calculate_selling_price(cost, margin_rate, shipping_fee)
+        selling_price = calculate_selling_price(
+            cost, 
+            margin_rate, 
+            shipping_fee, 
+            market_fee_rate=float(settings.pricing_market_fee_rate or 0.13)
+        )
         
         # Check if Product exists for this raw item
         # We need a way to look up Product by supplier_item_id.

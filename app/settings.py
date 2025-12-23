@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     ownerclan_secret_key: str = ""
 
     pricing_default_margin_rate: float = 0.0
+    pricing_market_fee_rate: float = 0.13 # 마켓 수수료율 (쿠팡 기본 13%)
     product_processing_name_only: bool = True
 
     product_name_forbidden_keywords: list[str] = [

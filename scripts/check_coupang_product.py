@@ -35,7 +35,8 @@ async def check_product():
 
     client = CoupangClient(access_key, secret_key, vendor_id)
     
-    seller_product_id = "15934785975"
+    import sys
+    seller_product_id = sys.argv[1] if len(sys.argv) > 1 else "15934785975"
     print(f"Fetching product {seller_product_id}...")
     
     code, data = client.get_product(seller_product_id)

@@ -189,7 +189,12 @@ def create_product_from_ownerclan_raw(payload: ProductFromOwnerClanRawIn, sessio
             margin_rate = 0.0
         if margin_rate < 0:
             margin_rate = 0.0
-        selling_price = calculate_selling_price(cost, margin_rate, shipping_fee)
+        selling_price = calculate_selling_price(
+            cost, 
+            margin_rate, 
+            shipping_fee, 
+            market_fee_rate=float(settings.pricing_market_fee_rate or 0.13)
+        )
 
         updated = False
         if (existing.selling_price or 0) <= 0 and selling_price > 0:
@@ -224,7 +229,12 @@ def create_product_from_ownerclan_raw(payload: ProductFromOwnerClanRawIn, sessio
         margin_rate = 0.0
     if margin_rate < 0:
         margin_rate = 0.0
-    selling_price = calculate_selling_price(cost, margin_rate, shipping_fee)
+    selling_price = calculate_selling_price(
+        cost, 
+        margin_rate, 
+        shipping_fee, 
+        market_fee_rate=float(settings.pricing_market_fee_rate or 0.13)
+    )
 
     product = Product(
         supplier_item_id=raw_item.id,

@@ -2036,16 +2036,13 @@ def _map_product_to_coupang_payload(
     return_phone = _normalize_phone((return_center_detail.get("companyContactNumber") if return_center_detail else None) or "070-4581-8906")
     return_name = (return_center_detail.get("shippingPlaceName") if return_center_detail else None) or "기본 반품지"
 
-    base_price = int(product.selling_price or 0)
-    ship_fee = int(shipping_fee or 0)
-    if ship_fee < 0:
-        ship_fee = 0
-    total_price = (base_price + ship_fee)
+    # DB의 selling_price는 이미 (원가+마진+배송비)/(1-수수료)가 계산된 최종 소비자가임 (100원 단위 올림)
+    total_price = int(product.selling_price or 0)
+    
+    # 100원 단위 올림 재확인 (혹시 모를 구버전 데이터 대비)
     if total_price < 3000:
         total_price = 3000
-    
-    # Coupang requires prices to be in 10-won increments
-    total_price = (total_price // 10) * 10
+    total_price = ((total_price + 99) // 100) * 100
 
     item_payload = {
         "itemName": name_to_use[:150], # 최대 150자
