@@ -67,6 +67,56 @@ class SourcingService:
         
         logger.info(f"LangGraph Agent sourcing finished for {benchmark.name}")
 
+    async def execute_keyword_sourcing(self, keyword: str, limit: int = 30):
+        """
+        Standard keyword-based sourcing.
+        """
+        logger.info(f"Executing keyword sourcing for: {keyword}")
+        from app.ownerclan_client import OwnerClanClient
+        # Use ownerclan client to search
+        client = OwnerClanClient(
+            auth_url=settings.ownerclan_auth_url,
+            api_base_url=settings.ownerclan_api_base_url,
+            graphql_url=settings.ownerclan_graphql_url
+        )
+        status, data = client.get_products(keyword=keyword, limit=limit)
+        if status != 200:
+            logger.error(f"Failed to fetch products for keyword: {keyword}")
+            return
+
+        items = data.get("data", {}).get("items") or data.get("items") or []
+        for item in items:
+            await self._create_candidate(item, strategy="KEYWORD_SEARCH")
+
+    async def execute_trend_sourcing(self):
+        """
+        Scans trends and triggers expanded sourcing.
+        """
+        from app.benchmark.collectors.naver_shopping import NaverShoppingBenchmarkCollector
+        collector = NaverShoppingBenchmarkCollector()
+        trending_keywords = await collector.collect_trending_keywords()
+        logger.info(f"Captured {len(trending_keywords)} trending keywords: {trending_keywords}")
+        
+        for kw in trending_keywords:
+            await self.execute_expanded_sourcing(kw)
+
+    async def execute_expanded_sourcing(self, keyword: str):
+        """
+        Expands keywords via AI and sources each.
+        """
+        logger.info(f"Expanding keyword: {keyword}")
+        from app.services.ai.service import AIService
+        ai = AIService()
+        expanded = ai.expand_keywords(keyword)
+        logger.info(f"Expanded '{keyword}' into: {expanded}")
+        
+        # Source original keyword
+        await self.execute_keyword_sourcing(keyword)
+        
+        # Source expanded keywords
+        for ekw in expanded:
+            await self.execute_keyword_sourcing(ekw)
+
     def _to_int(self, value: any) -> int:
         if value is None: return 0
         try:
@@ -138,6 +188,25 @@ class SourcingService:
                 self.db.commit()
             return
 
+        # Ensure raw data is in SupplierItemRaw for the product pipeline
+        from app.models import SupplierItemRaw
+        raw_entry = self.db.execute(
+            select(SupplierItemRaw)
+            .where(SupplierItemRaw.supplier_code == "ownerclan")
+            .where(SupplierItemRaw.item_code == str(supplier_id))
+        ).scalar_one_or_none()
+        
+        if not raw_entry:
+            raw_entry = SupplierItemRaw(
+                supplier_code="ownerclan",
+                item_code=str(supplier_id),
+                item_key=item.get("item_key") or item.get("itemKey"),
+                item_id=str(supplier_id),
+                raw=item
+            )
+            self.db.add(raw_entry)
+            self.db.flush() # Get ID
+        
         name = item.get("item_name") or item.get("name") or item.get("itemName") or "Unknown"
         supply_price = self._to_int(item.get("supply_price") or item.get("supplyPrice") or item.get("fixedPrice") or item.get("price")) or 0
 
@@ -154,12 +223,53 @@ class SourcingService:
                 self.db.execute(select(BenchmarkProduct).where(BenchmarkProduct.id == benchmark_id))
                 .scalar_one_or_none()
             )
-            if benchmark and benchmark.embedding is not None:
+            if benchmark:
                 candidate_text = f"{name} {item.get('detail_html', '')}".strip()
-                candidate_images = [final_thumbnail_url] if final_thumbnail_url else []
-                embedding = await self.embedding_service.generate_rich_embedding(candidate_text, image_urls=candidate_images)
-                if embedding:
-                    similarity_score = self.embedding_service.compute_similarity(benchmark.embedding, embedding)
+                
+                # 1. Similarity Score (Embedding Cosine Similarity)
+                if benchmark.embedding is not None:
+                    candidate_images = [final_thumbnail_url] if final_thumbnail_url else []
+                    embedding = await self.embedding_service.generate_rich_embedding(candidate_text, image_urls=candidate_images)
+                    if embedding:
+                        similarity_score = self.embedding_service.compute_similarity(benchmark.embedding, embedding)
+
+                # 2. Solution Matching (Pain Point Gap Analysis)
+                if benchmark.pain_points:
+                    # Boost similarity_score if description contains "solutions" to pain points
+                    # e.g. "noisy" in pain_points -> "silent" in candidate_text
+                    # This is a simple heuristic, ideally done via AI
+                    for pp in benchmark.pain_points:
+                        if "noise" in pp.lower() or "소음" in pp:
+                            if any(x in candidate_text for x in ["저소음", "무소음", "silent", "quiet"]):
+                                similarity_score = min(1.0, (similarity_score or 0.5) + 0.1)
+
+        # 3. Final Multi-Factor Weighted Scoring
+        # Profitability (40%)
+        profit_score = 0.0
+        if supply_price > 0 and (benchmark_price := (benchmark.price if benchmark else 0)) > 0:
+            margin_rate = (benchmark_price - supply_price) / benchmark_price
+            if margin_rate >= 0.2: profit_score = 1.0
+            elif margin_rate > 0: profit_score = margin_rate / 0.2
+        
+        # Seasonality (30%)
+        # already provided as seasonal_score arg, or default to 0.5
+        s_score = seasonal_score if seasonal_score is not None else 0.5
+        
+        # Competition (20%) - Placeholder (Default high if unknown)
+        comp_score = 1.0 
+        
+        # Quality (10%) - Heuristic based on rating or description quality
+        quality_score = min(1.0, len(item.get("detail_html", "")) / 5000.0)
+
+        # Total Calculation
+        final_ws = (profit_score * 0.4) + (s_score * 0.3) + (comp_score * 0.2) + (quality_score * 0.1)
+        # Normalize to 0-100 for storage if desired, or keep as 0-1
+        # User specified "85점 이상", so let's use 0-100
+        final_score_val = final_ws * 100.0
+        
+        # If expert match score exists (from agent), average it in or use it to override
+        if expert_match_score is not None:
+            final_score_val = (final_score_val + (expert_match_score * 100.0)) / 2.0
 
         candidate = SourcingCandidate(
             supplier_code="ownerclan",
@@ -175,13 +285,70 @@ class SourcingService:
             spec_data=spec_data,
             thumbnail_url=final_thumbnail_url,
             visual_analysis=visual_analysis,
-            final_score=expert_match_score, # Mapping expert match score to final_score
+            final_score=final_score_val,
             status="PENDING",
         )
 
         self.db.add(candidate)
         self.db.commit()
-        logger.info("Created candidate: %s (Expert Score=%s)", candidate.name, expert_match_score)
+        logger.info("Created candidate: %s (Final Score=%.2f)", candidate.name, final_score_val)
+
+        # Auto-Approval Pipeline
+        if final_score_val >= 85:
+            logger.info(f"Auto-approving high score candidate: {candidate.name} ({final_score_val})")
+            await self.approve_candidate(candidate.id)
+
+    async def approve_candidate(self, candidate_id: uuid.UUID):
+        """
+        Promotes a candidate to a real Product and triggers AI SEO/Image pipeline.
+        """
+        candidate = self.db.get(SourcingCandidate, candidate_id)
+        if not candidate or candidate.status == "APPROVED":
+            return
+
+        candidate.status = "APPROVED"
+        self.db.commit()
+
+        # 1. Create Product
+        from app.models import Product, SupplierItemRaw
+        from app.services.ai.service import AIService
+        ai = AIService()
+        
+        # Find raw record
+        raw_entry = self.db.execute(
+            select(SupplierItemRaw)
+            .where(SupplierItemRaw.supplier_code == candidate.supplier_code)
+            .where(SupplierItemRaw.item_code == candidate.supplier_item_id)
+        ).scalar_one_or_none()
+        
+        if not raw_entry:
+            logger.error(f"Cannot approve candidate: SupplierItemRaw not found for {candidate.supplier_item_id}")
+            return
+
+        # Optimize SEO
+        seo = ai.optimize_seo(candidate.name, candidate.seo_keywords or [], context=candidate.visual_analysis)
+        processed_name = seo.get("title") or candidate.name
+        processed_keywords = seo.get("tags") or candidate.seo_keywords
+        
+        product = Product(
+            supplier_item_id=raw_entry.id, # Link to raw record
+            name=candidate.name,
+            processed_name=processed_name,
+            processed_keywords=processed_keywords,
+            cost_price=candidate.supply_price,
+            selling_price=int(candidate.supply_price * 1.3), # Default 30% margin
+            status="DRAFT",
+            processing_status="PENDING",
+            processed_image_urls=[candidate.thumbnail_url] if candidate.thumbnail_url else []
+        )
+        self.db.add(product)
+        self.db.commit()
+        
+        logger.info(f"Promoted candidate to Product: {product.name} (ID: {product.id})")
+        
+        # 2. Trigger Image Processing (Placeholder for background task)
+        # In a real app, this would be a Celery task or BackgroundTask
+        # self.image_processing_service.trigger(product.id)
 
     def find_similar_items_in_raw(self, embedding: List[float], limit: int = 10) -> List[SourcingCandidate]:
         stmt = (

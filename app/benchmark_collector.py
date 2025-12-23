@@ -190,6 +190,11 @@ class BenchmarkCollector:
         raw_data_to_save = dict(product_data)
         raw_data_to_save.pop("detail_html", None)
         raw_data_to_save.pop("image_urls", None)
+        # Keep reviews if they exist
+        reviews = product_data.get("reviews")
+        if reviews:
+            raw_data_to_save["reviews"] = reviews
+        
         raw_html_val = raw_data_to_save.get("raw_html")
         if isinstance(raw_html_val, str) and len(raw_html_val) > 50000:
             raw_data_to_save["raw_html"] = raw_html_val[:50000]
@@ -294,7 +299,8 @@ class BenchmarkCollector:
                 "name": product.name,
                 "detail_html": product.detail_html,
                 "price": product.price,
-                "images": product.image_urls or []
+                "images": product.image_urls or [],
+                "reviews": product.raw_data.get("reviews") or []
             }
             
             # We call analyze_benchmark directly via the agent's run-like state preparation or just invoke a node

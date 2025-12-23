@@ -91,9 +91,13 @@ class SourcingAgent:
         name = benchmark.get("name")
         detail = benchmark.get("detail_html") or name
         images = benchmark.get("images") or []
+        reviews = benchmark.get("reviews") or []
         
-        pain_points = self.ai_service.analyze_pain_points(detail, provider="auto")
-        specs = self.ai_service.extract_specs(detail, provider="auto")
+        # Combine detail and reviews for deeper analysis
+        analysis_context = f"Product Detail: {detail}\n\nCustomer Reviews: " + "\n".join(reviews)
+        
+        pain_points = self.ai_service.analyze_pain_points(analysis_context, provider="auto")
+        specs = self.ai_service.extract_specs(detail, provider="auto") # Specs are usually in detail html
         
         # Spatial analysis for the main image if available
         visual_analysis = ""
@@ -326,7 +330,8 @@ class SourcingAgent:
                 "name": input_data.get("name"),
                 "detail_html": input_data.get("detail_html"),
                 "price": input_data.get("price"),
-                "images": input_data.get("images", [])
+                "images": input_data.get("images", []),
+                "reviews": input_data.get("reviews", [])
             },
             "collected_items": [],
             "candidate_results": [],

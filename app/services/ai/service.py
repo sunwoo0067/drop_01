@@ -144,6 +144,23 @@ class AIService:
         """
         return target_provider.generate_json(prompt, model=target_model)
 
+    def expand_keywords(self, keyword: str, provider: ProviderType = "auto") -> List[str]:
+        target_provider = self._get_provider(provider)
+        target_model = None
+        if provider == "ollama" or (provider == "auto" and self.default_provider_name == "ollama"):
+            target_model = settings.ollama_logic_model
+            
+        prompt = f"""
+        Given the seed keyword "{keyword}", generate 5-8 related long-tail keywords or specific search terms 
+        that would be effective for finding better products on a wholesale platform.
+        Focus on specific categories, features, or target users. (e.g., 'humidifier' -> 'desk mini humidifier', 'silent ultrasonic humidifier', etc.)
+        Return ONLY a list of strings in JSON format.
+        """
+        result = target_provider.generate_json(prompt, model=target_model)
+        if isinstance(result, list):
+            return [str(k) for k in result]
+        return []
+
     def predict_seasonality(self, product_name: str, provider: ProviderType = "auto") -> Dict[str, Any]:
         import datetime
         current_month = datetime.datetime.now().month
