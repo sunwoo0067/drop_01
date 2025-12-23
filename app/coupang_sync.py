@@ -1175,8 +1175,10 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
             for _ in range(10):
                 p_code, p_data = client.get_product(seller_product_id)
                 data_obj2 = p_data.get("data") if isinstance(p_data, dict) else None
+                
+                # 쿠팡 API 응답 지연 대응: 200이 아니거나 data가 없으면 더 긴 시간 대기 후 재시도
                 if p_code != 200 or not isinstance(data_obj2, dict):
-                    time.sleep(0.5)
+                    time.sleep(1.0)
                     continue
 
                 items2 = data_obj2.get("items") if isinstance(data_obj2.get("items"), list) else []
@@ -1420,6 +1422,10 @@ def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_i
             return False, meta_result["error"]
 
         # 2. 페이로드 생성 (Full Sync 방식: 내부 매핑 함수 활용)
+        # [BUG FIX] 이미지 우선순위: 가공 이미지가 있으면 그것을 사용, 없으면 원본 이미지 사용
+        processed_images = product.processed_image_urls if isinstance(product.processed_image_urls, list) else []
+        payload_image_urls = processed_images if processed_images else _get_original_image_urls(session, product)
+        
         payload = _map_product_to_coupang_payload(
             product,
             account,
@@ -1430,7 +1436,7 @@ def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_i
             meta_result["notice_meta"],
             meta_result["shipping_fee"],
             meta_result["delivery_company_code"],
-            image_urls=_get_original_image_urls(session, product),
+            image_urls=payload_image_urls,
         )
         
         # 업데이트 API 규격에 맞춰 sellerProductId 및 requested 추가
