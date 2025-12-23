@@ -161,6 +161,7 @@ def list_market_products(
                 "sellingPrice": product.selling_price if product else 0,
                 "processedImageUrls": product.processed_image_urls if product else [],
                 "productStatus": product.status if product else None,
+                "processingStatus": product.processing_status if product else None,
             })
     
     # 총 개수
@@ -285,6 +286,7 @@ def list_market_products_raw(
                 "sellingPrice": raw.get("salePrice") or raw.get("sale_price") or raw.get("price"),
                 "processedImageUrls": [raw.get("imageUrl") or raw.get("image_url")] if raw.get("imageUrl") or raw.get("image_url") else [],
                 "productStatus": None,
+                "processingStatus": None,
             }
         )
 

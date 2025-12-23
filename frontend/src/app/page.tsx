@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-import { ShoppingBag, CheckCircle, Clock, Zap, Activity, ShieldCheck, Bot } from "lucide-react";
+import { ShoppingBag, CheckCircle, Clock, Zap, Activity, ShieldCheck, Bot, Play, Pause, RefreshCw } from "lucide-react";
 import { motion } from "framer-motion";
 
 const container = {
@@ -27,19 +27,39 @@ export default function Home() {
     pending: 0,
     completed: 0
   });
+  const [isRunning, setIsRunning] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const fetchStats = async () => {
+    try {
+      const res = await api.get("/products/stats");
+      setStats(res.data);
+    } catch (e) {
+      console.error("Failed to fetch stats", e);
+      setStats({ total: 0, pending: 0, completed: 0 });
+    }
+  };
 
   useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const res = await api.get("/products/stats");
-        setStats(res.data);
-      } catch (e) {
-        console.error("Failed to fetch stats", e);
-        setStats({ total: 0, pending: 0, completed: 0 });
-      }
-    };
     fetchStats();
   }, []);
+
+  const handleRunCycle = async (dryRun: boolean = true) => {
+    setIsLoading(true);
+    try {
+      await api.post(`/orchestration/run-cycle?dryRun=${dryRun}`);
+      setIsRunning(true);
+      // 백그라운드 작업이므로 즉시 상태를 바꾸고 시각적 피드백 제공
+      setTimeout(() => {
+        setIsRunning(false);
+        fetchStats();
+      }, 5000); // 5초 후 running 상태 해제 (시뮬레이션)
+    } catch (e) {
+      console.error("Failed to run cycle", e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return (
     <motion.div
@@ -119,6 +139,61 @@ export default function Home() {
             </CardContent>
           </Card>
         </motion.div>
+      </motion.div>
+
+      {/* AI Orchestration Control Panel */}
+      <motion.div variants={item}>
+        <Card className="bg-gradient-to-br from-primary/5 to-transparent border-primary/20 overflow-hidden relative">
+          <div className="absolute top-0 right-0 p-8 opacity-5">
+            <Bot className="h-32 w-32" />
+          </div>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-xl">
+              <Zap className="h-6 w-6 text-primary animate-pulse" />
+              AI 오케스트레이션 제어 센터 (Step 1)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col md:flex-row items-center gap-6">
+            <div className="flex-1 space-y-2">
+              <p className="text-sm font-medium text-muted-foreground">
+                AI가 자동으로 시장 트렌드를 분석하고, 상품을 소싱하여 1단계 가공(상품명 최적화) 후 등록된 모든 마켓에 전송합니다.
+              </p>
+              <div className="flex items-center gap-4">
+                <div className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-widest ${isRunning ? 'bg-emerald-500/20 text-emerald-500 animate-pulse' : 'bg-muted text-muted-foreground'}`}>
+                  {isRunning ? 'System Running' : 'System Ready'}
+                </div>
+                <span className="text-xs text-muted-foreground italic">대기 중인 최적화 사이클: 즉시 실행 가능</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => handleRunCycle(true)}
+                disabled={isLoading || isRunning}
+                className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-accent hover:bg-accent/80 font-black text-sm transition-all disabled:opacity-50"
+              >
+                <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+                테스트 가동 (Dry Run)
+              </button>
+              <button
+                onClick={() => handleRunCycle(false)}
+                disabled={isLoading || isRunning}
+                className="flex items-center gap-2 px-8 py-3 rounded-2xl bg-primary text-primary-foreground hover:shadow-lg hover:shadow-primary/30 font-black text-sm transition-all disabled:opacity-50 active:scale-95"
+              >
+                {isRunning ? (
+                  <>
+                    <Pause className="h-4 w-4 fill-current" />
+                    가동 중...
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 fill-current" />
+                    자동 운영 시작
+                  </>
+                )}
+              </button>
+            </div>
+          </CardContent>
+        </Card>
       </motion.div>
 
       <motion.div variants={container} className="grid gap-6 md:grid-cols-2 lg:grid-cols-7">

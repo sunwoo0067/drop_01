@@ -12,7 +12,9 @@ import {
     Edit,
     Trash2,
     MoreVertical,
-    ArrowLeft
+    ArrowLeft,
+    Zap,
+    Sparkles
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -45,6 +47,7 @@ interface MarketProduct {
     sellingPrice: number;
     processedImageUrls: string[] | null;
     productStatus: string | null;
+    processingStatus: string | null;
     marketAccountId: string;
     accountName: string | null;
     marketCode: string;
@@ -120,6 +123,18 @@ export default function MarketProductsPage() {
     const handleViewOnCoupang = (sellerProductId: string) => {
         // 쿠팡 Wing 판매자 센터 상품 조회 URL (로그인 필요)
         window.open(`https://wing.coupang.com/product/${sellerProductId}`, '_blank');
+    };
+
+    const handlePremiumOptimize = async (productId: string) => {
+        try {
+            await api.post(`/products/${productId}/premium-optimize`);
+            // 상태 업데이트를 위해 목록 새로고침
+            fetchMarketProducts();
+            alert("프리미엄 고도화 작업이 시작되었습니다. 결과는 잠시 후 확인하실 수 있습니다.");
+        } catch (e) {
+            console.error("Failed to trigger premium optimize", e);
+            alert("작업 요청에 실패했습니다.");
+        }
     };
 
     const filteredItems = items.filter(item =>
@@ -350,7 +365,30 @@ export default function MarketProductsPage() {
                                     onClick={() => handleViewOnCoupang(item.marketItemId)}
                                 >
                                     <ExternalLink className="mr-2 h-4 w-4" />
-                                    쿠팡에서 보기
+                                    조회
+                                </Button>
+                                <Button
+                                    className={cn(
+                                        "flex-[1.5] rounded-2xl font-black transition-all",
+                                        item.processingStatus === "PROCESSING"
+                                            ? "bg-amber-100 text-amber-600 cursor-not-allowed"
+                                            : "bg-emerald-500 text-white hover:bg-emerald-600 hover:shadow-lg hover:shadow-emerald-500/30"
+                                    )}
+                                    size="sm"
+                                    disabled={item.processingStatus === "PROCESSING"}
+                                    onClick={() => handlePremiumOptimize(item.productId)}
+                                >
+                                    {item.processingStatus === "PROCESSING" ? (
+                                        <>
+                                            <RotateCw className="mr-2 h-4 w-4 animate-spin" />
+                                            가공 중
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Sparkles className="mr-2 h-4 w-4 fill-current" />
+                                            프리미엄 최적화
+                                        </>
+                                    )}
                                 </Button>
                             </CardFooter>
                         </Card>
