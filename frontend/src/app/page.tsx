@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-import { ShoppingBag, CheckCircle, Clock, Zap, Activity, ShieldCheck, Bot, Play, Pause, RefreshCw } from "lucide-react";
+import { ShoppingBag, CheckCircle, Clock, Zap, Activity, ShieldCheck, Bot, Play, Pause, RefreshCw, AlertCircle } from "lucide-react";
 import { motion } from "framer-motion";
 
 const container = {
@@ -49,13 +49,16 @@ export default function Home() {
     try {
       await api.post(`/orchestration/run-cycle?dryRun=${dryRun}`);
       setIsRunning(true);
-      // 백그라운드 작업이므로 즉시 상태를 바꾸고 시각적 피드백 제공
+      alert(dryRun ? "테스트 가동(Dry Run)이 시작되었습니다. 실제 등록은 수행되지 않습니다." : "AI 자율 운영(Step 1)이 시작되었습니다. 소싱 및 등록이 백그라운드에서 진행됩니다.");
+
+      // 30초 동안 Running 상태 유지 (시각적 효과)
       setTimeout(() => {
         setIsRunning(false);
         fetchStats();
-      }, 5000); // 5초 후 running 상태 해제 (시뮬레이션)
+      }, 30000);
     } catch (e) {
       console.error("Failed to run cycle", e);
+      alert("AI 가동 요청에 실패했습니다. 서버 상태를 확인해주세요.");
     } finally {
       setIsLoading(false);
     }
@@ -254,9 +257,9 @@ export default function Home() {
                       <span className="relative inline-flex rounded-full h-3 w-3 bg-primary"></span>
                     </div>
                     <span className="text-sm font-bold">Processing Agent</span>
-                    <span className="ml-auto px-2 py-0.5 rounded-full bg-primary/20 text-[10px] font-black uppercase text-primary tracking-tighter">Running</span>
+                    <span className="ml-auto px-2 py-0.5 rounded-full bg-primary/20 text-[10px] font-black uppercase text-primary tracking-tighter">Live</span>
                   </div>
-                  <div className="text-xs text-muted-foreground font-medium">데이터 SEO 최적화 및 이미지 가공 작업 진행 중 (74%)</div>
+                  <div className="text-xs text-muted-foreground font-medium">데이터 SEO 최적화 및 이미지 가공 엔진 대기 중</div>
                 </div>
               </div>
             </CardContent>
