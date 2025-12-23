@@ -14,6 +14,35 @@ from app.models import Product, MarketListing, MarketAccount, MarketProductRaw
 router = APIRouter()
 
 
+@router.get("/stats", status_code=200)
+def get_market_registration_stats(session: Session = Depends(get_session)):
+    """
+    마켓별, 계정별 상품 등록 현황 통계를 반환합니다.
+    """
+    # 모든 활성 계정 조회
+    stmt_accounts = select(MarketAccount).where(MarketAccount.is_active == True)
+    accounts = session.scalars(stmt_accounts).all()
+    
+    # 각 계정별 리스팅 개수 집계
+    stmt_stats = (
+        select(MarketListing.market_account_id, func.count(MarketListing.id))
+        .group_by(MarketListing.market_account_id)
+    )
+    stats_rows = session.execute(stmt_stats).all()
+    stats_map = {row[0]: row[1] for row in stats_rows}
+    
+    results = []
+    for acc in accounts:
+        results.append({
+            "market_code": acc.market_code,
+            "account_name": acc.name,
+            "account_id": str(acc.id),
+            "listing_count": stats_map.get(acc.id, 0)
+        })
+    
+    return results
+
+
 
 @router.get("/listings", status_code=200)
 def list_market_listings(

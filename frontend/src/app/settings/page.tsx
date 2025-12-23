@@ -826,14 +826,40 @@ export default function SettingsPage() {
                                                             <div className="font-medium">{account.name}</div>
                                                         )}
                                                     </td>
-                                                    <td className="p-4 align-middle whitespace-nowrap">
+                                                    <td className="p-4 align-middle">
                                                         {editingCoupangId === account.id ? (
-                                                            <Input
-                                                                value={coupangEditForm.vendorId}
-                                                                onChange={(e) => setCoupangEditForm((prev) => ({ ...prev, vendorId: e.target.value }))}
-                                                            />
+                                                            <div className="space-y-2">
+                                                                <div className="flex flex-col gap-1">
+                                                                    <span className="text-[10px] text-muted-foreground uppercase">Vendor ID</span>
+                                                                    <Input
+                                                                        value={coupangEditForm.vendorId}
+                                                                        onChange={(e) => setCoupangEditForm((prev) => ({ ...prev, vendorId: e.target.value }))}
+                                                                        placeholder="Vendor ID"
+                                                                    />
+                                                                </div>
+                                                                <div className="flex flex-col gap-1">
+                                                                    <span className="text-[10px] text-muted-foreground uppercase">Access Key</span>
+                                                                    <Input
+                                                                        value={coupangEditForm.accessKey}
+                                                                        onChange={(e) => setCoupangEditForm((prev) => ({ ...prev, accessKey: e.target.value }))}
+                                                                        placeholder="변경 시에만 입력"
+                                                                    />
+                                                                </div>
+                                                                <div className="flex flex-col gap-1">
+                                                                    <span className="text-[10px] text-muted-foreground uppercase">Secret Key</span>
+                                                                    <Input
+                                                                        type="password"
+                                                                        value={coupangEditForm.secretKey}
+                                                                        onChange={(e) => setCoupangEditForm((prev) => ({ ...prev, secretKey: e.target.value }))}
+                                                                        placeholder="변경 시에만 입력"
+                                                                    />
+                                                                </div>
+                                                            </div>
                                                         ) : (
-                                                            account.vendorId
+                                                            <div className="space-y-1">
+                                                                <div><span className="text-[10px] text-muted-foreground uppercase mr-2">ID:</span>{account.vendorId}</div>
+                                                                <div><span className="text-[10px] text-muted-foreground uppercase mr-2">AK:</span>{account.accessKeyMasked}</div>
+                                                            </div>
                                                         )}
                                                     </td>
                                                     <td className="p-4 align-middle">
@@ -994,15 +1020,32 @@ export default function SettingsPage() {
                                                             <div className="font-medium">{account.name}</div>
                                                         )}
                                                     </td>
-                                                    <td className="p-4 align-middle whitespace-nowrap">
+                                                    <td className="p-4 align-middle">
                                                         {editingSmartstoreId === account.id ? (
-                                                            <Input
-                                                                value={smartstoreEditForm.clientId}
-                                                                onChange={(e) => setSmartstoreEditForm((prev) => ({ ...prev, clientId: e.target.value }))}
-                                                                placeholder="변경 시에만 입력"
-                                                            />
+                                                            <div className="space-y-2">
+                                                                <div className="flex flex-col gap-1">
+                                                                    <span className="text-[10px] text-muted-foreground uppercase">Client ID</span>
+                                                                    <Input
+                                                                        value={smartstoreEditForm.clientId}
+                                                                        onChange={(e) => setSmartstoreEditForm((prev) => ({ ...prev, clientId: e.target.value }))}
+                                                                        placeholder="변경 시에만 입력"
+                                                                    />
+                                                                </div>
+                                                                <div className="flex flex-col gap-1">
+                                                                    <span className="text-[10px] text-muted-foreground uppercase">Client Secret</span>
+                                                                    <Input
+                                                                        type="password"
+                                                                        value={smartstoreEditForm.clientSecret}
+                                                                        onChange={(e) => setSmartstoreEditForm((prev) => ({ ...prev, clientSecret: e.target.value }))}
+                                                                        placeholder="변경 시에만 입력"
+                                                                    />
+                                                                </div>
+                                                            </div>
                                                         ) : (
-                                                            account.clientIdMasked || "-"
+                                                            <div className="space-y-1">
+                                                                <div><span className="text-[10px] text-muted-foreground uppercase mr-2">ID:</span>{account.clientIdMasked || "-"}</div>
+                                                                <div><span className="text-[10px] text-muted-foreground uppercase mr-2">CS:</span>{account.clientSecretMasked || "-"}</div>
+                                                            </div>
                                                         )}
                                                     </td>
                                                     <td className="p-4 align-middle">

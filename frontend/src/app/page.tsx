@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import api from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
+import { Button } from "@/components/ui/Button";
 import { ShoppingBag, CheckCircle, Clock, Zap, Activity, ShieldCheck, Bot, Play, Pause, RefreshCw, AlertCircle } from "lucide-react";
 import { motion } from "framer-motion";
 
@@ -27,8 +28,12 @@ export default function Home() {
     pending: 0,
     completed: 0
   });
+  const [events, setEvents] = useState<any[]>([]);
+  const [marketStats, setMarketStats] = useState<any[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const fetchStats = async () => {
     try {
@@ -40,22 +45,70 @@ export default function Home() {
     }
   };
 
+  const fetchEvents = async () => {
+    try {
+      const res = await api.get("/orchestration/events?limit=20");
+      setEvents(res.data);
+      setLastUpdatedAt(new Date());
+
+      // 최신 이벤트가 COMPLETE 또는 FAIL이 아니면 실행 중으로 판단
+      if (res.data.length > 0) {
+        const latest = res.data[0];
+        if (latest.status === "START" || latest.status === "IN_PROGRESS") {
+          setIsRunning(true);
+        } else if (latest.step === "COMPLETE" || latest.status === "SUCCESS") {
+          setIsRunning(false);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to fetch events", e);
+    }
+  };
+
+  const fetchMarketStats = async () => {
+    try {
+      const res = await api.get("/market/stats");
+      setMarketStats(res.data);
+    } catch (e) {
+      console.error("Failed to fetch market stats", e);
+    }
+  };
+
   useEffect(() => {
     fetchStats();
+    fetchEvents();
+    fetchMarketStats();
+
+    // 5초마다 통계 및 이벤트 갱신
+    const interval = setInterval(() => {
+      fetchStats();
+      fetchEvents();
+      fetchMarketStats();
+    }, 5000);
+
+    return () => clearInterval(interval);
   }, []);
 
+  // Auto scroll logs
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [events]);
+
   const handleRunCycle = async (dryRun: boolean = true) => {
+    console.log(`Triggering orchestration cycle: dryRun=${dryRun}`);
     setIsLoading(true);
     try {
       await api.post(`/orchestration/run-cycle?dryRun=${dryRun}`);
       setIsRunning(true);
       alert(dryRun ? "테스트 가동(Dry Run)이 시작되었습니다. 실제 등록은 수행되지 않습니다." : "AI 자율 운영(Step 1)이 시작되었습니다. 소싱 및 등록이 백그라운드에서 진행됩니다.");
 
-      // 30초 동안 Running 상태 유지 (시각적 효과)
+      // 10초 동안 Running 상태 유지 (시각적 효과)
       setTimeout(() => {
         setIsRunning(false);
         fetchStats();
-      }, 30000);
+      }, 10000);
     } catch (e) {
       console.error("Failed to run cycle", e);
       alert("AI 가동 요청에 실패했습니다. 서버 상태를 확인해주세요.");
@@ -144,6 +197,34 @@ export default function Home() {
         </motion.div>
       </motion.div>
 
+      {/* Market Account Stats Section */}
+      <motion.div variants={item}>
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+          {marketStats.map((ms) => (
+            <Card key={ms.account_id} className="border-l-4 border-l-primary bg-accent/10">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-xs font-bold uppercase tracking-tighter text-muted-foreground flex items-center justify-between">
+                  {ms.market_code}
+                  <Activity className="h-3 w-3 text-emerald-500" />
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-lg font-bold truncate mb-1">{ms.account_name}</div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-2xl font-black text-primary">{ms.listing_count.toLocaleString()}</span>
+                  <span className="text-xs font-medium text-muted-foreground">개 등록됨</span>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+          {marketStats.length === 0 && (
+            <Card className="col-span-full border-dashed bg-transparent flex items-center justify-center p-6 text-muted-foreground italic text-sm">
+              등록된 마켓 계정이 없습니다.
+            </Card>
+          )}
+        </div>
+      </motion.div>
+
       {/* AI Orchestration Control Panel */}
       <motion.div variants={item}>
         <Card className="bg-gradient-to-br from-primary/5 to-transparent border-primary/20 overflow-hidden relative">
@@ -168,61 +249,94 @@ export default function Home() {
                 <span className="text-xs text-muted-foreground italic">대기 중인 최적화 사이클: 즉시 실행 가능</span>
               </div>
             </div>
-            <div className="flex items-center gap-3">
-              <button
+            <div className="flex items-center gap-3 relative z-10">
+              <Button
                 onClick={() => handleRunCycle(true)}
                 disabled={isLoading || isRunning}
-                className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-accent hover:bg-accent/80 font-black text-sm transition-all disabled:opacity-50"
+                variant="outline"
+                className="rounded-2xl font-bold bg-accent hover:bg-accent/80 transition-all px-6 py-6"
               >
-                <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
                 테스트 가동 (Dry Run)
-              </button>
-              <button
+              </Button>
+              <Button
                 onClick={() => handleRunCycle(false)}
                 disabled={isLoading || isRunning}
-                className="flex items-center gap-2 px-8 py-3 rounded-2xl bg-primary text-primary-foreground hover:shadow-lg hover:shadow-primary/30 font-black text-sm transition-all disabled:opacity-50 active:scale-95"
+                className="rounded-2xl bg-primary text-primary-foreground hover:shadow-lg hover:shadow-primary/30 font-black transition-all px-8 py-6 active:scale-95"
               >
                 {isRunning ? (
                   <>
-                    <Pause className="h-4 w-4 fill-current" />
+                    <Pause className="mr-2 h-4 w-4 fill-current" />
                     가동 중...
                   </>
                 ) : (
                   <>
-                    <Play className="h-4 w-4 fill-current" />
+                    <Play className="mr-2 h-4 w-4 fill-current" />
                     자동 운영 시작
                   </>
                 )}
-              </button>
+              </Button>
             </div>
           </CardContent>
         </Card>
       </motion.div>
 
       <motion.div variants={container} className="grid gap-6 md:grid-cols-2 lg:grid-cols-7">
-        <motion.div variants={item} className="col-span-4">
-          <Card className="h-full">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="flex items-center gap-2">
-                <Activity className="h-5 w-5 text-primary" />
-                최근 활동
+        <motion.div variants={item} className="col-span-full">
+          <Card className="border-primary/20 overflow-hidden bg-zinc-950 text-zinc-100 shadow-2xl">
+            <CardHeader className="border-b border-primary/20 py-3 flex flex-row items-center justify-between">
+              <CardTitle className="text-sm font-black flex items-center gap-2 text-primary tracking-widest uppercase">
+                <div className="relative flex h-3 w-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-primary"></span>
+                </div>
+                Live AI Orchestration Logs
               </CardTitle>
-              <button className="text-xs font-bold text-primary hover:underline">전체보기</button>
+              <div className="flex items-center gap-4">
+                {lastUpdatedAt && (
+                  <span className="text-[10px] font-bold text-zinc-500 italic">
+                    Updated: {lastUpdatedAt.toLocaleTimeString()}
+                  </span>
+                )}
+                <div className="flex gap-1.5">
+                  <div className="h-2.5 w-2.5 rounded-full bg-red-500/50" />
+                  <div className="h-2.5 w-2.5 rounded-full bg-amber-500/50" />
+                  <div className="h-2.5 w-2.5 rounded-full bg-emerald-500/50" />
+                </div>
+              </div>
             </CardHeader>
-            <CardContent>
-              <div className="flex flex-col gap-4">
-                {[1, 2, 3].map((_, i) => (
-                  <div key={i} className="flex items-center gap-4 p-3 rounded-xl bg-accent/30 border border-glass-border">
-                    <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-                      <Zap className="h-5 w-5 text-primary" />
+            <CardContent className="p-0">
+              <div ref={scrollRef} className="h-[400px] overflow-y-auto p-4 font-mono text-[13px] leading-relaxed space-y-1 custom-scrollbar scroll-smooth">
+                {events.length > 0 ? (
+                  events.slice().reverse().map((event, i) => (
+                    <div key={event.id || i} className="flex gap-3 hover:bg-white/5 transition-colors py-0.5 px-2 rounded group border-l-2 border-transparent hover:border-primary/40">
+                      <span className="text-zinc-500 shrink-0 font-bold">
+                        [{new Date(event.created_at).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}]
+                      </span>
+                      <span className={`shrink-0 font-black w-14 ${event.status === "FAIL" ? "text-red-500" :
+                        event.status === "START" ? "text-blue-500" :
+                          event.status === "SUCCESS" ? "text-emerald-500" :
+                            "text-amber-500"
+                        }`}>
+                        {event.status}
+                      </span>
+                      <span className="text-zinc-400 shrink-0 opacity-50">|</span>
+                      <span className="text-zinc-600 shrink-0 w-20 font-bold font-sans tracking-tighter uppercase text-[10px] mt-0.5">
+                        {event.step}
+                      </span>
+                      <span className="text-zinc-300 break-all group-hover:text-white transition-colors">
+                        {event.message}
+                      </span>
                     </div>
-                    <div className="flex flex-col">
-                      <span className="text-sm font-bold">새로운 상품 수집됨</span>
-                      <span className="text-xs text-muted-foreground">오너클랜 카테고리 업데이트 완료</span>
-                    </div>
-                    <span className="ml-auto text-xs font-medium text-muted-foreground">2분 전</span>
+                  ))
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full text-zinc-600 italic">
+                    <RefreshCw className="h-8 w-8 mb-4 animate-spin opacity-20" />
+                    <p>연결 대기 중... 로그를 기다리고 있습니다.</p>
                   </div>
-                ))}
+                )}
+                {/* Auto scroll anchor */}
+                <div id="log-bottom" />
               </div>
             </CardContent>
           </Card>

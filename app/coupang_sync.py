@@ -1340,7 +1340,7 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
     )
     session.execute(stmt)
     
-    product.processing_status = "COMPLETED"
+    product.processing_status = "LISTED"
     session.commit()
     
     logger.info(f"상품 등록 성공 (ID: {product.id}, sellerProductId: {seller_product_id})")

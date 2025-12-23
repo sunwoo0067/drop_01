@@ -68,7 +68,7 @@ class SourcingService:
         
         logger.info(f"LangGraph Agent sourcing finished for {benchmark.name}")
 
-    async def execute_keyword_sourcing(self, keyword: str, limit: int = 30):
+    async def execute_keyword_sourcing(self, keyword: str, limit: int = 100):
         """
         Standard keyword-based sourcing.
         """
@@ -362,5 +362,92 @@ class SourcingService:
         )
         return list(self.db.scalars(stmt).all())
 
+    async def trigger_full_supplier_sync(self):
+        """
+        Schedules a background sync job for ALL products from OwnerClan.
+        Checks if a job is already in progress to avoid duplicates.
+        """
+        from app.models import SupplierSyncJob
+        from app.ownerclan_sync import start_background_ownerclan_job
+        from app.session_factory import session_factory
+        
+        # Check for existing active jobs
+        existing_job = (
+            self.db.execute(
+                select(SupplierSyncJob)
+                .where(SupplierSyncJob.supplier_code == "ownerclan")
+                .where(SupplierSyncJob.job_type == "ownerclan_items_raw")
+                .where(SupplierSyncJob.status.in_(["pending", "running"]))
+            )
+            .scalars()
+            .first()
+        )
+        
+        if existing_job:
+            logger.info(f"Full supplier sync already in progress (Job ID: {existing_job.id}). Skipping trigger.")
+            return existing_job.id
+
+        logger.info("Triggering full supplier sync job for OwnerClan...")
+        # Create a new job record for tracking
+        job = SupplierSyncJob(
+            supplier_code="ownerclan",
+            job_type="ownerclan_items_raw",
+            status="pending",
+            params={"datePreset": "all"}
+        )
+        self.db.add(job)
+        self.db.commit()
+        
+        # Start in background thread
+        start_background_ownerclan_job(session_factory, job.id)
+        return job.id
+
     def import_from_raw(self, limit: int = 1000) -> int:
-        pass
+        """
+        Converts un-processed SupplierItemRaw records into SourcingCandidates.
+        This allows items collected via background sync to enter the pipeline.
+        """
+        from app.models import SupplierItemRaw, SourcingCandidate
+        
+        # Find raw items that don't have a corresponding candidate yet
+        # Using a subquery for 'not exists' is efficient
+        subq = select(SourcingCandidate.supplier_item_id).where(SourcingCandidate.supplier_code == "ownerclan")
+        stmt = (
+            select(SupplierItemRaw)
+            .where(SupplierItemRaw.supplier_code == "ownerclan")
+            .where(SupplierItemRaw.item_code.notin_(subq))
+            .limit(limit)
+        )
+        
+        raw_items = self.db.execute(stmt).scalars().all()
+        count = 0
+        
+        for raw in raw_items:
+            # Create a candidate for each raw item
+            # We use a simple 'BULK_COLLECT' strategy for these
+            item_data = raw.raw if isinstance(raw.raw, dict) else {}
+            
+            # Simple metadata extraction
+            name = item_data.get("name") or "Unnamed Product"
+            price = item_data.get("price") or item_data.get("fixedPrice") or 0
+            
+            # Basic validation
+            if not name or price <= 0:
+                continue
+                
+            candidate = SourcingCandidate(
+                supplier_code="ownerclan",
+                supplier_item_id=str(raw.item_code),
+                name=str(name),
+                supply_price=int(price),
+                source_strategy="BULK_COLLECT",
+                status="PENDING",
+                final_score=50.0 # Default score for bulk collected items
+            )
+            self.db.add(candidate)
+            count += 1
+            
+        self.db.commit()
+        if count > 0:
+            logger.info(f"Imported {count} items from raw storage to sourcing candidates.")
+        return count

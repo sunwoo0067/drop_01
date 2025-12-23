@@ -1,5 +1,6 @@
 import logging
 import uuid
+import asyncio
 import json
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -173,11 +174,17 @@ class ProcessingService:
     async def process_pending_products(self, limit: int = 10, min_images_required: int = 1):
         stmt = select(Product).where(Product.processing_status == "PENDING").limit(limit)
         products = self.db.scalars(stmt).all()
-        count = 0
-        for p in products:
-            if await self.process_product(p.id, min_images_required=min_images_required):
-                count += 1
-        return count
+        
+        # 병렬 처리를 위한 세마포어 (API 부하 조절)
+        sem = asyncio.Semaphore(10)
+        
+        async def _limited_process(p_id):
+            async with sem:
+                return await self.process_product(p_id, min_images_required=min_images_required)
+        
+        tasks = [_limited_process(p.id) for p in products]
+        results = await asyncio.gather(*tasks)
+        return sum(1 for r in results if r)
 
     def get_winning_products_for_processing(self, limit: int = 20) -> list[Product]:
         from sqlalchemy import func, desc

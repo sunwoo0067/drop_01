@@ -130,30 +130,80 @@ def register_smartstore_product(session: Session, account_id: uuid.UUID, product
 
     client = _get_client_for_smartstore(account)
 
-    # 1. 네이버 상품 등록 페이로드 구성
-    # 실제 구현 시 카테고리 ID, 배송비 템플릿 등 필수 정보가 필요함
+    # 0. 이미지 업로드 전처리 (네이버 서버로 업로드 필수)
+    representative_image_url = None
+    if product.processed_image_urls:
+        uploaded_urls = client.upload_images(product.processed_image_urls[:1])
+        if uploaded_urls:
+            representative_image_url = uploaded_urls[0]
+            
+    # 업로드 실패 또는 이미지 없을 경우 더미 이미지 업로드 시도 (테스트용)
+    if not representative_image_url:
+        dummy_url = "https://avatars.githubusercontent.com/u/1?v=4"
+        uploaded_urls = client.upload_images([dummy_url])
+        if uploaded_urls:
+            representative_image_url = uploaded_urls[0]
+
+    # 1. 네이버 상품 등록 페이로드 구성 (v2)
+    # 실제 구현 시 카테고리 ID, 배송비 템플릿 등 필드 강화
     payload = {
         "originProduct": {
             "statusType": "SALE",
             "name": product.processed_name or product.name,
             "salePrice": int(product.selling_price or 0),
             "stockQuantity": 999,
-            "detailContent": product.description or "",
+            "detailContent": (product.description or "").replace('src="//', 'src="https://').replace('src="http://', 'src="https://'),
             "images": {
-                "representativeImage": {"url": product.processed_image_urls[0]} if product.processed_image_urls else None
+                "representativeImage": {"url": representative_image_url} if representative_image_url else None
             },
-            # 필수 하드코딩 필드 (예시)
             "deliveryInfo": {
                 "deliveryType": "DELIVERY",
                 "deliveryAttributeType": "NORMAL",
                 "deliveryCompany": "CJGLS",
-                "deliveryBundleGroupPriority": 1
+                "deliveryBundleGroupPriority": 1,
+                "deliveryFee": {
+                    "deliveryFeeType": "FREE"
+                },
+                "claimDeliveryInfo": {
+                    "returnDeliveryFee": 3000,
+                    "exchangeDeliveryFee": 6000,
+                    # "shippingAddressId": 12345, # 실제 ID 필요
+                }
             },
-            "category": {
-                "categoryId": "50000000" # TODO: 카테고리 매핑 로직 필요
+            "leafCategoryId": "50000803", # TODO: 카테고리 매핑 로직 필요
+            "detailAttribute": {
+                "itemConditionType": "NEW",
+                "minorPurchasable": True,
+                "originAreaInfo": {
+                    "originAreaCode": "0200037", # 수입산 (기타)
+                    "importer": "상세페이지 참조"
+                },
+                "afterServiceInfo": {
+                    "afterServiceTelephoneNumber": "010-0000-0000",
+                    "afterServiceGuideContent": "상세페이지를 참고해 주세요."
+                },
+                "productInfoProvidedNotice": {
+                    "productInfoProvidedNoticeType": "ETC",
+                    "etc": {
+                        "itemName": "상품 상세 참조",
+                        "modelName": "상품 상세 참조",
+                        "manufacturer": "상품 상세 참조",
+                        "origin": "상품 상세 참조",
+                        "asTelephoneNumber": "상세페이지 참조",
+                        "afterServiceDirector": "판매자 상세정보 참조"
+                    }
+                }
             }
+        },
+        "smartstoreChannelProduct": {
+            "naverShoppingRegistration": True,
+            "channelProductDisplayStatusType": "ON"
         }
     }
+
+    # 상세 설명 비어있으면 안됨
+    if not payload["originProduct"]["detailContent"]:
+        payload["originProduct"]["detailContent"] = "상품 상세 설명입니다."
 
     code, result = client.create_product(payload)
     
@@ -168,9 +218,16 @@ def register_smartstore_product(session: Session, account_id: uuid.UUID, product
             store_url=f"https://smartstore.naver.com/main/products/{origin_product_no}"
         )
         session.add(listing)
-        product.processing_status = "COMPLETED"
+        product.processing_status = "LISTED"
         session.commit()
         return {"status": "success", "market_item_id": origin_product_no}
     else:
-        logger.error(f"SmartStore registration failed: {result}")
-        return {"status": "error", "message": result.get("message", "Unknown error")}
+        # 실패 시 상세 로그 기록
+        logger.error(f"SmartStore registration failed for product {product.id}. Status: {code}, Response: {result}")
+        # 오류 메시지에 상세 내용 포함 (네이버는 보통 invalidInputs 리스트를 줌)
+        detail_msg = result.get("message", "Unknown error")
+        invalid_inputs = result.get("invalidInputs")
+        if invalid_inputs:
+            detail_msg += f" (Invalid: {invalid_inputs})"
+            
+        return {"status": "error", "message": detail_msg}

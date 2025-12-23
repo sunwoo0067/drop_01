@@ -250,6 +250,7 @@ class MarketListing(MarketBase):
     market_item_id: Mapped[str] = mapped_column(Text, nullable=False)  # e.g. sellerProductId
     status: Mapped[str] = mapped_column(Text, nullable=False, default="ACTIVE")
     linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    store_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     coupang_status: Mapped[str | None] = mapped_column(Text, nullable=True)
     rejection_reason: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
@@ -394,4 +395,18 @@ class APIKey(DropshipBase):
     provider: Mapped[str] = mapped_column(Text, nullable=False) # 'gemini', 'openai'
     key: Mapped[str] = mapped_column(Text, nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class OrchestrationEvent(DropshipBase):
+    """
+    AI 오케스트레이션의 기동 로그를 기록합니다.
+    """
+    __tablename__ = "orchestration_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    step: Mapped[str] = mapped_column(Text, nullable=False) # PLANNING, SOURCING, PROCESSING, LISTING
+    status: Mapped[str] = mapped_column(Text, nullable=False) # START, IN_PROGRESS, SUCCESS, FAIL
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    details: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
