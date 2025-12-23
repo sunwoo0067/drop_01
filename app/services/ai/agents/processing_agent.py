@@ -24,12 +24,14 @@ class ProcessingAgent:
         workflow = StateGraph(AgentState)
 
         workflow.add_node("extract_details", self.extract_details)
+        workflow.add_node("extract_ocr_details", self.extract_ocr_details)
         workflow.add_node("optimize_seo", self.optimize_seo)
         workflow.add_node("process_images", self.process_images)
         workflow.add_node("save_product", self.save_product)
 
         workflow.set_entry_point("extract_details")
-        workflow.add_edge("extract_details", "optimize_seo")
+        workflow.add_edge("extract_details", "extract_ocr_details")
+        workflow.add_edge("extract_ocr_details", "optimize_seo")
         if self._name_only_processing():
             workflow.add_edge("optimize_seo", "save_product")
         else:
@@ -47,6 +49,35 @@ class ProcessingAgent:
         return {
             "input_data": {**input_data, "normalized_detail": detail_text},
             "logs": ["Details extracted and normalized"]
+        }
+
+    def extract_ocr_details(self, state: AgentState) -> Dict[str, Any]:
+        logger.info("[Agent] Extracting OCR details from images...")
+        input_data = state.get("input_data", {})
+        images = input_data.get("images", [])
+        
+        ocr_texts = []
+        # Limit to first 2 images to avoid excessive processing time
+        for img_url in images[:2]:
+            try:
+                # Need to download image bytes
+                import requests
+                resp = requests.get(img_url, timeout=10)
+                if resp.status_code == 200:
+                    text = self.ai_service.extract_text_from_image(resp.content, format="text")
+                    if text:
+                        ocr_texts.append(f"Image Text: {text}")
+            except Exception as e:
+                logger.error(f"[Agent] OCR failed for {img_url}: {e}")
+        
+        combined_ocr = "\n".join(ocr_texts)
+        if combined_ocr:
+            current_detail = input_data.get("normalized_detail", "")
+            input_data["normalized_detail"] = f"{current_detail}\n\n[OCR Data]\n{combined_ocr}"
+            
+        return {
+            "input_data": input_data,
+            "logs": [f"OCR extraction completed for {len(ocr_texts)} images"]
         }
 
     def optimize_seo(self, state: AgentState) -> Dict[str, Any]:

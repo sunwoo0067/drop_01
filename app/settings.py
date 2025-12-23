@@ -73,6 +73,13 @@ class Settings(BaseSettings):
     # Ollama
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "gemma3:4b"
+    ollama_function_model: str = "functiongemma"
+    ollama_embedding_model: str = "embeddinggemma"
+    ollama_reasoning_model: str = "rnj-1"
+    ollama_vision_model: str = "drop-vision"
+    ollama_ocr_model: str = "drop-ocr"
+    ollama_qwen_vl_model: str = "drop-qwen-vl"
+    ollama_logic_model: str = "granite4"
 
     # OpenAI
     openai_api_keys: list[str] = [] # List of keys for rotation

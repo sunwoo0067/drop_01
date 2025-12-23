@@ -1,6 +1,6 @@
 import logging
 import json
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Literal
 import openai
 from openai import OpenAI, RateLimitError, AuthenticationError, APIConnectionError
 from app.services.ai.base import AIProvider
@@ -33,17 +33,18 @@ class OpenAIProvider(AIProvider):
         self._configure_current_key()
         return True
 
-    def generate_text(self, prompt: str) -> str:
+    def generate_text(self, prompt: str, model: Optional[str] = None) -> str:
         if not self.client:
             return ""
 
+        target_model = model or self.model_name
         max_retries = len(self.api_keys)
         attempts = 0
 
         while attempts < max_retries:
             try:
                 response = self.client.chat.completions.create(
-                    model=self.model_name,
+                    model=target_model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.7
                 )
@@ -59,17 +60,18 @@ class OpenAIProvider(AIProvider):
                 return ""
         return ""
 
-    def generate_json(self, prompt: str) -> Dict[str, Any] | List[Any]:
+    def generate_json(self, prompt: str, model: Optional[str] = None) -> Dict[str, Any] | List[Any]:
         if not self.client:
             return {}
 
+        target_model = model or self.model_name
         max_retries = len(self.api_keys)
         attempts = 0
 
         while attempts < max_retries:
             try:
                 response = self.client.chat.completions.create(
-                    model=self.model_name,
+                    model=target_model,
                     messages=[
                         {"role": "system", "content": "You are a helpful assistant. Output valid JSON only."},
                         {"role": "user", "content": prompt}
@@ -90,25 +92,30 @@ class OpenAIProvider(AIProvider):
                 return {}
         return {}
 
-    def describe_image(self, image_data: bytes, prompt: str = "이 이미지를 상세히 설명해주세요. 특히 상품의 특징, 색상, 디자인, 재질 등을 중심으로 설명해주세요.") -> str:
+    def describe_image(self, image_data: bytes, prompt: str = "이 이미지를 상세히 설명해주세요. 특히 상품의 특징, 색상, 디자인, 재질 등을 중심으로 설명해주세요.", model: Optional[str] = None) -> str:
+        return self._generate_with_image(image_data, prompt, model)
+
+    def extract_text_from_image(self, image_data: bytes, format: Literal["text", "markdown", "json"] = "text", model: Optional[str] = None) -> str:
+        prompt = f"Extract all text from this image. Output format: {format}."
+        if format == "json":
+            prompt += " Return ONLY valid JSON."
+        return self._generate_with_image(image_data, prompt, model)
+
+    def _generate_with_image(self, image_data: bytes, prompt: str, model: Optional[str] = None) -> str:
         if not self.client:
             return ""
 
         import base64
-        base64_image = base64.b64encode(image_data).decode("utf-8")
+        target_model = model or self.model_name
+        encoded_image = base64.b64encode(image_data).decode("utf-8")
         
-        # GPT-4o and GPT-4o-mini support vision by default
-        model = self.model_name
-        if not ("gpt-4o" in model or "gpt-4-turbo" in model or "vision" in model):
-            model = "gpt-4o-mini" # Fallback to a vision capable model if current one doesn't support it
-
         max_retries = len(self.api_keys)
         attempts = 0
 
         while attempts < max_retries:
             try:
                 response = self.client.chat.completions.create(
-                    model=model,
+                    model=target_model,
                     messages=[
                         {
                             "role": "user",
@@ -116,23 +123,28 @@ class OpenAIProvider(AIProvider):
                                 {"type": "text", "text": prompt},
                                 {
                                     "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:image/jpeg;base64,{base64_image}",
-                                    },
+                                    "image_url": {"url": f"data:image/jpeg;base64,{encoded_image}"},
                                 },
                             ],
                         }
                     ],
-                    max_tokens=500,
+                    max_tokens=1000
                 )
                 return response.choices[0].message.content or ""
             except (RateLimitError, AuthenticationError, APIConnectionError) as e:
-                logger.warning(f"OpenAI Key {self.current_key_index} error: {e}. Rotating.")
+                logger.warning(f"OpenAI Image generation error: {e}. Rotating keys.")
                 if not self._rotate_key():
-                    logger.error("All OpenAI keys exhausted.")
                     return ""
                 attempts += 1
             except Exception as e:
-                logger.error(f"OpenAI describe_image failed: {e}")
+                logger.error(f"OpenAI image generation failed: {e}")
                 return ""
         return ""
+
+    def generate_reasoning(self, prompt: str, model: Optional[str] = None) -> str:
+        # Specific reasoning models (like o1) might require different configs, but for now reuse text
+        return self.generate_text(prompt, model=model)
+
+    def analyze_visual_layout(self, image_data: bytes, prompt: str = "Analyze the visual layout and identify key elements with their positions.", model: Optional[str] = None) -> str:
+        prompt += " Please provide spatial coordinates or describe the layout in detail."
+        return self._generate_with_image(image_data, prompt, model)

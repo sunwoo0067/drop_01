@@ -88,14 +88,31 @@ class SourcingAgent:
         
         name = benchmark.get("name")
         detail = benchmark.get("detail_html") or name
+        images = benchmark.get("images") or []
         
         pain_points = self.ai_service.analyze_pain_points(detail, provider="auto")
         specs = self.ai_service.extract_specs(detail, provider="auto")
         
+        # Spatial analysis for the main image if available
+        visual_analysis = ""
+        if images:
+            try:
+                import requests
+                resp = requests.get(images[0], timeout=10)
+                if resp.status_code == 200:
+                    visual_analysis = self.ai_service.analyze_visual_layout(
+                        resp.content, 
+                        prompt="Identify the main product features, logo position, and design style in this image.",
+                        provider="auto"
+                    )
+            except Exception as e:
+                logger.error(f"[Agent] Visual analysis failed: {e}")
+
         return {
             "pain_points": pain_points,
             "specs": specs,
-            "logs": ["Benchmark analysis completed"]
+            "visual_analysis": visual_analysis,
+            "logs": ["Benchmark analysis completed (NLP + Spatial)"]
         }
 
     def search_supplier(self, state: AgentState) -> Dict[str, Any]:
