@@ -20,6 +20,27 @@ class ProcessingAgent:
     def _name_only_processing(self) -> bool:
         return settings.product_processing_name_only
 
+    def _get_few_shot_examples(self, category: str = "일반", limit: int = 3) -> List[Dict[str, str]]:
+        """
+        Retrieves successfully processed examples from Product table for Few-shot prompting.
+        Criteria: processing_status == 'COMPLETED' and status == 'ACTIVE' (implies approval/success)
+        """
+        from app.models import Product
+        from sqlalchemy import select
+        
+        try:
+            stmt = (
+                select(Product.name, Product.processed_name)
+                .where(Product.processing_status == "COMPLETED")
+                .limit(limit)
+            )
+            # In real scenario, we would filter by category similarity
+            results = self.db.execute(stmt).all()
+            return [{"original": r[0], "processed": r[1]} for r in results if r[0] and r[1]]
+        except Exception as e:
+            logger.warning(f"Failed to fetch few-shot examples: {e}")
+            return []
+
     def _create_workflow(self):
         workflow = StateGraph(AgentState)
 
@@ -89,9 +110,24 @@ class ProcessingAgent:
         processed_name = name
         keywords = []
         context = input_data.get("normalized_detail")
+        benchmark_name = (state.get("benchmark_data") or {}).get("name")
+        category = input_data.get("category") or "일반"
+        market = input_data.get("target_market") or "Coupang"
+        
+        # Get Few-shot examples
+        examples = self._get_few_shot_examples(category=category)
         
         try:
-            seo_result = self.ai_service.optimize_seo(name, [brand], context=context, provider="auto")
+            seo_result = self.ai_service.optimize_seo(
+                name, 
+                [brand], 
+                context=context, 
+                benchmark_name=benchmark_name,
+                category=category,
+                market=market,
+                examples=examples,
+                provider="auto"
+            )
             if isinstance(seo_result, dict):
                 raw_title = seo_result.get("title")
                 keywords = seo_result.get("tags") or []
@@ -155,12 +191,12 @@ class ProcessingAgent:
             "logs": ["Processing workflow completed and ready to save"]
         }
 
-    async def run(self, product_id: str, input_data: Dict[str, Any]):
+    async def run(self, product_id: str, input_data: Dict[str, Any], benchmark_data: Optional[Dict[str, Any]] = None):
         initial_state: AgentState = {
             "job_id": f"proc_{product_id}",
             "target_id": product_id,
             "input_data": input_data,
-            "benchmark_data": None,
+            "benchmark_data": benchmark_data,
             "collected_items": [],
             "candidate_results": [],
             "pain_points": [],

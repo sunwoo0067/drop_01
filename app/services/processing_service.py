@@ -4,7 +4,7 @@ import json
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
-from app.models import Product, BenchmarkProduct, SupplierItemRaw
+from app.models import Product, BenchmarkProduct, SupplierItemRaw, SourcingCandidate
 from app.settings import settings
 from app.services.ai.agents.processing_agent import ProcessingAgent
 from app.services.image_processing import image_processing_service
@@ -106,8 +106,21 @@ class ProcessingService:
                             product.description = detail_html
                             self.db.commit()
 
-                except Exception as e:
-                    logger.warning(f"오너클랜 이미지 추출 실패(productId={product_id}): {e}")
+            # 벤치마크 상품 정보 가져오기 시도
+            benchmark_data = None
+            if product.supplier_item_id:
+                candidate = self.db.scalars(
+                    select(SourcingCandidate).where(SourcingCandidate.supplier_item_id == str(product.supplier_item_id))
+                ).first()
+                
+                if candidate and candidate.benchmark_product_id:
+                    benchmark = self.db.get(BenchmarkProduct, candidate.benchmark_product_id)
+                    if benchmark:
+                        benchmark_data = {
+                            "name": benchmark.name,
+                            "visual_analysis": benchmark.visual_analysis,
+                            "specs": benchmark.specs
+                        }
 
             input_data = {
                 "name": product.name,
@@ -115,11 +128,20 @@ class ProcessingService:
                 "description": product.description,
                 "images": raw_images,
                 "detail_html": detail_html,
+                "category": product.processed_category if hasattr(product, 'processed_category') else "일반",
+                "target_market": "Coupang", # Default
             }
             
             # 에이전트 실행
             try:
-                result = await self.processing_agent.run(str(product_id), input_data)
+                # benchmark_data를 초기 상태에 포함하여 전달
+                initial_state_overrides = {"benchmark_data": benchmark_data}
+                
+                # 에이전트 run 메서드가 추가 인자를 받는지 확인 후 수정 필요할 수 있음. 
+                # 현재 run은 (product_id, input_data)만 받으므로, Agent 클래스 내부 run을 수정하거나 
+                # input_data에 benchmark_data를 넣는 방식으로 우회 (여기서는 run 내부 initial_state 구성을 참고하여 처리)
+                
+                result = await self.processing_agent.run(str(product_id), input_data, benchmark_data=benchmark_data)
                 output = result.get("final_output", {})
                 
                 # 결과 반영

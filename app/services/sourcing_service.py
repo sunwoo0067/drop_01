@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.models import SourcingCandidate, BenchmarkProduct
 from app.services.ai.agents.sourcing_agent import SourcingAgent
 from app.embedding_service import EmbeddingService
+from app.normalization import clean_product_name
 from app.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -325,14 +326,17 @@ class SourcingService:
             logger.error(f"Cannot approve candidate: SupplierItemRaw not found for {candidate.supplier_item_id}")
             return
 
+        # Clean original name
+        cleaned_name = clean_product_name(candidate.name)
+        
         # Optimize SEO
-        seo = ai.optimize_seo(candidate.name, candidate.seo_keywords or [], context=candidate.visual_analysis)
-        processed_name = seo.get("title") or candidate.name
+        seo = ai.optimize_seo(cleaned_name, candidate.seo_keywords or [], context=candidate.visual_analysis)
+        processed_name = seo.get("title") or cleaned_name
         processed_keywords = seo.get("tags") or candidate.seo_keywords
         
         product = Product(
             supplier_item_id=raw_entry.id, # Link to raw record
-            name=candidate.name,
+            name=cleaned_name,
             processed_name=processed_name,
             processed_keywords=processed_keywords,
             cost_price=candidate.supply_price,

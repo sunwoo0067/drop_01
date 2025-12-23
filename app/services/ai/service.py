@@ -119,28 +119,69 @@ class AIService:
             return result
         return []
 
-    def optimize_seo(self, product_name: str, keywords: List[str], context: Optional[str] = None, provider: ProviderType = "auto") -> Dict[str, Any]:
+    def optimize_seo(
+        self, 
+        product_name: str, 
+        keywords: List[str], 
+        context: Optional[str] = None, 
+        benchmark_name: Optional[str] = None,
+        category: str = "일반",
+        market: str = "Coupang",
+        examples: Optional[List[Dict[str, str]]] = None,
+        provider: ProviderType = "auto"
+    ) -> Dict[str, Any]:
         clean_keywords = [str(k) for k in keywords if k]
         target_provider = self._get_provider(provider)
         
-        # Use logic model for SEO optimization if using Ollama
         target_model = None
         if provider == "ollama" or (provider == "auto" and self.default_provider_name == "ollama"):
             target_model = settings.ollama_logic_model
             
         context_str = f"\nContext/Details: {context[:5000]}" if context else ""
+        benchmark_str = f"\nBenchmark Product Name (Top Reference): {benchmark_name}" if benchmark_name else ""
+        category_str = f"\nCategory: {category}"
         
+        # Market-specific guidelines
+        market_guidelines = ""
+        if market.lower() == "coupang":
+            market_guidelines = """
+            [Coupang SEO Guidelines]
+            - Recommended length: within 50-100 characters.
+            - Format: Brand + Product Name + Key Attributes.
+            - Prohibited words: 'Best', 'Cheapest', 'Discount', 'Sale', etc.
+            - Do not include model numbers or internal codes unless essential.
+            """
+        elif market.lower() == "smartstore":
+            market_guidelines = """
+            [Naver SmartStore SEO Guidelines]
+            - Length: max 50 characters for better visibility.
+            - Use relevant keywords that people actually search for.
+            - Avoid special characters like ★, ■.
+            """
+
+        # Few-shot examples
+        example_str = ""
+        if examples:
+            example_str = "\n[Learning Examples - Follow this style]\n"
+            for ex in examples:
+                example_str += f"- Original: {ex.get('original')}\n  Processed: {ex.get('processed')}\n"
+
         prompt = f"""
-        Optimize product name for SEO (Coupang).
-        Original Name: {product_name}
-        Keywords: {', '.join(clean_keywords)}{context_str}
+        이커머스({market}) SEO 전문가로서 상품명을 최적화해줘.
         
-        Instructions:
-        1. Create a professional and searchable product title.
-        2. Extract or refine relevant tags/keywords.
-        3. Use the provided context (description/OCR) to ensure accuracy.
+        원본 상품명: {product_name}
+        키워드: {', '.join(clean_keywords)}{benchmark_str}{category_str}{context_str}
+        {example_str}
+        {market_guidelines}
+
+        [가이드라인]
+        - 브랜드 + 상품명 + 핵심속성 순서로 구성할 것.
+        - 벤치마크 상품명에서 클릭률이 높을 것 같은 핵심 키워드를 추출하여 반영하되, 똑같이 베끼지는 말 것.
+        - 쿠팡 금지어(최고, 제일, 특가 등)는 제외할 것.
+        - 불필요한 모델번호나 내부 코드는 삭제할 것.
+        - 카테고리가 가전이면 '모델명/성능'을, 패션이면 '색상/사이즈'를 중요하게 다룰 것.
         
-        Return JSON {{ "title": "...", "tags": [...] }}
+        결과는 JSON {{ "title": "...", "tags": [...] }} 형태로 반환해줘.
         """
         return target_provider.generate_json(prompt, model=target_model)
 
