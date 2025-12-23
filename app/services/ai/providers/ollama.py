@@ -72,13 +72,17 @@ class OllamaProvider(AIProvider):
         response = self._chat(messages, target_model)
         return response.get("message", {}).get("content", "")
 
-    def generate_json(self, prompt: str, model: Optional[str] = None, tools: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any] | List[Any]:
-        target_model = model or self.function_model_name
+    def generate_json(self, prompt: str, model: Optional[str] = None, tools: Optional[List[Dict[str, Any]]] = None, image_data: Optional[bytes] = None) -> Dict[str, Any] | List[Any]:
+        target_model = model or (self.vision_model_name if image_data else self.function_model_name)
         messages = [{"role": "user", "content": prompt}]
         
+        images = None
+        if image_data:
+            images = [base64.b64encode(image_data).decode("utf-8")]
+
         # If tools are provided, use Native Tool Calling
         if tools:
-            response = self._chat(messages, target_model, tools=tools)
+            response = self._chat(messages, target_model, tools=tools, images=images)
             message = response.get("message", {})
             if "tool_calls" in message:
                 # Returns the first tool call's arguments as JSON
@@ -92,7 +96,7 @@ class OllamaProvider(AIProvider):
             # Use JSON mode with format="json"
             if "JSON" not in prompt:
                 prompt += "\nReturn ONLY valid JSON."
-            response = self._chat([{"role": "user", "content": prompt}], target_model, format="json")
+            response = self._chat([{"role": "user", "content": prompt}], target_model, format="json", images=images)
             content = response.get("message", {}).get("content", "")
 
         try:

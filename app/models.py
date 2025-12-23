@@ -231,7 +231,8 @@ class Product(DropshipBase):
     processed_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     processed_keywords: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     processed_image_urls: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
-    processing_status: Mapped[str] = mapped_column(Text, nullable=False, default="PENDING") # PENDING, PROCESSING, COMPLETED, FAILED
+    processing_status: Mapped[str] = mapped_column(Text, nullable=False, default="PENDING") # PENDING, PROCESSING, COMPLETED, FAILED, PENDING_APPROVAL
+    benchmark_product_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -279,6 +280,24 @@ class Order(MarketBase):
     address: Mapped[str | None] = mapped_column(Text, nullable=True)
     total_amount: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class OrderItem(MarketBase):
+    __tablename__ = "order_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    order_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("orders.id"), nullable=False)
+    product_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    market_listing_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("market_listings.id"), nullable=True)
+
+    external_item_id: Mapped[str | None] = mapped_column(Text, nullable=True)  # e.g. Coupang orderItemId
+    product_name: Mapped[str] = mapped_column(Text, nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    unit_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

@@ -177,3 +177,88 @@ class ProcessingService:
             if await self.process_product(p.id, min_images_required=min_images_required):
                 count += 1
         return count
+
+    def get_winning_products_for_processing(self, limit: int = 20) -> list[Product]:
+        """
+        판매 실적이 있는 상품 중 아직 프리미엄 가공이 되지 않은 상품을 우선적으로 선정합니다.
+        """
+        from sqlalchemy import func, desc
+        from app.models import OrderItem
+
+        stmt = (
+            select(Product)
+            .join(OrderItem, Product.id == OrderItem.product_id)
+            .where(Product.processing_status.notin_(["PROCESSING", "PENDING_APPROVAL"]))
+            .group_by(Product.id)
+            .order_by(desc(func.count(OrderItem.id)), desc(func.sum(OrderItem.quantity)))
+            .limit(limit)
+        )
+        return list(self.db.scalars(stmt).all())
+
+    async def process_winning_product(self, product_id: uuid.UUID) -> bool:
+        """
+        판매 실적이 좋은 상품에 대해 VLM 분석 및 프리미엄 이미지 생성을 위한 프롬프트를 구성하고
+        PENDING_APPROVAL 상태로 전환합니다.
+        """
+        from app.services.ai.service import AIService
+        ai_service = AIService()
+
+        try:
+            product = self.db.get(Product, product_id)
+            if not product:
+                return False
+
+            product.processing_status = "PROCESSING"
+            self.db.commit()
+
+            # 1. 원본 이미지 데이터 획득 (첫 번째 이미지를 분석 대상)
+            image_urls = product.processed_image_urls or []
+            if not image_urls:
+                 from app.services.image_processing import image_processing_service
+                 # Fallback to description images if processed ones are missing
+                 # (Implementation omitted for brevity, assuming product has images)
+                 pass
+
+            if image_urls:
+                first_image_url = image_urls[0]
+                # 2. VLM 특징 추출
+                import httpx
+                async with httpx.AsyncClient() as client:
+                    resp = await client.get(first_image_url)
+                    image_data = resp.content
+
+                features = ai_service.extract_visual_features(image_data)
+                
+                # 3. 벤치마킹 데이터 확인
+                benchmark_data = None
+                if product.benchmark_product_id:
+                    benchmark = self.db.get(BenchmarkProduct, product.benchmark_product_id)
+                    if benchmark:
+                        benchmark_data = {
+                            "visual_analysis": benchmark.visual_analysis,
+                            "specs": benchmark.specs
+                        }
+
+                # 4. SD 프롬프트 생성
+                prompts = ai_service.generate_premium_image_prompt(features, benchmark_data)
+                
+                # 5. 결과 저장 및 상태 업데이트
+                # Note: 실제 이미지 생성은 별도 워커나 ComfyUI API 연동이 필요함
+                # 여기서는 프롬프트 결과와 분석 데이터를 상품 메타데이터(description 등)에 임시 기록하거나 로깅
+                logger.info(f"Generated Premium Prompts for {product.name}: {prompts}")
+                
+                # 가상의 고품질 이미지 생성 로직 (Placeholder)
+                # product.processed_image_urls.append(generated_premium_url)
+
+                product.processing_status = "PENDING_APPROVAL"
+                self.db.commit()
+                return True
+
+            product.processing_status = "FAILED"
+            self.db.commit()
+            return False
+
+        except Exception as e:
+            logger.error(f"Error in premium processing for product {product_id}: {e}")
+            self.db.rollback()
+            return False

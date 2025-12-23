@@ -60,7 +60,7 @@ class OpenAIProvider(AIProvider):
                 return ""
         return ""
 
-    def generate_json(self, prompt: str, model: Optional[str] = None) -> Dict[str, Any] | List[Any]:
+    def generate_json(self, prompt: str, model: Optional[str] = None, image_data: Optional[bytes] = None) -> Dict[str, Any] | List[Any]:
         if not self.client:
             return {}
 
@@ -68,19 +68,37 @@ class OpenAIProvider(AIProvider):
         max_retries = len(self.api_keys)
         attempts = 0
 
+        messages: List[Dict[str, Any]] = [
+            {"role": "system", "content": "You are a helpful assistant. Output valid JSON only."}
+        ]
+
+        if image_data:
+            import base64
+            encoded_image = base64.b64encode(image_data).decode("utf-8")
+            messages.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{encoded_image}"},
+                    },
+                ],
+            })
+        else:
+            messages.append({"role": "user", "content": prompt})
+
         while attempts < max_retries:
             try:
                 response = self.client.chat.completions.create(
                     model=target_model,
-                    messages=[
-                        {"role": "system", "content": "You are a helpful assistant. Output valid JSON only."},
-                        {"role": "user", "content": prompt}
-                    ],
+                    messages=messages,
                     response_format={"type": "json_object"},
                     temperature=0.3
                 )
                 content = response.choices[0].message.content
-                return json.loads(content) or {}
+                if not content: return {}
+                return json.loads(content)
             except (RateLimitError, AuthenticationError, APIConnectionError) as e:
                 logger.warning(f"OpenAI Key {self.current_key_index} error: {e}. Rotating.")
                 if not self._rotate_key():

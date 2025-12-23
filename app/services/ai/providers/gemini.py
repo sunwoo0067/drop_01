@@ -69,7 +69,7 @@ class GeminiProvider(AIProvider):
                 return ""
         return ""
 
-    def generate_json(self, prompt: str, model: Optional[str] = None) -> Dict[str, Any] | List[Any]:
+    def generate_json(self, prompt: str, model: Optional[str] = None, image_data: Optional[bytes] = None) -> Dict[str, Any] | List[Any]:
         if not self.model:
             return {}
 
@@ -80,10 +80,14 @@ class GeminiProvider(AIProvider):
         max_retries = len(self.api_keys)
         attempts = 0
 
+        content_to_generate: Any = prompt
+        if image_data:
+            content_to_generate = [prompt, {"mime_type": "image/jpeg", "data": image_data}]
+
         while attempts < max_retries:
             try:
                 response = target_model.generate_content(
-                    prompt,
+                    content_to_generate,
                     generation_config={"response_mime_type": "application/json"}
                 )
                 return json.loads(response.text)

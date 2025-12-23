@@ -10,9 +10,9 @@ class AIProvider(ABC):
         pass
 
     @abstractmethod
-    def generate_json(self, prompt: str, model: Optional[str] = None) -> Dict[str, Any] | List[Any]:
+    def generate_json(self, prompt: str, model: Optional[str] = None, image_data: Optional[bytes] = None) -> Dict[str, Any] | List[Any]:
         """
-        Generates structured JSON response.
+        Generates structured JSON response, optionally with image input.
         """
         pass
 

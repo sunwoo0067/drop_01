@@ -193,12 +193,6 @@ class AIService:
     def extract_text_from_image(self, image_data: bytes, format: Literal["text", "markdown", "json"] = "text", provider: ProviderType = "auto") -> str:
         return self._get_provider(provider).extract_text_from_image(image_data, format=format)
 
-    def analyze_visual_layout(self, image_data: bytes, prompt: str = "이 이미지의 시각적 레이아웃을 분석하고 주요 요소들의 위치를 파악해주세요.", provider: ProviderType = "auto") -> str:
-        provider_obj = self._get_provider(provider)
-        if hasattr(provider_obj, "analyze_visual_layout"):
-            return provider_obj.analyze_visual_layout(image_data, prompt=prompt)
-        return provider_obj.describe_image(image_data, prompt=prompt)
-
     def suggest_sourcing_strategy(self, market_trends: str, existing_products: List[str], provider: ProviderType = "auto") -> str:
         target_provider = self._get_provider(provider)
         
@@ -221,3 +215,50 @@ class AIService:
         Provide a comprehensive strategy report.
         """
         return target_provider.generate_reasoning(prompt, model=target_model)
+
+    def extract_visual_features(self, image_data: bytes, provider: ProviderType = "auto") -> Dict[str, Any]:
+        """Exract detailed visual features from product image for image generation."""
+        target_provider = self._get_provider(provider)
+        
+        prompt = """
+        Analyze the following product image and extract detailed visual features for high-quality image generation.
+        Focus on:
+        1. Primary and secondary colors (be specific, e.g., 'matte forest green').
+        2. Textures and materials (e.g., 'brushed aluminum', 'woven linen').
+        3. Design style (e.g., 'Scandinavian minimalism', 'industrial vintage').
+        4. Key visual components and their spatial relationships (relative positions or bounding box if possible).
+        5. Lighting and atmosphere currently present in the original image.
+
+        Return ONLY a valid JSON object.
+        """
+        return target_provider.generate_json(prompt, image_data=image_data)
+
+    def generate_premium_image_prompt(self, product_features: Dict[str, Any], benchmark_data: Optional[Dict[str, Any]] = None, provider: ProviderType = "auto") -> Dict[str, Any]:
+        """Generate high-quality SD prompt based on features and benchmark aesthetics."""
+        target_provider = self._get_provider(provider)
+        
+        # Use logic model for prompt engineering if using Ollama
+        target_model = None
+        if provider == "ollama" or (provider == "auto" and self.default_provider_name == "ollama"):
+            target_model = settings.ollama_logic_model
+
+        benchmark_context = ""
+        if benchmark_data:
+            benchmark_context = f"\nBenchmark Aesthetics: {benchmark_data.get('visual_analysis', '')}"
+
+        prompt = f"""
+        Based on the following product features and benchmark aesthetics, generate a highly detailed prompt for Stable Diffusion XL (SDXL) or Flux to create a premium, trustworthy product advertisement image.
+
+        Product Features: {product_features}
+        {benchmark_context}
+
+        Instructions:
+        1. Focus on 'commercial photography', 'high-end product shot', 'studio lighting'.
+        2. Incorporate the lighting style and color palette from the benchmark aesthetics if provided.
+        3. Describe a realistic setting that enhances the product's perceived value (e.g., 'on a marble countertop with soft morning light').
+        4. Include technical keywords like '8k resolution', 'highly detailed texture', 'photorealistic', 'ray tracing'.
+        5. Avoid distorted text or shapes.
+        
+        Return JSON with "positive_prompt" and "negative_prompt".
+        """
+        return target_provider.generate_json(prompt, model=target_model)
