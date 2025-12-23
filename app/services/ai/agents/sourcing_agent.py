@@ -114,12 +114,45 @@ class SourcingAgent:
             except Exception as e:
                 logger.error(f"[Agent] Visual analysis failed: {e}")
 
-        return {
+        result = {
             "pain_points": pain_points,
             "specs": specs,
             "visual_analysis": visual_analysis,
             "logs": ["Benchmark analysis completed (NLP + Spatial)"]
         }
+        
+        # Persist results to DB if target_id is provided
+        target_id = state.get("target_id")
+        if target_id:
+            try:
+                self.save_benchmark_analysis(str(target_id), result)
+                result["logs"].append(f"Analysis persisted for benchmark: {target_id}")
+            except Exception as e:
+                logger.error(f"[Agent] Failed to persist benchmark analysis: {e}")
+                result["logs"].append(f"Failed to persist analysis: {e}")
+                
+        return result
+
+    def save_benchmark_analysis(self, benchmark_id: str, analysis: Dict[str, Any]):
+        from app.models import BenchmarkProduct
+        import uuid
+        
+        try:
+            bid = uuid.UUID(benchmark_id)
+        except (ValueError, TypeError):
+            logger.error(f"Invalid benchmark_id for saving analysis: {benchmark_id}")
+            return
+
+        product = self.db.get(BenchmarkProduct, bid)
+        if product:
+            product.pain_points = analysis.get("pain_points")
+            product.specs = analysis.get("specs")
+            product.visual_analysis = analysis.get("visual_analysis")
+            self.db.commit()
+            logger.info(f"Benchmark analysis saved to DB for {benchmark_id}")
+        else:
+            logger.warning(f"BenchmarkProduct not found for saving analysis: {benchmark_id}")
+
 
     def search_supplier(self, state: AgentState) -> Dict[str, Any]:
         logger.info("[Agent] Searching supplier (Hybrid: Keyword + Vector)...")

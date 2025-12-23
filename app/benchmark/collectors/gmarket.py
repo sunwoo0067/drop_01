@@ -10,8 +10,10 @@ from bs4 import BeautifulSoup
 from curl_cffi.requests import AsyncSession
 
 from app.benchmark_collector import BenchmarkCollector as SaverCollector
+from app.settings import settings
 
 logger = logging.getLogger(__name__)
+
 
 
 class GmarketBenchmarkCollector:
@@ -26,14 +28,20 @@ class GmarketBenchmarkCollector:
     async def collect_ranking(self, limit: int = 100, category_url: str | None = None) -> list[dict[str, Any]]:
         url = str(category_url).strip() if category_url else "https://www.gmarket.co.kr/n/best"
 
-        async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
-            resp = await client.get(url, allow_redirects=True)
+        html = ""
+        if settings.ownerclan_use_sef_proxy:
+            status, html = await self._saver._fetch_via_proxy(url)
+            if status != 200:
+                logger.error(f"G마켓 베스트 수집 실패 (Proxy): HTTP {status} (url={url})")
+                return []
+        else:
+            async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
+                resp = await client.get(url, allow_redirects=True)
+                if resp.status_code != 200:
+                    logger.error(f"G마켓 베스트 수집 실패: HTTP {resp.status_code} (url={url})")
+                    return []
+                html = resp.text or ""
 
-        if resp.status_code != 200:
-            logger.error(f"G마켓 베스트 수집 실패: HTTP {resp.status_code} (url={url})")
-            return []
-
-        html = resp.text or ""
         soup = BeautifulSoup(html, "html.parser")
 
         items: list[dict[str, Any]] = []
@@ -104,14 +112,20 @@ class GmarketBenchmarkCollector:
         if not url:
             return {"detail_html": "", "image_urls": [], "raw_html": ""}
 
-        async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
-            resp = await client.get(url, allow_redirects=True)
+        html = ""
+        if settings.ownerclan_use_sef_proxy:
+            status, html = await self._saver._fetch_via_proxy(url)
+            if status != 200:
+                logger.error(f"G마켓 상세 수집 실패 (Proxy): HTTP {status} (url={url})")
+                return {"detail_html": "", "image_urls": [], "raw_html": html or ""}
+        else:
+            async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
+                resp = await client.get(url, allow_redirects=True)
+                if resp.status_code != 200:
+                    logger.error(f"G마켓 상세 수집 실패: HTTP {resp.status_code} (url={url})")
+                    return {"detail_html": "", "image_urls": [], "raw_html": resp.text or ""}
+                html = resp.text or ""
 
-        if resp.status_code != 200:
-            logger.error(f"G마켓 상세 수집 실패: HTTP {resp.status_code} (url={url})")
-            return {"detail_html": "", "image_urls": [], "raw_html": resp.text or ""}
-
-        html = resp.text or ""
         soup = BeautifulSoup(html, "html.parser")
 
         description: str | None = None
@@ -173,13 +187,23 @@ class GmarketBenchmarkCollector:
             src = (detail_iframe.get("src") or "").strip()
             if src and src != "about:blank":
                 iframe_url = urljoin(url, src)
-                async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
-                    iframe_resp = await client.get(iframe_url, allow_redirects=True)
-                if iframe_resp.status_code == 200 and (iframe_resp.text or "").strip():
-                    iframe_soup = BeautifulSoup(iframe_resp.text or "", "html.parser")
-                    body = iframe_soup.body if iframe_soup.body is not None else iframe_soup
-                    detail_html = str(body)
-                    raw_html_to_store = iframe_resp.text or raw_html_to_store
+                iframe_html = ""
+                if settings.ownerclan_use_sef_proxy:
+                    status, iframe_html = await self._saver._fetch_via_proxy(iframe_url)
+                    if status == 200 and iframe_html.strip():
+                        iframe_soup = BeautifulSoup(iframe_html, "html.parser")
+                        body = iframe_soup.body if iframe_soup.body is not None else iframe_soup
+                        detail_html = str(body)
+                        raw_html_to_store = iframe_html
+                else:
+                    async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
+                        iframe_resp = await client.get(iframe_url, allow_redirects=True)
+                    if iframe_resp.status_code == 200 and (iframe_resp.text or "").strip():
+                        iframe_soup = BeautifulSoup(iframe_resp.text or "", "html.parser")
+                        body = iframe_soup.body if iframe_soup.body is not None else iframe_soup
+                        detail_html = str(body)
+                        raw_html_to_store = iframe_resp.text or raw_html_to_store
+
 
         if not detail_html:
             detail_node = soup.select_one("#goodsDetail") or soup.select_one("#detail")

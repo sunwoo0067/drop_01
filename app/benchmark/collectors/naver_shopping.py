@@ -9,6 +9,8 @@ from bs4 import BeautifulSoup
 from curl_cffi.requests import AsyncSession
 
 from app.benchmark_collector import BenchmarkCollector as SaverCollector
+from app.settings import settings
+
 
 logger = logging.getLogger(__name__)
 
@@ -29,14 +31,20 @@ class NaverShoppingBenchmarkCollector:
             else "https://snxbest.naver.com/product/best/click"
         )
 
-        async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
-            resp = await client.get(url, allow_redirects=True)
+        html = ""
+        if settings.ownerclan_use_sef_proxy:
+            status, html = await self._saver._fetch_via_proxy(url)
+            if status != 200:
+                logger.error(f"네이버쇼핑 BEST 수집 실패 (Proxy): HTTP {status} (url={url})")
+                return []
+        else:
+            async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
+                resp = await client.get(url, allow_redirects=True)
+                if resp.status_code != 200:
+                    logger.error(f"네이버쇼핑 BEST 수집 실패: HTTP {resp.status_code} (url={url})")
+                    return []
+                html = resp.text or ""
 
-        if resp.status_code != 200:
-            logger.error(f"네이버쇼핑 BEST 수집 실패: HTTP {resp.status_code} (url={url})")
-            return []
-
-        html = resp.text or ""
         soup = BeautifulSoup(html, "html.parser")
 
         items: list[dict[str, Any]] = []
@@ -108,22 +116,36 @@ class NaverShoppingBenchmarkCollector:
         if not url:
             return {"detail_html": "", "image_urls": [], "raw_html": ""}
 
-        async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
-            resp = await client.get(url, allow_redirects=True)
+        html = ""
+        blocked_reason: str | None = None
+        
+        if settings.ownerclan_use_sef_proxy:
+            status, html = await self._saver._fetch_via_proxy(url)
+            if status != 200:
+                logger.error(f"네이버 스마트스토어 상세 수집 실패 (Proxy): HTTP {status} (url={url})")
+                if status in (490, 403):
+                    blocked_reason = "CAPTCHA"
+                return {
+                    "detail_html": "",
+                    "image_urls": [],
+                    "raw_html": html,
+                    "blocked_reason": blocked_reason,
+                }
+        else:
+            async with AsyncSession(impersonate="chrome", headers=self.headers) as client:
+                resp = await client.get(url, allow_redirects=True)
+                if resp.status_code != 200:
+                    logger.error(f"네이버 스마트스토어 상세 수집 실패: HTTP {resp.status_code} (url={url})")
+                    if resp.status_code in (490, 403):
+                        blocked_reason = "CAPTCHA"
+                    return {
+                        "detail_html": "",
+                        "image_urls": [],
+                        "raw_html": resp.text or "",
+                        "blocked_reason": blocked_reason,
+                    }
+                html = resp.text or ""
 
-        if resp.status_code != 200:
-            logger.error(f"네이버 스마트스토어 상세 수집 실패: HTTP {resp.status_code} (url={url})")
-            blocked_reason: str | None = None
-            if resp.status_code in (490, 403):
-                blocked_reason = "CAPTCHA"
-            return {
-                "detail_html": "",
-                "image_urls": [],
-                "raw_html": resp.text or "",
-                "blocked_reason": blocked_reason,
-            }
-
-        html = resp.text or ""
         if ("ncpt.naver.com" in html) or ("WtmCaptcha" in html) or ("title=\"captcha\"" in html):
             logger.error(f"네이버 스마트스토어 상세 수집 차단(CAPTCHA): url={url}")
             return {"detail_html": "", "image_urls": [], "raw_html": html, "blocked_reason": "CAPTCHA"}

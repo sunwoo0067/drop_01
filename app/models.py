@@ -311,11 +311,23 @@ class BenchmarkProduct(MarketBase):
     detail_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_data: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     
+    # Ranking & Stats
+    category_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rating: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    quality_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+    
     # Advanced Sourcing Fields
     review_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     pain_points: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True) # e.g. ["heavy", "breaks easily"]
+    specs: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    visual_analysis: Mapped[str | None] = mapped_column(Text, nullable=True)
     
     embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
+    embedding_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

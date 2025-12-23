@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 import time
 import logging
+from app.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,36 @@ class OwnerClanClient:
         self._api_base_url = api_base_url.rstrip("/")
         self._graphql_url = graphql_url
         self._access_token = access_token
+
+    def _call_via_proxy(self, method: str, url: str, payload: dict | None = None, params: dict | None = None) -> tuple[int, dict]:
+        """Calls the OwnerClan API via Supabase Edge Function proxy."""
+        headers = {"Content-Type": "application/json"}
+        if self._access_token:
+            headers["Authorization"] = f"Bearer {self._access_token}"
+
+        sef_url = f"{settings.supabase_url}/functions/v1/fetch-proxy"
+        sef_headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {settings.supabase_service_role_key}"
+        }
+
+        # Construct full URL for proxy if needed, or send separately
+        # Our SEF implementation expects { method, url, headers, body }
+        proxy_payload = {
+            "method": method,
+            "url": url if not params else f"{url}?{httpx.QueryParams(params)}",
+            "headers": headers,
+            "body": payload
+        }
+
+        timeout = httpx.Timeout(300.0, connect=10.0)
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.post(sef_url, json=proxy_payload, headers=sef_headers)
+        
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("status", 500), data.get("data", {})
+
 
     def with_token(self, access_token: str) -> "OwnerClanClient":
         return OwnerClanClient(
@@ -65,14 +96,18 @@ class OwnerClanClient:
         return OwnerClanToken(access_token=str(token), expires_at=expires_at)
 
     def put(self, path: str, payload: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
+        url = f"{self._api_base_url}{path}"
+        if settings.ownerclan_use_sef_proxy:
+            return self._call_via_proxy("PUT", url, payload=payload)
+
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self._access_token:
             headers["Authorization"] = f"Bearer {self._access_token}"
 
-        url = f"{self._api_base_url}{path}"
         timeout = httpx.Timeout(60.0, connect=10.0)
         with httpx.Client(timeout=timeout) as client:
             resp = client.put(url, json=payload or {}, headers=headers)
+
 
         if not resp.content:
             return resp.status_code, {}
@@ -86,11 +121,14 @@ class OwnerClanClient:
         return resp.status_code, {"_raw": data}
 
     def delete(self, path: str, payload: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
+        url = f"{self._api_base_url}{path}"
+        if settings.ownerclan_use_sef_proxy:
+            return self._call_via_proxy("DELETE", url, payload=payload)
+
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self._access_token:
             headers["Authorization"] = f"Bearer {self._access_token}"
 
-        url = f"{self._api_base_url}{path}"
         timeout = httpx.Timeout(60.0, connect=10.0)
         # DELETE requests often don't have a body, but some APIs might require it (e.g. cancel reason).
         # httpx.delete doesn't support json kwarg directly in slightly older versions, but current ones do.
@@ -115,11 +153,14 @@ class OwnerClanClient:
         return resp.status_code, {"_raw": data}
 
     def graphql(self, query: str, variables: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
+        url = self._graphql_url
+        if settings.ownerclan_use_sef_proxy:
+            return self._call_via_proxy("POST", url, payload={"query": query, "variables": variables})
+
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self._access_token:
             headers["Authorization"] = f"Bearer {self._access_token}"
 
-        payload: dict[str, Any] = {"query": query}
         if variables is not None:
             payload["variables"] = variables
 
@@ -161,11 +202,14 @@ class OwnerClanClient:
         return resp.status_code, {"_raw": data}
 
     def get(self, path: str, params: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
+        url = f"{self._api_base_url}{path}"
+        if settings.ownerclan_use_sef_proxy:
+            return self._call_via_proxy("GET", url, params=params)
+
         headers: dict[str, str] = {}
         if self._access_token:
             headers["Authorization"] = f"Bearer {self._access_token}"
 
-        url = f"{self._api_base_url}{path}"
         timeout = httpx.Timeout(60.0, connect=10.0)
         with httpx.Client(timeout=timeout) as client:
             resp = client.get(url, params=params, headers=headers)
@@ -182,11 +226,14 @@ class OwnerClanClient:
         return resp.status_code, {"_raw": data}
 
     def post(self, path: str, payload: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
+        url = f"{self._api_base_url}{path}"
+        if settings.ownerclan_use_sef_proxy:
+            return self._call_via_proxy("POST", url, payload=payload)
+
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self._access_token:
             headers["Authorization"] = f"Bearer {self._access_token}"
 
-        url = f"{self._api_base_url}{path}"
         timeout = httpx.Timeout(60.0, connect=10.0)
         with httpx.Client(timeout=timeout) as client:
             resp = client.post(url, json=payload or {}, headers=headers)

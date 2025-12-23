@@ -285,9 +285,10 @@ export default function ProductListPage() {
                         onClick={async () => {
                             setLoading(true);
                             try {
-                            await api.post("/market/products/sync", null, { params: { deep: true } });
+                                const resp = await api.post("/market/products/sync", null, { params: { deep: true } });
+                                const message = resp.data?.message || "쿠팡 상품 동기화가 시작되었습니다. 잠시 후 새로고침하여 확인해주세요.";
+                                alert(message);
                                 await fetchProducts();
-                                alert("쿠팡 상품 동기화 완료");
                             } catch (error) {
                                 console.error("Sync products failed", error);
                                 alert("쿠팡 상품 동기화 실패");

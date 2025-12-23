@@ -171,8 +171,9 @@ def list_market_products(
     }
 
 
-@router.post("/products/sync", status_code=200)
+@router.post("/products/sync", status_code=202)
 def sync_market_products(
+    background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
     deep: bool = Query(default=False),
 ) -> dict:
@@ -184,8 +185,8 @@ def sync_market_products(
     if not account:
         raise HTTPException(status_code=400, detail="활성 상태의 쿠팡 계정을 찾을 수 없습니다.")
 
-    processed = sync_coupang_products(session, account.id, deep=bool(deep))
-    return {"status": "success", "processed": int(processed), "deep": bool(deep)}
+    background_tasks.add_task(sync_coupang_products, session, account.id, deep=bool(deep))
+    return {"status": "accepted", "message": "쿠팡 상품 동기화가 백그라운드에서 시작되었습니다.", "deep": bool(deep)}
 
 
 @router.get("/products/raw", status_code=200)

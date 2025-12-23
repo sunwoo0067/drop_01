@@ -46,7 +46,7 @@ export default function BenchmarkPage() {
             Object.keys(params).forEach(key => {
                 if ((params as any)[key] === "") (params as any)[key] = undefined;
             });
-            if (params.marketCode === 'ALL') params.marketCode = undefined;
+            if (params.marketCode === 'ALL') (params as any).marketCode = undefined;
 
             const response = await api.get('/benchmarks', { params });
             setItems(response.data.items || []);

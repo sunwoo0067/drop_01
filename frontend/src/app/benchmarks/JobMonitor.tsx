@@ -67,7 +67,7 @@ export default function JobMonitor() {
                             <div className="flex items-center gap-2">
                                 <span className="text-[10px] text-muted-foreground">{new Date(job.createdAt).toLocaleTimeString()}</span>
                                 {job.status === 'failed' && (
-                                    <Button size="xs" variant="outline" className="h-6 text-[10px]" onClick={() => handleRetry(job.id)}>
+                                    <Button size="sm" variant="outline" className="h-6 px-2 text-[10px]" onClick={() => handleRetry(job.id)}>
                                         <RotateCcw className="h-2.5 w-2.5 mr-1" />
                                         재시도
                                     </Button>
@@ -90,7 +90,7 @@ export default function JobMonitor() {
                             <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
                                 <div
                                     className={`h-full transition-all duration-500 rounded-full ${job.status === 'failed' ? 'bg-destructive' :
-                                            job.status === 'succeeded' ? 'bg-green-500' : 'bg-primary'
+                                        job.status === 'succeeded' ? 'bg-green-500' : 'bg-primary'
                                         }`}
                                     style={{ width: `${job.progress}%` }}
                                 />

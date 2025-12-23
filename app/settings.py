@@ -6,13 +6,15 @@ class Settings(BaseSettings):
     source_database_url: str = ""
     dropship_database_url: str = ""
     market_database_url: str = ""
-    supabase_url: str = "https://tuwqbahkvvidgcbyztop.supabase.co"
+    supabase_url: str = "https://irxsnhaqathvumbflzme.supabase.co"
     supabase_service_role_key: str = ""
     supabase_bucket: str = "images"
 
     ownerclan_api_base_url: str = "https://api.ownerclan.com"
     ownerclan_auth_url: str = "https://auth.ownerclan.com/auth"
     ownerclan_graphql_url: str = "https://api.ownerclan.com/v1/graphql"
+    ownerclan_use_sef_proxy: bool = True 
+
 
     ownerclan_primary_user_type: str = "seller"
     ownerclan_primary_username: str = ""
