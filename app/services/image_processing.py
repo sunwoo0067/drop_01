@@ -318,9 +318,15 @@ class ImageProcessingService:
         max_images = min(max_images, 9)
         processed_urls = []
         candidates = image_urls[:]
-        html_images = self.extract_images_from_html(detail_html, limit=20)
-        if html_images:
-            candidates.extend(html_images)
+        
+        # [BUG FIX] 이미지 보충 조건 강화: 입력 이미지가 부족할 때(5장 미만)만 HTML에서 추출하여 보충
+        if len(candidates) < 5 and detail_html:
+            html_images = self.extract_images_from_html(detail_html, limit=20)
+            if html_images:
+                # 중복 방지를 위해 이미 존재하는 URL은 제외하고 추가
+                for h_url in html_images:
+                    if h_url not in candidates:
+                        candidates.append(h_url)
 
         stats = {
             "target_count": max_images,
