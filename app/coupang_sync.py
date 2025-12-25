@@ -1229,13 +1229,42 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
         image_urls=payload_images,
     )
     
-    # 2. API 호출
-    code, data = client.create_product(payload)
-    _log_fetch(session, account, "create_product", payload, code, data)
+    # 2. API 호출 (429 대응을 위한 재시도 로직 포함)
+    max_retries = 3
+    retry_delay = 2
+    code = 0
+    data = {}
+    
+    for attempt in range(max_retries + 1):
+        try:
+            code, data = client.create_product(payload)
+            _log_fetch(session, account, "create_product", payload, code, data)
+            
+            # 성공 조건
+            if code == 200 and data.get("code") == "SUCCESS":
+                break
+                
+            # 429 (Too Many Requests) 대응: 지수 백오프
+            if code == 429:
+                if attempt < max_retries:
+                    logger.warning(f"Coupang API 429 detected for product {product.id}. Retrying in {retry_delay}s... (Attempt {attempt+1}/{max_retries})")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+                    continue
+            
+            # 그 외의 에러는 기회를 소진하지 않고 바로 실패 처리 (단, Coupang 점검 등 특정 상황 제외)
+            break
+        except Exception as e:
+            logger.error(f"Exception during create_product for {product.id}: {e}")
+            if attempt < max_retries:
+                time.sleep(retry_delay)
+                retry_delay *= 2
+                continue
+            break
 
-    # 성공 조건: HTTP 200 이면서 body의 code가 SUCCESS
+    # 최종 결과 확인
     if code != 200 or data.get("code") != "SUCCESS":
-        logger.error(f"상품 생성 실패 (ID: {product.id}). HTTP: {code}, Msg: {data}")
+        logger.error(f"상품 생성 최종 실패 (ID: {product.id}). HTTP: {code}, Msg: {data}")
         msg = None
         if isinstance(data, dict):
             msg = data.get("message")

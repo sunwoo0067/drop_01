@@ -5,7 +5,7 @@ from typing import List, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import SourcingCandidate, BenchmarkProduct
+from app.models import SourcingCandidate, BenchmarkProduct, SupplierItemRaw, Product, SupplierSyncJob
 from app.services.ai.agents.sourcing_agent import SourcingAgent
 from app.embedding_service import EmbeddingService
 from app.normalization import clean_product_name
@@ -18,7 +18,7 @@ class SourcingService:
         self.db = db
         self.sourcing_agent = SourcingAgent(db)
         self.embedding_service = EmbeddingService()
-        self._ai_semaphore = asyncio.Semaphore(1)
+        self._ai_semaphore = asyncio.Semaphore(50) # 1 -> 50 상향
 
     async def execute_benchmark_sourcing(self, benchmark_id: uuid.UUID):
         """
@@ -108,7 +108,7 @@ class SourcingService:
         logger.info(f"Expanding keyword: {keyword}")
         from app.services.ai.service import AIService
         ai = AIService()
-        expanded = ai.expand_keywords(keyword)
+        expanded = await ai.expand_keywords(keyword)
         logger.info(f"Expanded '{keyword}' into: {expanded}")
         
         # Source original keyword
@@ -190,7 +190,6 @@ class SourcingService:
             return
 
         # Ensure raw data is in SupplierItemRaw for the product pipeline
-        from app.models import SupplierItemRaw
         raw_entry = self.db.execute(
             select(SupplierItemRaw)
             .where(SupplierItemRaw.supplier_code == "ownerclan")
@@ -246,11 +245,11 @@ class SourcingService:
 
         # 3. Final Multi-Factor Weighted Scoring
         # Profitability (40%)
-        profit_score = 0.0
+        profit_score = 0.5 # Default middle
         if supply_price > 0 and (benchmark_price := (benchmark.price if benchmark else 0)) > 0:
             margin_rate = (benchmark_price - supply_price) / benchmark_price
-            if margin_rate >= 0.2: profit_score = 1.0
-            elif margin_rate > 0: profit_score = margin_rate / 0.2
+            if margin_rate >= 0.15: profit_score = 1.0 # 20% -> 15% 완화
+            elif margin_rate > 0: profit_score = margin_rate / 0.15
         
         # Seasonality (30%)
         # already provided as seasonal_score arg, or default to 0.5
@@ -260,7 +259,9 @@ class SourcingService:
         comp_score = 1.0 
         
         # Quality (10%) - Heuristic based on rating or description quality
-        quality_score = min(1.0, len(item.get("detail_html", "")) / 5000.0)
+        # Minimum 0.3 for items having any html content
+        raw_html = item.get("detail_html", "") or ""
+        quality_score = max(0.3, min(1.0, len(raw_html) / 2000.0)) # threshold 완화
 
         # Total Calculation
         final_ws = (profit_score * 0.4) + (s_score * 0.3) + (comp_score * 0.2) + (quality_score * 0.1)
@@ -304,14 +305,25 @@ class SourcingService:
         Promotes a candidate to a real Product and triggers AI SEO/Image pipeline.
         """
         candidate = self.db.get(SourcingCandidate, candidate_id)
-        if not candidate or candidate.status == "APPROVED":
+        if not candidate:
+            return
+
+        # 이미 Product가 생성되었는지 확인 (중복 생성 방지)
+        existing_product = self.db.execute(
+            select(Product).where(Product.supplier_item_id.in_(
+                select(SupplierItemRaw.id).where(SupplierItemRaw.item_code == candidate.supplier_item_id)
+            ))
+        ).scalars().first()
+        
+        if existing_product:
+            candidate.status = "APPROVED" # 상태만 보정
+            self.db.commit()
             return
 
         candidate.status = "APPROVED"
         self.db.commit()
 
         # 1. Create Product
-        from app.models import Product, SupplierItemRaw
         from app.services.ai.service import AIService
         ai = AIService()
         
@@ -330,7 +342,7 @@ class SourcingService:
         cleaned_name = clean_product_name(candidate.name)
         
         # Optimize SEO
-        seo = ai.optimize_seo(cleaned_name, candidate.seo_keywords or [], context=candidate.visual_analysis)
+        seo = await ai.optimize_seo(cleaned_name, candidate.seo_keywords or [], context=candidate.visual_analysis)
         processed_name = seo.get("title") or cleaned_name
         processed_keywords = seo.get("tags") or candidate.seo_keywords
         
@@ -367,7 +379,6 @@ class SourcingService:
         Schedules a background sync job for ALL products from OwnerClan.
         Checks if a job is already in progress to avoid duplicates.
         """
-        from app.models import SupplierSyncJob
         from app.ownerclan_sync import start_background_ownerclan_job
         from app.session_factory import session_factory
         
@@ -407,7 +418,6 @@ class SourcingService:
         Converts un-processed SupplierItemRaw records into SourcingCandidates.
         This allows items collected via background sync to enter the pipeline.
         """
-        from app.models import SupplierItemRaw, SourcingCandidate
         
         # Find raw items that don't have a corresponding candidate yet
         # Using a subquery for 'not exists' is efficient

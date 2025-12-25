@@ -2,10 +2,20 @@ import os
 import uuid
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from typing import List
+import logging
+
+# 전역 로깅 설정
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    force=True  # 이미 설정된 로깅 무시하고 강제 적용
+)
+logger = logging.getLogger(__name__)
 
 from supabase import create_client
 
@@ -16,10 +26,19 @@ from app.ownerclan_client import OwnerClanClient
 from app.ownerclan_sync import start_background_ownerclan_job
 from app.session_factory import session_factory
 from app.settings import settings
-from app.api.endpoints import sourcing, products, coupang, settings as settings_endpoint, suppliers as suppliers_endpoint, benchmarks, market, benchmark_streams, orchestration
+from app.api.endpoints import sourcing, products, coupang, settings as settings_endpoint, suppliers as suppliers_endpoint, benchmarks, market, benchmark_streams, orchestration, health, analytics, recommendations
 from app.schemas.product import ProductResponse
 
 app = FastAPI()
+
+# CORS 설정 추가
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 개발 환경이므로 전체 허용 (또는 ["http://localhost:3333"])
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.include_router(sourcing.router, prefix="/api/sourcing", tags=["Sourcing"])
 app.include_router(benchmarks.router, prefix="/api/benchmarks", tags=["Benchmarks"])
@@ -30,6 +49,9 @@ app.include_router(settings_endpoint.router, prefix="/api/settings", tags=["Sett
 app.include_router(suppliers_endpoint.router, prefix="/api/suppliers", tags=["Suppliers"])
 app.include_router(market.router, prefix="/api/market", tags=["Market"])
 app.include_router(orchestration.router, prefix="/api/orchestration", tags=["Orchestration"])
+app.include_router(health.router, prefix="/api/health", tags=["Health"])
+app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])
+app.include_router(recommendations.router, prefix="/api/recommendations", tags=["Recommendations"])
 
 
 # Next.js(/api/products) 경로 정규화로 인해 백엔드가 /api/products → /api/products/ 로 307 redirect를 내보내면

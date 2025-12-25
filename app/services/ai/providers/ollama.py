@@ -29,7 +29,7 @@ class OllamaProvider(AIProvider):
         self.logic_model_name = logic_model_name or "granite4"
         logger.info(f"OllamaProvider initialized: main={model_name}, vision={self.vision_model_name}, logic={self.logic_model_name}")
 
-    def _chat(
+    async def _chat(
         self, 
         messages: List[Dict[str, str]], 
         model: str, 
@@ -58,21 +58,21 @@ class OllamaProvider(AIProvider):
             payload["tools"] = tools
 
         try:
-            with httpx.Client(timeout=300.0) as client:
-                resp = client.post(url, json=payload)
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                resp = await client.post(url, json=payload)
                 resp.raise_for_status()
                 return resp.json()
         except Exception as e:
             logger.error(f"Ollama _chat failed (model={model}, format={format}): {e}")
             return {}
 
-    def generate_text(self, prompt: str, model: Optional[str] = None) -> str:
+    async def generate_text(self, prompt: str, model: Optional[str] = None) -> str:
         target_model = model or self.model_name
         messages = [{"role": "user", "content": prompt}]
-        response = self._chat(messages, target_model)
+        response = await self._chat(messages, target_model)
         return response.get("message", {}).get("content", "")
 
-    def generate_json(self, prompt: str, model: Optional[str] = None, tools: Optional[List[Dict[str, Any]]] = None, image_data: Optional[bytes] = None) -> Dict[str, Any] | List[Any]:
+    async def generate_json(self, prompt: str, model: Optional[str] = None, tools: Optional[List[Dict[str, Any]]] = None, image_data: Optional[bytes] = None) -> Dict[str, Any] | List[Any]:
         target_model = model or (self.vision_model_name if image_data else self.function_model_name)
         messages = [{"role": "user", "content": prompt}]
         
@@ -82,7 +82,7 @@ class OllamaProvider(AIProvider):
 
         # If tools are provided, use Native Tool Calling
         if tools:
-            response = self._chat(messages, target_model, tools=tools, images=images)
+            response = await self._chat(messages, target_model, tools=tools, images=images)
             message = response.get("message", {})
             if "tool_calls" in message:
                 # Returns the first tool call's arguments as JSON
@@ -96,7 +96,7 @@ class OllamaProvider(AIProvider):
             # Use JSON mode with format="json"
             if "JSON" not in prompt:
                 prompt += "\nReturn ONLY valid JSON."
-            response = self._chat([{"role": "user", "content": prompt}], target_model, format="json", images=images)
+            response = await self._chat([{"role": "user", "content": prompt}], target_model, format="json", images=images)
             content = response.get("message", {}).get("content", "")
 
         try:
@@ -106,33 +106,33 @@ class OllamaProvider(AIProvider):
             logger.error(f"Failed to parse JSON for {target_model}: {e}")
             return {}
 
-    def generate_reasoning(self, prompt: str, model: Optional[str] = None) -> str:
+    async def generate_reasoning(self, prompt: str, model: Optional[str] = None) -> str:
         target_model = model or self.reasoning_model_name
         messages = [
             {"role": "system", "content": "You are a logical reasoning expert. Break down the problem step-by-step."},
             {"role": "user", "content": prompt}
         ]
-        response = self._chat(messages, target_model)
+        response = await self._chat(messages, target_model)
         return response.get("message", {}).get("content", "")
 
-    def describe_image(self, image_data: bytes, prompt: str = "이 이미지를 상세히 설명해주세요.", model: Optional[str] = None) -> str:
+    async def describe_image(self, image_data: bytes, prompt: str = "이 이미지를 상세히 설명해주세요.", model: Optional[str] = None) -> str:
         encoded_image = base64.b64encode(image_data).decode("utf-8")
         target_model = model or self.vision_model_name
         
         messages = [{"role": "user", "content": prompt}]
-        response = self._chat(messages, target_model, images=[encoded_image])
+        response = await self._chat(messages, target_model, images=[encoded_image])
         
         result = response.get("message", {}).get("content", "")
         
         # Fallback to llava if needed
         if not result and target_model != "llava":
             logger.info("Vision model failed. Retrying with llava fallback...")
-            response = self._chat(messages, "llava", images=[encoded_image])
+            response = await self._chat(messages, "llava", images=[encoded_image])
             result = response.get("message", {}).get("content", "")
             
         return result
 
-    def extract_text_from_image(self, image_data: bytes, format: Literal["text", "markdown", "json"] = "text", model: Optional[str] = None) -> str:
+    async def extract_text_from_image(self, image_data: bytes, format: Literal["text", "markdown", "json"] = "text", model: Optional[str] = None) -> str:
         encoded_image = base64.b64encode(image_data).decode("utf-8")
         target_model = model or self.ocr_model_name
         
@@ -146,7 +146,7 @@ class OllamaProvider(AIProvider):
             
         # Try /api/chat first
         messages = [{"role": "user", "content": prompt}]
-        response = self._chat(messages, target_model, images=[encoded_image], format="json" if format == "json" else None)
+        response = await self._chat(messages, target_model, images=[encoded_image], format="json" if format == "json" else None)
         
         result = response.get("message", {}).get("content", "")
         
@@ -163,8 +163,8 @@ class OllamaProvider(AIProvider):
             if format == "json":
                 payload["format"] = "json"
             try:
-                with httpx.Client(timeout=300.0) as client:
-                    resp = client.post(url, json=payload)
+                async with httpx.AsyncClient(timeout=300.0) as client:
+                    resp = await client.post(url, json=payload)
                     resp.raise_for_status()
                     result = resp.json().get("response", "")
             except Exception as e:
@@ -172,10 +172,10 @@ class OllamaProvider(AIProvider):
                 
         return result
 
-    def analyze_visual_layout(self, image_data: bytes, prompt: str = "Analyze the visual layout and identify key elements with their positions.", model: Optional[str] = None) -> str:
+    async def analyze_visual_layout(self, image_data: bytes, prompt: str = "Analyze the visual layout and identify key elements with their positions.", model: Optional[str] = None) -> str:
         encoded_image = base64.b64encode(image_data).decode("utf-8")
         target_model = model or self.qwen_vl_model_name
         
         messages = [{"role": "user", "content": prompt}]
-        response = self._chat(messages, target_model, images=[encoded_image])
+        response = await self._chat(messages, target_model, images=[encoded_image])
         return response.get("message", {}).get("content", "")

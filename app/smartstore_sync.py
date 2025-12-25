@@ -6,10 +6,18 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
-from app.models import MarketAccount, MarketProductRaw, MarketListing, Product
+from app.models import MarketAccount, MarketProductRaw, MarketListing, Product, SupplierItemRaw
 from app.smartstore_client import SmartStoreClient
+from app.services.coupang_ready_service import collect_image_urls_from_raw
 
 logger = logging.getLogger(__name__)
+
+def _get_original_image_urls(session: Session, product: Product) -> list[str]:
+    if product.supplier_item_id:
+        raw_item = session.get(SupplierItemRaw, product.supplier_item_id)
+        raw = raw_item.raw if raw_item and isinstance(raw_item.raw, dict) else {}
+        return collect_image_urls_from_raw(raw)
+    return []
 
 def _get_client_for_smartstore(account: MarketAccount) -> SmartStoreClient:
     creds = account.credentials
@@ -131,26 +139,74 @@ def register_smartstore_product(session: Session, account_id: uuid.UUID, product
     client = _get_client_for_smartstore(account)
 
     # 0. 이미지 업로드 전처리 (네이버 서버로 업로드 필수)
+    # 이미지 풀백 로직: 가공된 이미지가 없으면 원본 이미지 사용
     representative_image_url = None
-    if product.processed_image_urls:
-        uploaded_urls = client.upload_images(product.processed_image_urls[:1])
-        if uploaded_urls:
-            representative_image_url = uploaded_urls[0]
+    processed_images = product.processed_image_urls if isinstance(product.processed_image_urls, list) else []
+    
+    # 후보군 구성: 가공 이미지 -> 원본 이미지 순 (검증된 도메인 위주)
+    image_candidates = processed_images.copy()
+    original_images = _get_original_image_urls(session, product)
+    image_candidates.extend(original_images)
+    
+    # 중복 제거 (순서 유지)
+    seen = set()
+    unique_candidates = []
+    for img in image_candidates:
+        if not img or not (img.startswith("http://") or img.startswith("https://")):
+            continue
+        if img not in seen:
+            unique_candidates.append(img)
+            seen.add(img)
             
-    # 업로드 실패 또는 이미지 없을 경우 더미 이미지 업로드 시도 (테스트용)
-    if not representative_image_url:
-        dummy_url = "https://avatars.githubusercontent.com/u/1?v=4"
-        uploaded_urls = client.upload_images([dummy_url])
+    # 네이버는 이미지가 없으면 다른 모든 필드에 대해 엄격한 에러(KC인증 등)를 뱉으므로 더미 필수
+    # 로컬 더미 이미지 추가 (마지막 보루)
+    unique_candidates.append("app/static/images/dummy.jpg")
+
+    # 후보군 순회하며 업로드 시도
+    for img_url in unique_candidates:
+        uploaded_urls = client.upload_images([img_url])
         if uploaded_urls:
             representative_image_url = uploaded_urls[0]
+            break
+        # 너무 많이 시도하진 않게 (최대 10개)
+        if unique_candidates.index(img_url) > 10:
+            break
+            
+    if not representative_image_url:
+        logger.error(f"Failed to upload any images even dummy to Naver for product {product.id}")
 
-    # 1. 네이버 상품 등록 페이로드 구성 (v2)
-    # 실제 구현 시 카테고리 ID, 배송비 템플릿 등 필드 강화
+    creds = account.credentials or {}
+    shipping_address_id = creds.get("shipping_address_id")
+    return_address_id = creds.get("return_address_id")
+    delivery_bundle_group_id = creds.get("delivery_bundle_group_id")
+    channel_no = creds.get("channel_no")
+
+    # 1. 카테고리 매핑 (원본 공급처 메타데이터 활용)
+    leaf_category_id = "50000803" # 기본값 (펌프스)
+    if product.supplier_item_id:
+        raw_item = session.get(SupplierItemRaw, product.supplier_item_id)
+        if raw_item and isinstance(raw_item.raw, dict):
+            # 오너클랜 등에서 제공하는 네이버 카테고리 번호 추출
+            metadata = raw_item.raw.get("metadata", {})
+            cat_code = metadata.get("smartstoreCategoryCode")
+            if cat_code:
+                leaf_category_id = str(cat_code)
+            else:
+                # category 필드에서도 확인
+                cat_obj = raw_item.raw.get("category", {})
+                if isinstance(cat_obj, dict) and cat_obj.get("key"):
+                    leaf_category_id = str(cat_obj.get("key"))
+
+    # 2. 네이버 상품 등록 페이로드 구성 (v2)
+    sale_price = int(product.selling_price or 0)
+    # 네이버는 판매가가 10원 단위여야 함
+    sale_price = (sale_price // 10) * 10
+
     payload = {
         "originProduct": {
             "statusType": "SALE",
             "name": product.processed_name or product.name,
-            "salePrice": int(product.selling_price or 0),
+            "salePrice": sale_price,
             "stockQuantity": 999,
             "detailContent": (product.description or "").replace('src="//', 'src="https://').replace('src="http://', 'src="https://'),
             "images": {
@@ -161,25 +217,27 @@ def register_smartstore_product(session: Session, account_id: uuid.UUID, product
                 "deliveryAttributeType": "NORMAL",
                 "deliveryCompany": "CJGLS",
                 "deliveryBundleGroupPriority": 1,
+                "deliveryBundleGroupId": delivery_bundle_group_id,
                 "deliveryFee": {
                     "deliveryFeeType": "FREE"
                 },
                 "claimDeliveryInfo": {
                     "returnDeliveryFee": 3000,
                     "exchangeDeliveryFee": 6000,
-                    # "shippingAddressId": 12345, # 실제 ID 필요
+                    "shippingAddressId": shipping_address_id,
+                    "returnAddressId": return_address_id
                 }
             },
-            "leafCategoryId": "50000803", # TODO: 카테고리 매핑 로직 필요
+            "leafCategoryId": leaf_category_id, 
             "detailAttribute": {
                 "itemConditionType": "NEW",
-                "minorPurchasable": True,
+                "minorPurchasable": False,
                 "originAreaInfo": {
-                    "originAreaCode": "0200037", # 수입산 (기타)
+                    "originAreaCode": "0200037", 
                     "importer": "상세페이지 참조"
                 },
                 "afterServiceInfo": {
-                    "afterServiceTelephoneNumber": "010-0000-0000",
+                    "afterServiceTelephoneNumber": creds.get("phone_number", "010-9119-0067"),
                     "afterServiceGuideContent": "상세페이지를 참고해 주세요."
                 },
                 "productInfoProvidedNotice": {
@@ -192,7 +250,9 @@ def register_smartstore_product(session: Session, account_id: uuid.UUID, product
                         "asTelephoneNumber": "상세페이지 참조",
                         "afterServiceDirector": "판매자 상세정보 참조"
                     }
-                }
+                },
+                "certificationTargetConfirmType": "NOT_SUBJECT",
+                "productCertificationInfos": None
             }
         },
         "smartstoreChannelProduct": {
@@ -200,6 +260,9 @@ def register_smartstore_product(session: Session, account_id: uuid.UUID, product
             "channelProductDisplayStatusType": "ON"
         }
     }
+    
+    if channel_no:
+        payload["smartstoreChannelProduct"]["channelNo"] = channel_no
 
     # 상세 설명 비어있으면 안됨
     if not payload["originProduct"]["detailContent"]:
@@ -228,6 +291,12 @@ def register_smartstore_product(session: Session, account_id: uuid.UUID, product
         detail_msg = result.get("message", "Unknown error")
         invalid_inputs = result.get("invalidInputs")
         if invalid_inputs:
-            detail_msg += f" (Invalid: {invalid_inputs})"
+            # message 필드에 invalidInputs 상세 내용을 포함시켜 오케스트레이터 이벤트 로그에 남김
+            try:
+                import json
+                invalid_str = json.dumps(invalid_inputs, ensure_ascii=False)
+                detail_msg = f"{detail_msg} (Invalid: {invalid_str})"
+            except Exception:
+                detail_msg = f"{detail_msg} (Invalid: {invalid_inputs})"
             
         return {"status": "error", "message": detail_msg}

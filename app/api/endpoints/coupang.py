@@ -285,6 +285,7 @@ async def register_products_bulk_endpoint(
     augment_images: bool = Query(default=True, alias="augmentImages"),
     wait: bool = Query(default=False),
     limit: int = Query(default=50, ge=1, le=200),
+    account_id: uuid.UUID | None = Query(default=None, alias="accountId"),
 ):
     """
     Triggers bulk registration of products to Coupang.
@@ -292,7 +293,9 @@ async def register_products_bulk_endpoint(
     Otherwise, registers all ready products (DRAFT + COMPLETED processing).
     """
     if account_id:
-        accounts = session.scalars(select(MarketAccount).where(MarketAccount.id == account_id)).all()
+        accounts = session.scalars(
+            select(MarketAccount).where(MarketAccount.id == account_id, MarketAccount.is_active == True)
+        ).all()
     else:
         accounts = session.scalars(
             select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
@@ -508,7 +511,9 @@ async def register_product_endpoint(
     작업은 백그라운드에서 비동기로 수행됩니다.
     """
     if account_id:
-        accounts = session.scalars(select(MarketAccount).where(MarketAccount.id == account_id)).all()
+        accounts = session.scalars(
+            select(MarketAccount).where(MarketAccount.id == account_id, MarketAccount.is_active == True)
+        ).all()
     else:
         accounts = session.scalars(
             select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
@@ -590,7 +595,9 @@ async def sync_coupang_status_endpoint(
     특정 상품의 쿠팡 마켓 상태를 명시적으로 동기화합니다.
     """
     if account_id:
-        accounts = session.scalars(select(MarketAccount).where(MarketAccount.id == account_id)).all()
+        accounts = session.scalars(
+            select(MarketAccount).where(MarketAccount.id == account_id, MarketAccount.is_active == True)
+        ).all()
     else:
         accounts = session.scalars(
             select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
@@ -645,7 +652,9 @@ def update_coupang_product_endpoint(
     내부 Product 정보를 기반으로 쿠팡에 이미 등록된 상품을 업데이트합니다.
     """
     if account_id:
-        accounts = session.scalars(select(MarketAccount).where(MarketAccount.id == account_id)).all()
+        accounts = session.scalars(
+            select(MarketAccount).where(MarketAccount.id == account_id, MarketAccount.is_active == True)
+        ).all()
     else:
         # 해당 상품이 등록된 모든 활성 계정을 찾음
         stmt_accounts = (
@@ -1209,7 +1218,9 @@ async def sync_orders_endpoint(
     account_id = getattr(payload, "accountId", None) # payload에 accountId가 있다면 사용 (스키마엔 없으나 유연성 위해)
     
     if account_id:
-        accounts = session.scalars(select(MarketAccount).where(MarketAccount.id == account_id)).all()
+        accounts = session.scalars(
+            select(MarketAccount).where(MarketAccount.id == account_id, MarketAccount.is_active == True)
+        ).all()
     else:
         accounts = session.scalars(
             select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
@@ -1338,7 +1349,9 @@ async def fulfill_orders_ownerclan_endpoint(
     account_id = getattr(payload, "accountId", None)
 
     if account_id:
-        accounts = session.scalars(select(MarketAccount).where(MarketAccount.id == account_id)).all()
+        accounts = session.scalars(
+            select(MarketAccount).where(MarketAccount.id == account_id, MarketAccount.is_active == True)
+        ).all()
     else:
         accounts = session.scalars(
             select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)
@@ -1453,7 +1466,9 @@ async def sync_ownerclan_invoices_endpoint(
     account_id = getattr(payload, "accountId", None)
 
     if account_id:
-        accounts = session.scalars(select(MarketAccount).where(MarketAccount.id == account_id)).all()
+        accounts = session.scalars(
+            select(MarketAccount).where(MarketAccount.id == account_id, MarketAccount.is_active == True)
+        ).all()
     else:
         accounts = session.scalars(
             select(MarketAccount).where(MarketAccount.market_code == "COUPANG", MarketAccount.is_active == True)

@@ -97,6 +97,16 @@ class SupplierSyncState(SourceBase):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class SystemSetting(MarketBase):
+    __tablename__ = "system_settings"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    value: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class SupplierRawFetchLog(SourceBase):
     __tablename__ = "supplier_raw_fetch_log"
 
@@ -234,6 +244,105 @@ class Product(DropshipBase):
     processing_status: Mapped[str] = mapped_column(Text, nullable=False, default="PENDING") # PENDING, PROCESSING, COMPLETED, FAILED, PENDING_APPROVAL
     benchmark_product_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
+    # === 3단계 전략 관련 필드 ===
+    # 라이프사이클 단계
+    lifecycle_stage: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="STEP_1",
+        comment="STEP_1: 탐색, STEP_2: 검증, STEP_3: 스케일"
+    )
+    lifecycle_stage_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="단계 변경 시점"
+    )
+
+    # KPI 지표 (STEP 1 → 2 전환용)
+    total_sales_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        comment="총 판매 횟수"
+    )
+    total_views: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        comment="총 조회수"
+    )
+    total_clicks: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        comment="총 클릭수"
+    )
+    ctr: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=0.0,
+        comment="클릭률 (clicks / views)"
+    )
+    conversion_rate: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=0.0,
+        comment="전환율 (sales / clicks)"
+    )
+
+    # 재구매/옵션 확장 지표 (STEP 2 → 3 전환용)
+    repeat_purchase_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        comment="재구매 횟수"
+    )
+    option_expansion_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        comment="옵션 확장 횟수"
+    )
+    customer_retention_rate: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=0.0,
+        comment="고객 유지율"
+    )
+
+    # LTV (Lifetime Value) - STEP 3 진입 기준
+    total_revenue: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        comment="총 매출"
+    )
+    avg_customer_value: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=0.0,
+        comment="고객당 평균 가치"
+    )
+
+    # 가공 이력 관련
+    last_processing_type: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="마지막 가공 유형 (NAME, OPTION, DESCRIPTION, IMAGE, DETAIL_PAGE)"
+    )
+    last_processing_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="마지막 가공 시점"
+    )
+
+    # AI 모델 사용 이력
+    ai_model_used: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="사용된 AI 모델 (qwen3:8b, qwen3-vl:8b, etc.)"
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -253,6 +362,28 @@ class MarketListing(MarketBase):
     store_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     coupang_status: Mapped[str | None] = mapped_column(Text, nullable=True)
     rejection_reason: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    # === 3단계 전략 관련 필드 ===
+    # 노출/클릭 지표
+    view_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        comment="노출수"
+    )
+    click_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        comment="클릭수"
+    )
+
+    # 시장별 KPI 업데이트 시점
+    kpi_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="KPI 마지막 업데이트 시점"
+    )
 
 
 class SupplierOrder(MarketBase):
@@ -410,3 +541,310 @@ class OrchestrationEvent(DropshipBase):
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
     details: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SalesAnalytics(DropshipBase):
+    """
+    제품별 판매 데이터 분석 결과를 저장합니다.
+    AI 기반 소싱 추천을 위한 판매 데이터 기반 분석입니다.
+    """
+    __tablename__ = "sales_analytics"
+    __table_args__ = (
+        UniqueConstraint("product_id", "period_type", "period_start", name="uq_sales_analytics_product_period"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("products.id"), nullable=False)
+    
+    # 분석 기간 정보
+    period_type: Mapped[str] = mapped_column(Text, nullable=False)  # 'daily', 'weekly', 'monthly'
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    
+    # 판매 지표
+    total_orders: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_revenue: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_profit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    avg_margin_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    
+    # 동향 지표
+    order_growth_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # 전 대비 성장률
+    revenue_growth_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    
+    # 예측 지표
+    predicted_orders: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 다음 기간 예측 주문수
+    predicted_revenue: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    prediction_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)  # 예측 신뢰도 0-1
+    
+    # 카테고리/시장 정보
+    category_trend_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # 카테고리 내 트렌드 점수
+    market_demand_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # 시장 수요 점수
+    
+    # AI 분석 결과
+    trend_analysis: Mapped[str | None] = mapped_column(Text, nullable=True)  # 트렌드 분석 요약
+    insights: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)  # 주요 인사이트
+    recommendations: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)  # 추천 사항
+    
+    # 메타데이터
+    analysis_version: Mapped[str] = mapped_column(Text, nullable=False, default="v1.0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class SourcingRecommendation(DropshipBase):
+    """
+    AI 기반 소싱 추천 결과를 저장합니다.
+    판매 데이터, 시장 트렌드, 재고 상태를 종합적으로 분석하여 소싱 추천을 제공합니다.
+    """
+    __tablename__ = "sourcing_recommendations"
+    __table_args__ = (
+        UniqueConstraint("product_id", "recommendation_date", name="uq_sourcing_recommendations_product_date"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    product_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("products.id"), nullable=True)
+    supplier_item_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)  # FK 제거 - SourceBase와 DropshipBase 분리로 인해
+    
+    # 추천 유형
+    recommendation_type: Mapped[str] = mapped_column(Text, nullable=False)  # 'NEW_PRODUCT', 'REORDER', 'ALTERNATIVE'
+    recommendation_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    
+    # 추천 점수 (0-100)
+    overall_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    
+    # 점수 구성 요소
+    sales_potential_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # 판매 잠재력 점수
+    market_trend_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # 시장 트렌드 점수
+    profit_margin_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # 이익률 점수
+    supplier_reliability_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # 공급처 신뢰도 점수
+    seasonal_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # 시즌성 점수
+    
+    # 추천 수량
+    recommended_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    min_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    
+    # 가격 정보
+    current_supply_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    recommended_selling_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    expected_margin: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    
+    # 재고/주문 정보
+    current_stock: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    stock_days_left: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 현재 재고로 며칠 버틸 수 있는지
+    reorder_point: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 재주문 시점
+    
+    # AI 분석 결과
+    reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)  # 추천 사유
+    risk_factors: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)  # 리스크 요소
+    opportunity_factors: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)  # 기회 요소
+    
+    # 상태
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="PENDING")  # PENDING, ACCEPTED, REJECTED, COMPLETED
+    action_taken: Mapped[str | None] = mapped_column(Text, nullable=True)  # 수행된 액션
+    
+    # 메타데이터
+    model_version: Mapped[str] = mapped_column(Text, nullable=False, default="v1.0")
+    confidence_level: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # 추천 신뢰도 0-1
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class SupplierPerformance(DropshipBase):
+    """
+    공급처별 성능 지표를 추적합니다.
+    소싱 추천 시 공급처 신뢰도 점수 산정에 활용됩니다.
+    """
+    __tablename__ = "supplier_performance"
+    __table_args__ = (
+        UniqueConstraint("supplier_code", "period_type", "period_start", name="uq_supplier_performance_supplier_period"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    supplier_code: Mapped[str] = mapped_column(Text, nullable=False)
+    
+    # 분석 기간
+    period_type: Mapped[str] = mapped_column(Text, nullable=False)  # 'daily', 'weekly', 'monthly'
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    
+    # 주문 관련 지표
+    total_orders: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    successful_orders: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_orders: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    order_success_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    
+    # 배송 관련 지표
+    avg_delivery_time_hours: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    on_time_delivery_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    late_delivery_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    
+    # 품질 관련 지표
+    return_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    complaint_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    avg_product_rating: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    
+    # 가격 관련 지표
+    avg_price_competitiveness: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # 시장 대비 가격 경쟁력
+    
+    # 종합 점수
+    overall_reliability_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # 0-100
+    
+    # 메타데이터
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ProductLifecycle(DropshipBase):
+    """
+    상품 라이프사이클 단계 변경 이력을 추적합니다.
+    """
+    __tablename__ = "product_lifecycles"
+    __table_args__ = (
+        UniqueConstraint("product_id", "transition_sequence", name="uq_product_lifecycles_product_seq"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("products.id"),
+        nullable=False
+    )
+    
+    # 단계 전환 정보
+    transition_sequence: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        comment="전환 순서 (1, 2, 3...)"
+    )
+    from_stage: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="이전 단계 (STEP_1, STEP_2, STEP_3)"
+    )
+    to_stage: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        comment="새 단계 (STEP_1, STEP_2, STEP_3)"
+    )
+    
+    # 전환 기준 KPI
+    kpi_snapshot: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        comment="전환 시점의 KPI 스냅샷"
+    )
+    
+    # 전환 사유
+    transition_reason: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="단계 전환 사유"
+    )
+    auto_transition: Mapped[bool] = mapped_column(
+        default=False,
+        comment="자동 전환 여부"
+    )
+    
+    # 메타데이터
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now()
+    )
+
+
+class ProcessingHistory(DropshipBase):
+    """
+    상품 가공 이력을 추적합니다.
+    가공 전/후의 성과 변화를 분석하여 자체 드랍쉬핑 모델을 구축합니다.
+    """
+    __tablename__ = "processing_histories"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("products.id"),
+        nullable=False
+    )
+    
+    # 가공 정보
+    processing_type: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        comment="가공 유형 (NAME, OPTION, DESCRIPTION, IMAGE, DETAIL_PAGE, FULL_BRANDING)"
+    )
+    processing_stage: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        comment="가공 시점의 단계 (STEP_1, STEP_2, STEP_3)"
+    )
+    
+    # 가공 전 데이터
+    before_data: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        comment="가공 전 상태 (name, description, image_urls, etc.)"
+    )
+    before_kpi: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        comment="가공 전 KPI (ctr, conversion_rate, etc.)"
+    )
+    
+    # 가공 후 데이터
+    after_data: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        comment="가공 후 상태"
+    )
+    after_kpi: Mapped[dict | None] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment="가공 후 KPI (일정 기간 후 업데이트)"
+    )
+    
+    # AI 처리 정보
+    ai_model: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="사용된 AI 모델"
+    )
+    ai_processing_time_ms: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="AI 처리 시간 (ms)"
+    )
+    ai_cost_estimate: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+        comment="추정 AI 처리 비용"
+    )
+    
+    # 성과 분석
+    kpi_improvement: Mapped[dict | None] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment="KPI 개선율 (ctr_change, conversion_change, etc.)"
+    )
+    roi_score: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+        comment="ROI 점수 (0-100)"
+    )
+    
+    # 메타데이터
+    processed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now()
+    )
+    kpi_measured_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="가공 후 KPI 측정 시점"
+    )

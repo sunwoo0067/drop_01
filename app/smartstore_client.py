@@ -107,27 +107,63 @@ class SmartStoreClient:
         """이미지를 네이버 서버로 업로드하여 네이버 전용 URL 획득"""
         url = f"{self.base_url}/v1/product-images/upload"
         uploaded_urls = []
+        import os
         
         for img_url in image_urls:
-            try:
-                # 1. 이미지 다운로드
-                img_res = requests.get(img_url)
-                if img_res.status_code != 200:
-                    logger.error(f"Failed to download image: {img_url}")
-                    continue
-                
-                # 2. 네이버 업로드
-                files = {'imageFiles': ('image.jpg', img_res.content, 'image/jpeg')}
-                response = requests.post(url, headers=self._get_headers(multipart=True), files=files)
-                
-                if response.status_code == 200:
-                    results = response.json().get("images", [])
-                    if results:
-                        uploaded_urls.append(results[0].get("url"))
-                else:
-                    logger.error(f"Naver image upload failed: {response.text}")
-            except Exception as e:
-                logger.error(f"Error in upload_images: {e}")
+            max_retries = 5
+            retry_count = 0
+            backoff_time = 2.0
+
+            while retry_count < max_retries:
+                try:
+                    img_content = None
+                    content_type = "image/jpeg"
+                    
+                    if os.path.exists(img_url):
+                        # 1-1. 로컬 파일 로드
+                        logger.info(f"Loading local image from: {img_url}")
+                        with open(img_url, "rb") as f:
+                            img_content = f.read()
+                        if img_url.endswith(".png"): content_type = "image/png"
+                    else:
+                        # 1-2. 원격 이미지 다운로드
+                        logger.info(f"Downloading image from: {img_url} (Attempt {retry_count + 1})")
+                        img_res = requests.get(img_url, timeout=15)
+                        if img_res.status_code != 200:
+                            logger.error(f"Failed to download image: {img_url} (Status: {img_res.status_code})")
+                            break
+                        img_content = img_res.content
+                        content_type = img_res.headers.get("Content-Type", "image/jpeg")
+                    
+                    # 2. 네이버 업로드
+                    ext = "jpg"
+                    if "png" in content_type: ext = "png"
+                    elif "gif" in content_type: ext = "gif"
+                    
+                    files = {"imageFiles": (f"image.{ext}", img_content, content_type)}
+                    response = requests.post(url, headers=self._get_headers(multipart=True), files=files)
+                    
+                    if response.status_code == 200:
+                        results = response.json().get("images", [])
+                        if results:
+                            uploaded_url = results[0].get("url")
+                            logger.info(f"Successfully uploaded image to Naver: {uploaded_url}")
+                            uploaded_urls.append(uploaded_url)
+                            break
+                    elif response.status_code == 429:
+                        # Rate Limit 발생 시 더 긴 대기 후 재시도
+                        logger.warning(f"Naver Rate Limit (429) hit. Waiting {backoff_time}s before retry... ({retry_count + 1}/{max_retries})")
+                        time.sleep(backoff_time)
+                        retry_count += 1
+                        backoff_time *= 3 # 지수적 증가폭 확대
+                    else:
+                        logger.error(f"Naver image upload failed for {img_url}: {response.status_code} - {response.text}")
+                        break
+                except Exception as e:
+                    logger.error(f"Error in upload_images for {img_url}: {e}")
+                    retry_count += 1
+                    time.sleep(backoff_time)
+                    backoff_time *= 2
                 
         return uploaded_urls
 
