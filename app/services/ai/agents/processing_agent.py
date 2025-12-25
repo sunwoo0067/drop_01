@@ -2,6 +2,11 @@
 Processing Agent
 
 제품 가공을 담당하는 AI 에이전트
+
+3단계 드롭쉬핑 전략에 따라 가공 레벨을 조정합니다:
+- STEP 1: 상품명만 최소 가공 (경량 텍스트)
+- STEP 2: 상품명·옵션·상세 설명 개선 (qwen3:8b 텍스트/SEO)
+- STEP 3: 이미지·상세페이지 완전 교체 (qwen3-vl:8b + 외부 API)
 """
 import logging
 import asyncio
@@ -50,19 +55,88 @@ class ProcessingAgent(BaseAgent, ValidationMixin):
     """
     제품 가공 에이전트
     
-    상세페이지 추출, OCR, SEO 최적화, 이미지 처리 단계를 수행합니다.
+    3단계 전략에 따른 가공:
+    - STEP 1: 상품명만 최소 가공
+    - STEP 2: 텍스트 중심 가공 (상품명·옵션·상세 설명)
+    - STEP 3: 완전 브랜딩 (이미지·상세페이지 완전 교체)
     """
     
     def __init__(self, db: Session):
         super().__init__(db, "ProcessingAgent")
         self.router = create_processing_router()
     
+    def _get_lifecycle_stage(self, target_id: str) -> str:
+        """상품의 라이프사이클 단계 조회"""
+        try:
+            import uuid
+            from app.models import Product
+            
+            product_id = uuid.UUID(target_id)
+            product = self.db.get(Product, product_id)
+            
+            if product:
+                return product.lifecycle_stage or "STEP_1"
+            return "STEP_1"
+        except Exception as e:
+            logger.warning(f"Failed to get lifecycle stage for {target_id}: {e}")
+            return "STEP_1"
+    
+    def _get_processing_scope(self, lifecycle_stage: str) -> Dict[str, Any]:
+        """
+        라이프사이클 단계별 가공 범위 반환
+        
+        Args:
+            lifecycle_stage: "STEP_1", "STEP_2", "STEP_3"
+            
+        Returns:
+            {
+                "name_processing": bool,
+                "ocr_processing": bool,
+                "image_processing": bool,
+                "ai_model": str,
+                "description": str
+            }
+        """
+        if lifecycle_stage == "STEP_1":
+            return {
+                "name_processing": True,
+                "ocr_processing": False,
+                "image_processing": False,
+                "ai_model": "qwen3:8b",  # 경량 텍스트
+                "description": "STEP 1: 상품명만 최소 가공"
+            }
+        elif lifecycle_stage == "STEP_2":
+            return {
+                "name_processing": True,
+                "ocr_processing": True,
+                "image_processing": False,
+                "ai_model": "qwen3:8b",  # 텍스트/SEO
+                "description": "STEP 2: 텍스트 중심 가공 (상품명·옵션·상세 설명)"
+            }
+        elif lifecycle_stage == "STEP_3":
+            return {
+                "name_processing": True,
+                "ocr_processing": True,
+                "image_processing": True,
+                "ai_model": "qwen3-vl:8b",  # 비전 + 텍스트
+                "description": "STEP 3: 완전 브랜딩 (이미지·상세페이지 완전 교체)"
+            }
+        else:
+            # 기본값 (이름 전용 처리)
+            return {
+                "name_processing": True,
+                "ocr_processing": False,
+                "image_processing": False,
+                "ai_model": "qwen3:8b",
+                "description": "Default processing"
+            }
+    
     def _name_only_processing(self) -> bool:
-        """이름 전용 처리 모드 여부"""
+        """이름 전용 처리 모드 여부 (레거시 설정)"""
         return settings.product_processing_name_only
     
     def _create_workflow(self) -> StateGraph:
-        """워크플로우 생성"""
+        """워크플로우 생성 (라이프사이클 단계별 조건부 라우팅)"""
         workflow = StateGraph(AgentState)
         
         # 노드 등록
@@ -75,20 +149,149 @@ class ProcessingAgent(BaseAgent, ValidationMixin):
         # 진입점 설정
         workflow.set_entry_point("extract_details")
         
-        # 엣지 연결
+        # 기본 엣지 연결
         workflow.add_edge("extract_details", "extract_ocr_details")
         workflow.add_edge("extract_ocr_details", "optimize_seo")
-        
-        # 조건부 엣지: 이름 전용 처리 모드
-        if self._name_only_processing():
-            workflow.add_edge("optimize_seo", "save_product")
-        else:
-            workflow.add_edge("optimize_seo", "process_images")
-            workflow.add_edge("process_images", "save_product")
-        
+        workflow.add_edge("optimize_seo", "save_product")  # 기본: 이미지 처리 생략
+        workflow.add_edge("process_images", "save_product")
         workflow.add_edge("save_product", END)
         
+        # 조건부 엣지: 이미지 처리 스킵 여부
+        # 라이프사이클 단계가 STEP_1 또는 STEP_2면 이미지 처리 스킵
+        # 라이프사이클 단계가 STEP_3이면 이미지 처리 수행
+        # 이미 이 `_create_workflow`는 모든 노드가 등록된 상태에서 실행됨
+        # 실제 런타임에 단계별 처리는 `_process_by_lifecycle_stage`에서 수행
+        
         return workflow.compile()
+    
+    async def process_by_lifecycle_stage(self, target_id: str, input_data: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        """
+        라이프사이클 단계별 가공 수행
+        
+        Args:
+            target_id: 상품 ID
+            input_data: 입력 데이터
+            **kwargs: 추가 인자
+            
+        Returns:
+            가공 결과
+        """
+        lifecycle_stage = self._get_lifecycle_stage(target_id)
+        processing_scope = self._get_processing_scope(lifecycle_stage)
+        
+        logger.info(f"Processing product {target_id} at stage {lifecycle_stage}: {processing_scope['description']}")
+        
+        # 상태 초기화
+        state = self._create_initial_state(target_id, input_data, **kwargs)
+        state["lifecycle_stage"] = lifecycle_stage
+        state["processing_scope"] = processing_scope
+        
+        try:
+            # 단계별 가공 흐름
+            
+            # 1. 상세페이지 추출 (모든 단계 공통)
+            result1 = await self.extract_details(state)
+            if result1.get("errors"):
+                return result1
+            state.update(result1)
+            
+            # 2. OCR 추출 (STEP 2, 3에서만 수행)
+            if processing_scope["ocr_processing"]:
+                result2 = await self.extract_ocr_details(state)
+                if result2.get("errors"):
+                    return result2
+                state.update(result2)
+            else:
+                logger.info("Skipping OCR extraction (not required for current stage)")
+            
+            # 3. SEO 최적화 (모든 단계 공통, 단계별 모델 사용)
+            state["ai_model_override"] = processing_scope["ai_model"]
+            result3 = await self.optimize_seo(state)
+            if result3.get("errors"):
+                return result3
+            state.update(result3)
+            
+            # 4. 이미지 처리 (STEP 3에서만 수행)
+            if processing_scope["image_processing"]:
+                result4 = await self.process_images(state)
+                if result4.get("errors"):
+                    return result4
+                state.update(result4)
+            else:
+                logger.info("Skipping image processing (not required for current stage)")
+            
+            # 5. 저장 (모든 단계 공통)
+            result5 = await self.save_product(state)
+            
+            # 가공 이력 기록 (ProcessingHistoryService)
+            if not result5.get("errors") and lifecycle_stage in ["STEP_2", "STEP_3"]:
+                await self._record_processing_history(
+                    target_id,
+                    lifecycle_stage,
+                    input_data,
+                    state
+                )
+            
+            return result5
+            
+        except Exception as e:
+            error = wrap_exception(e, AIError, step="lifecycle_processing")
+            logger.error(f"Lifecycle processing failed for {target_id}: {error}")
+            return {"errors": [str(error)]}
+    
+    async def _record_processing_history(
+        self,
+        target_id: str,
+        lifecycle_stage: str,
+        input_data: Dict[str, Any],
+        state: AgentState
+    ):
+        """가공 이력 기록 (STEP 2, 3에서만)"""
+        try:
+            import uuid
+            from app.services.processing_history_service import ProcessingHistoryService
+            
+            history_service = ProcessingHistoryService(self.db)
+            
+            # 가공 전 데이터
+            before_data = {
+                "name": input_data.get("name", ""),
+                "description": input_data.get("description", ""),
+                "images": input_data.get("images", [])
+            }
+            
+            # 가공 후 데이터
+            final_output = state.get("final_output", {})
+            after_data = {
+                "name": final_output.get("processed_name", ""),
+                "keywords": final_output.get("processed_keywords", []),
+                "images": final_output.get("processed_image_urls", [])
+            }
+            
+            # 가공 유형 결정
+            if lifecycle_stage == "STEP_2":
+                processing_type = "DESCRIPTION"  # 텍스트 중심 가공
+            elif lifecycle_stage == "STEP_3":
+                processing_type = "FULL_BRANDING"  # 완전 브랜딩
+            else:
+                processing_type = "NAME"
+            
+            # 가공 이력 기록
+            history_service.record_processing(
+                product_id=uuid.UUID(target_id),
+                processing_type=processing_type,
+                before_data=before_data,
+                after_data=after_data,
+                ai_model=state.get("processing_scope", {}).get("ai_model", ""),
+                ai_processing_time_ms=None,  # 추후 측정 필요
+                ai_cost_estimate=None  # 추후 계산 필요
+            )
+            
+            logger.info(f"Processing history recorded for product {target_id} (stage: {lifecycle_stage})")
+            
+        except Exception as e:
+            logger.error(f"Failed to record processing history: {e}")
+            # 가공 실패로 인해 전체 프로세스를 중단하지 않음
     
     def _get_entry_point(self) -> str:
         """진입점 반환"""

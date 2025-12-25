@@ -16,6 +16,7 @@ from app.services.ai.exceptions import (
     WorkflowError,
     wrap_exception
 )
+from app.services.lifecycle_scheduler import get_lifecycle_scheduler
 
 from app.models import OrchestrationEvent, Product, MarketAccount, SupplierItemRaw, SourcingCandidate, SystemSetting, OrderItem, Order
 
@@ -272,7 +273,19 @@ class OrchestratorService:
             self._record_event("PREMIUM", "SUCCESS", f"최적화 대상 {len(winning_products)}건 선별 완료 (수동 승인 대기)")
 
             logger.info("Daily AI Orchestration Cycle Completed.")
-            self._record_event("COMPLETE", "SUCCESS", "데일리 오케스트레이션 사이클이 모두 완료되었습니다.")
+            
+            # [라이프사이클 자동 전환] STEP 1 → 2, STEP 2 → 3 전환 체크 및 자동 전환 수행
+            logger.info("Starting Lifecycle Transition Check...")
+            lifecycle_scheduler = get_lifecycle_scheduler()
+            # 실제 전환 수행 (dry_run=False)
+            lifecycle_results = await lifecycle_scheduler.check_and_transition_all(dry_run=dry_run, auto_transition=True)
+            logger.info(f"Lifecycle Transition Check Complete: "
+                       f"STEP1→2 {lifecycle_results['step1_to_step2']['transitioned']}건, "
+                       f"STEP2→3 {lifecycle_results['step2_to_step3']['transitioned']}건")
+            
+            self._record_event("COMPLETE", "SUCCESS", "데일리 오케스트레이션 사이클이 모두 완료되었습니다.", {
+                "lifecycle_transitions": lifecycle_results
+            })
             
             # [지속 모드] 활성화 시 백그라운드 독립 실행 (이미 앞에서 실행했다면 중복 실행 방지 로직 필요할 수 있으나 상태 기반이므로 안전)
             if not dry_run and continuous_mode:
