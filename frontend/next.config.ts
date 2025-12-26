@@ -13,14 +13,13 @@ const nextConfig: NextConfig = {
   },
   images: {
     remotePatterns: [
-      {
-        protocol: 'https',
-        hostname: '**',
-      },
-      {
-        protocol: 'http',
-        hostname: '**',
-      },
+      { protocol: 'https', hostname: '*.coupangcdn.com' },
+      { protocol: 'https', hostname: '*.supabase.co' },
+      { protocol: 'https', hostname: '*.ownerclan.com' },
+      { protocol: 'https', hostname: '*.naver.net' },
+      { protocol: 'https', hostname: '*.naver.com' },
+      { protocol: 'https', hostname: 'localhost' },
+      { protocol: 'http', hostname: 'localhost' },
     ],
     formats: ['image/webp', 'image/avif'],
     deviceSizes: [640, 750, 828, 1080, 1200],

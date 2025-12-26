@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, func, and_, or_
 
 from app.db import get_session
+from app.session_factory import session_factory
 from app.models import MarketAccount, MarketListing, Product
 from app.smartstore_client import SmartStoreClient
 

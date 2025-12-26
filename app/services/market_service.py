@@ -60,11 +60,11 @@ class MarketService:
             else:
                 return {"status": "error", "message": msg or "Registration failed"}
         elif market_code == "SMARTSTORE":
-            from app.smartstore_sync import register_product as register_smartstore_product
-            success, msg = register_smartstore_product(self.db, account_id, product_id)
-            if success:
-                return {"status": "success", "message": msg or "Registered successfully"}
+            from app.smartstore_sync import register_smartstore_product
+            result = register_smartstore_product(self.db, account_id, product_id)
+            if result.get("status") == "success":
+                return result
             else:
-                return {"status": "error", "message": msg or "Registration failed"}
+                return result
         else:
             return {"status": "error", "message": f"Unsupported market: {market_code}"}

@@ -88,7 +88,7 @@ class ImageProcessingService:
         self,
         html_content: str,
         product_id: str = "temp",
-        limit: int = 20,
+        limit: int = 50,
     ) -> tuple[str, list[str]]:
         if not html_content:
             return html_content, []
@@ -161,7 +161,9 @@ class ImageProcessingService:
             if src in mapping:
                 img["src"] = mapping[src]
 
-        return str(soup), uploaded
+        # Use decode_contents() to get only the inner HTML if it was a fragment
+        # This helps preserve the original structure without adding <html><body> tags
+        return soup.decode_contents(), uploaded
     
     def extract_images_from_html(self, html_content: str, limit: int = 10) -> List[str]:
         """

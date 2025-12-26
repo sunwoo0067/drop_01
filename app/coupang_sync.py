@@ -30,7 +30,7 @@ from app.models import (
 )
 from app.ownerclan_client import OwnerClanClient
 from app.ownerclan_sync import get_primary_ownerclan_account
-from app.services.detail_html_checks import find_forbidden_tags
+from app.services.detail_html_checks import find_forbidden_tags, strip_forbidden_tags
 from app.services.detail_html_normalizer import normalize_ownerclan_html
 from app.services.coupang_ready_service import collect_image_urls_from_raw
 from app.settings import settings
@@ -68,19 +68,24 @@ def _get_original_image_urls(session: Session, product: Product) -> list[str]:
 
 
 def _normalize_detail_html_for_coupang(html: str) -> str:
+    """
+    쿠팡 상세페이지 HTML을 정규화합니다.
+    - 모든 http:// 주소를 https://로 변환 (쿠팡 제약 사항)
+    - 오너클랜 원본 데이터의 제어 문자 제거
+    """
     s = str(html or "")
     if not s:
         return s
 
     # Coupang requires HTTPS for all content
     s = s.replace("http://", "https://")
-    s = s.replace("https://image1.coupangcdn.com/", "https://image1.coupangcdn.com/")
     
     # Remove hidden control characters often found in source data
     s = normalize_ownerclan_html(s)
     
-    # Further cleanup for any absolute URLs that might still be HTTP (if any)
-    # (Though the global replace usually handles it, being explicit for known CDN)
+    # Strip forbidden tags (script, iframe, etc.)
+    s = strip_forbidden_tags(s)
+    
     return s
 
 
@@ -2086,12 +2091,9 @@ def _map_product_to_coupang_payload(
     processed_images = product.processed_image_urls if isinstance(product.processed_image_urls, list) else []
     payload_images = image_urls if isinstance(image_urls, list) and image_urls else processed_images
     
-    # 상세페이지는 원본 HTML 유지 (신규 가공 시에만 정규화 적용)
+    # 상세페이지는 원본 HTML 유지하되, 쿠팡 제약 사항(HTTPS 등)을 위해 최소한의 정규화 수행
     raw_desc = product.description or "<p>상세설명 없음</p>"
-    if _preserve_detail_html(product):
-        description_html = str(raw_desc)[:200000]
-    else:
-        description_html = _normalize_detail_html_for_coupang(str(raw_desc)[:200000])
+    description_html = _normalize_detail_html_for_coupang(str(raw_desc)[:200000])
     forbidden = find_forbidden_tags(description_html)
     if forbidden:
         logger.warning(
