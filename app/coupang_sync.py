@@ -1144,20 +1144,28 @@ def sync_market_listing_status(session: Session, listing_id: uuid.UUID) -> tuple
         
         # 반려 사유 확인 (approvalStatusHistory)
         history = data_obj.get("approvalStatusHistory")
-        if status_name == "DENIED" and isinstance(history, list) and history:
-            denied_history = next(
-                (
-                    h
-                    for h in history
-                    if isinstance(h, dict) and (h.get("statusName") in {"DENIED", "승인반려", "반려"})
-                ),
-                None,
-            )
-            if isinstance(denied_history, dict):
-                listing.rejection_reason = denied_history
-            else:
-                first = history[0] if history else None
-                listing.rejection_reason = first if isinstance(first, dict) else None
+        if status_name == "DENIED":
+            reason_found = False
+            if isinstance(history, list) and history:
+                denied_history = next(
+                    (
+                        h
+                        for h in history
+                        if isinstance(h, dict) and (h.get("statusName") in {"DENIED", "승인반려", "반려"})
+                    ),
+                    None,
+                )
+                if isinstance(denied_history, dict):
+                    listing.rejection_reason = denied_history
+                    reason_found = True
+            
+            if not reason_found:
+                # history에 없을 경우 top-level 필드 확인
+                extra_msg = data_obj.get("extraInfoMessage")
+                if extra_msg:
+                    listing.rejection_reason = {"message": extra_msg, "context": "extraInfoMessage"}
+                else:
+                    listing.rejection_reason = {"message": "반려 사유가 표시되지 않았습니다. (쿠팡 파트너 센터 확인 필요)", "context": "unknown"}
         elif status_name != "DENIED":
             listing.rejection_reason = None
 
@@ -1952,48 +1960,86 @@ def _get_default_centers(client: CoupangClient, account: MarketAccount | None = 
 
     # 출고지 (Outbound) 및 택배사 (Delivery Company)
     outbound_rc, outbound_data = client.get_outbound_shipping_centers(page_size=10)
-    outbound_code = _extract_first_code(outbound_data, ["outboundShippingPlaceCode", "outbound_shipping_place_code", "shippingPlaceCode", "placeCode"])
     
-    # 택배사 코드 추출
-    delivery_company_code = "CJGLS"  # 기본값 (CJ대한통운, 기본 배송지 이슈 방지)
+    outbound_code = None
+    delivery_company_code = "CJGLS"  # 기본값
+    
     if isinstance(outbound_data, dict):
-        # v2 API Response check
+        # v2/v5 API Response 구조에 맞춰 content 목록 추출
         data_obj = outbound_data.get("data") if isinstance(outbound_data.get("data"), dict) else None
         content = (data_obj.get("content") if data_obj else outbound_data.get("content")) or []
-        if content and isinstance(content[0], dict):
-            # Typical keys: deliveryCompanyCodes (list) or usableDeliveryCompanies
-            codes = content[0].get("deliveryCompanyCodes") or content[0].get("usableDeliveryCompanies")
-            if isinstance(codes, list) and codes:
-                # CJGLS가 목록에 있으면 우선 선택 (사용자 요청)
-                found_cj = False
+        
+        if content:
+            best_center = None
+            
+            # 우선순위 기준 루프
+            # 1. usable=True AND remoteInfos 존재 AND CJGLS 지원
+            # 2. usable=True AND remoteInfos 존재
+            # 3. usable=True AND CJGLS 지원
+            # 4. usable=True
+            
+            for c in content:
+                if not isinstance(c, dict) or not c.get("usable"):
+                    continue
+                
+                c_code = c.get("outboundShippingPlaceCode") or c.get("shippingPlaceCode") or c.get("placeCode")
+                if not c_code:
+                    continue
+                
+                remote_infos = c.get("remoteInfos") or []
+                codes = c.get("deliveryCompanyCodes") or c.get("usableDeliveryCompanies") or []
+                
+                has_cj = False
                 for entry in codes:
-                    c = ""
+                    e_code = ""
                     if isinstance(entry, dict):
-                        c = entry.get("deliveryCompanyCode") or entry.get("code") or entry.get("id") or ""
+                        e_code = entry.get("deliveryCompanyCode") or entry.get("code") or entry.get("id") or ""
                     else:
-                        c = str(entry)
-                    
-                    if c == "CJGLS":
-                        delivery_company_code = "CJGLS"
-                        found_cj = True
+                        e_code = str(entry)
+                    if e_code == "CJGLS":
+                        has_cj = True
                         break
                 
-                if not found_cj:
-                    first_code_entry = codes[0]
-                    if isinstance(first_code_entry, dict):
+                # 강점 점수 계산 (단순화된 방식)
+                score = 0
+                if remote_infos: score += 10
+                if has_cj: score += 5
+                
+                if best_center is None or score > best_center["score"]:
+                    best_center = {
+                        "code": str(c_code),
+                        "has_cj": has_cj,
+                        "codes": codes,
+                        "score": score
+                    }
+                    if score >= 15: # CJGLS와 remoteInfos 모두 있으면 베스트
+                        break
+            
+            if best_center:
+                outbound_code = best_center["code"]
+                if best_center["has_cj"]:
+                    delivery_company_code = "CJGLS"
+                elif best_center["codes"]:
+                    first_entry = best_center["codes"][0]
+                    if isinstance(first_entry, dict):
                         delivery_company_code = (
-                            first_code_entry.get("deliveryCompanyCode") or 
-                            first_code_entry.get("code") or 
-                            first_code_entry.get("id")
+                            first_entry.get("deliveryCompanyCode") or 
+                            first_entry.get("code") or 
+                            first_entry.get("id")
                         )
                     else:
-                        delivery_company_code = str(first_code_entry)
+                        delivery_company_code = str(first_entry)
             
-            if not delivery_company_code:
-                logger.warning(f"지원 택배사 목록이 비어있거나 코드를 추출할 수 없습니다. 기본값 CJGLS를 사용합니다. (outbound_code={outbound_code})")
-                delivery_company_code = "CJGLS"
+            if not outbound_code and content:
+                # fallback: 어쩔 수 없이 첫 번째 코드라도 선택
+                outbound_code = _extract_first_code(outbound_data, ["outboundShippingPlaceCode", "outbound_shipping_place_code", "shippingPlaceCode", "placeCode"])
+                logger.warning(f"적절한 출고지를 찾지 못해 첫 번째 코드를 선택합니다: {outbound_code}")
         else:
-            logger.warning(f"출고지 정보에 택배사 데이터가 없습니다. 기본값 {delivery_company_code}를 사용합니다. (outbound_code={outbound_code})")
+            logger.warning(f"출고지 정보가 없습니다. (HTTP {outbound_rc})")
+            delivery_company_code = "CJGLS"
+    
+    if not delivery_company_code:
+        delivery_company_code = "CJGLS"
     
     outbound_debug = _extract_msg(outbound_rc, outbound_data)
         
