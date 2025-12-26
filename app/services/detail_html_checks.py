@@ -3,15 +3,11 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from bs4 import BeautifulSoup
+
 
 FORBIDDEN_TAGS = {"script", "iframe", "object", "embed"}
 _TAG_RE = re.compile(r"<\s*([a-zA-Z0-9:_-]+)")
-_FORBIDDEN_TAG_RE = re.compile(
-    r"<(script|iframe|object|embed)\b[^>]*>.*?</\1>|<(script|iframe|object|embed)\b[^>]*/>",
-    re.IGNORECASE | re.DOTALL
-)
-
-
 def find_forbidden_tags(html: Any) -> list[str]:
     if html is None:
         return []
@@ -32,4 +28,10 @@ def strip_forbidden_tags(html: str) -> str:
     """
     if not html:
         return html
-    return _FORBIDDEN_TAG_RE.sub("", html)
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in FORBIDDEN_TAGS:
+        for node in soup.find_all(tag):
+            node.decompose()
+    if soup.html or soup.body:
+        return str(soup)
+    return soup.decode_contents()
