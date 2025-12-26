@@ -6,11 +6,9 @@ from typing import Any
 
 FORBIDDEN_TAGS = {"script", "iframe", "object", "embed"}
 _TAG_RE = re.compile(r"<\s*([a-zA-Z0-9:_-]+)")
-
-
 _FORBIDDEN_TAG_RE = re.compile(
-    r"<(/?)\s*(" + "|".join(FORBIDDEN_TAGS) + r")\b[^>]*>", 
-    re.IGNORECASE
+    r"<(script|iframe|object|embed)\b[^>]*>.*?</\1>|<(script|iframe|object|embed)\b[^>]*/>",
+    re.IGNORECASE | re.DOTALL
 )
 
 

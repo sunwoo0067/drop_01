@@ -2091,9 +2091,12 @@ def _map_product_to_coupang_payload(
     processed_images = product.processed_image_urls if isinstance(product.processed_image_urls, list) else []
     payload_images = image_urls if isinstance(image_urls, list) and image_urls else processed_images
     
-    # 상세페이지는 원본 HTML 유지하되, 쿠팡 제약 사항(HTTPS 등)을 위해 최소한의 정규화 수행
+    # 상세페이지는 원본 HTML 유지 (신규 가공 시에만 정규화 적용)
     raw_desc = product.description or "<p>상세설명 없음</p>"
-    description_html = _normalize_detail_html_for_coupang(str(raw_desc)[:200000])
+    if _preserve_detail_html(product):
+        description_html = str(raw_desc)[:200000]
+    else:
+        description_html = _normalize_detail_html_for_coupang(str(raw_desc)[:200000])
     forbidden = find_forbidden_tags(description_html)
     if forbidden:
         logger.warning(

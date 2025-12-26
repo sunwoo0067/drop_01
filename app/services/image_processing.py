@@ -161,9 +161,13 @@ class ImageProcessingService:
             if src in mapping:
                 img["src"] = mapping[src]
 
-        # Use decode_contents() to get only the inner HTML if it was a fragment
-        # This helps preserve the original structure without adding <html><body> tags
-        return soup.decode_contents(), uploaded
+        # Use decode_contents() to get only the inner HTML if it was a fragment.
+        # However, if it was a full document (has <html> or <body>), keep the full structure.
+        is_full_doc = any(tag in html_content.lower() for tag in ["<html", "<body"])
+        if is_full_doc:
+            return str(soup), uploaded
+        else:
+            return soup.decode_contents(), uploaded
     
     def extract_images_from_html(self, html_content: str, limit: int = 10) -> List[str]:
         """
