@@ -6,12 +6,119 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
+from sqlalchemy import or_
 import uuid
 
 from app.db import get_session
 from app.models import Product, MarketListing, MarketAccount, MarketProductRaw
+from app.schemas.product import MarketListingResponse
+from app.smartstore_sync import SmartStoreSync
 
 router = APIRouter()
+
+
+@router.post("/smartstore/register/{product_id}", status_code=202)
+async def register_smartstore_product(
+    product_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session)
+):
+    """
+    네이버에 상품을 등록합니다.
+    """
+    account = session.get(MarketAccount, product_id)
+    if not account:
+        raise HTTPException(status_code=404, detail=f"마켓 계정을 찾을 수 없습니다: {product_id}")
+
+    try:
+        creds = account.credentials or {}
+        client_id = creds.get("client_id")
+        client_secret = creds.get("client_secret")
+        
+        if not client_id or not client_secret:
+            raise HTTPException(status_code=400, detail="스마트스토어 API 정보가 설정되지 않았습니다.")
+
+        sync_service = SmartStoreSync(session)
+        result = sync_service.register_product("SMARTSTORE", account.id, product_id)
+
+        return result
+
+    except Exception as e:
+        logger.error(f"SmartStore product registration failed: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@router.get("/smartstore/products", status_code=200)
+def get_smartstore_products(
+    session: Session = Depends(get_session),
+    account_id: uuid.UUID,
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    """
+    네이버에 등록된 상품 목록을 조회합니다.
+    """
+    # 계정 조회
+    from app.smartstore_sync import SmartStoreSync
+    sync_service = SmartStoreSync(session)
+    
+    account = session.get(MarketAccount, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail=f"마켓 계정을 찾을 수 없습니다: {account_id}")
+
+        # 네이버 상품 목록 조회
+        creds = account.credentials or {}
+        client_id = creds.get("client_id")
+        client_secret = creds.get("client_secret")
+        
+        if not client_id or not client_secret:
+            raise HTTPException(status_code=400, detail="스마트스토어 API 정보가 설정되지 않았습니다.")
+
+        from app.smartstore_client import SmartStoreClient
+        smartstore_client = SmartStoreClient(
+            client_id=client_id,
+            client_secret=client_secret
+        )
+        
+        # 네이버에서 가져온 상품 목록 조회 (sync_products returns the list or count, but endpoints expects items)
+        # Note: The original code was using sync_products which returns count. 
+        # But the loop below expects p to have attributes. Let's fix loop too.
+        synced_count = sync_service.sync_products("SMARTSTORE", account_id)
+        
+        # Actually list market products from DB for this account
+        from app.models import MarketProductRaw
+        stmt = select(MarketProductRaw).where(
+            MarketProductRaw.market_code == "SMARTSTORE",
+            MarketProductRaw.account_id == account_id
+        ).order_by(MarketProductRaw.fetched_at.desc()).limit(limit)
+        raw_products = session.scalars(stmt).all()
+        
+        items = []
+        for p_raw in raw_products:
+            p = p_raw.raw or {}
+            items.append({
+                "id": str(p_raw.id),
+                "productId": None,
+                "marketCode": "SMARTSTORE",
+                "marketItemId": p.get("no", ""),
+                "name": p.get("name", "Unknown"),
+                "processedName": p.get("name"),
+                "sellingPrice": p.get("salePrice", 0),
+                "processedImageUrls": [], 
+                "productStatus": p.get("displaySalesStatus"),
+                "processingStatus": "SYNCED",
+                "marketAccountId": str(account.id),
+                "accountName": account.name,
+                "linkedAt": p_raw.fetched_at.isoformat() if p_raw.fetched_at else None,
+            })
+        
+        return {
+            "items": items,
+            "total": len(items)
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch SmartStore products: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"네이버 상품 조회 실패: {str(e)}")
 
 
 @router.get("/stats", status_code=200)
@@ -33,11 +140,12 @@ def get_market_registration_stats(session: Session = Depends(get_session)):
     
     results = []
     for acc in accounts:
+        listing_count = stats_map.get(acc.id, 0)
         results.append({
             "market_code": acc.market_code,
             "account_name": acc.name,
             "account_id": str(acc.id),
-            "listing_count": stats_map.get(acc.id, 0)
+            "listing_count": listing_count
         })
     
     return results

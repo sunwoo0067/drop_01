@@ -73,14 +73,21 @@ class SmartStoreClient:
 
     def get_products(self, page: int = 1, size: int = 50) -> tuple[int, Dict[str, Any]]:
         """상품 목록 조회"""
-        url = f"{self.base_url}/v2/products"
-        params = {"page": page, "size": size}
+        url = f"{self.base_url}/v1/products/search"
+        payload = {
+            "page": page,
+            "size": size,
+            "orderType": "REG_DATE"
+        }
         
         try:
-            response = requests.get(url, headers=self._get_headers(), params=params)
+            headers = self._get_headers()
+            response = requests.post(url, headers=headers, json=payload)
+            if response.status_code != 200:
+                logger.error(f"SmartStore get_products error: {response.status_code} {response.text}")
             return response.status_code, response.json()
         except Exception as e:
-            logger.error(f"SmartStore get_products error: {e}")
+            logger.error(f"SmartStore get_products exception: {e}")
             return 500, {"message": str(e)}
 
     def create_product(self, payload: Dict[str, Any]) -> tuple[int, Dict[str, Any]]:
