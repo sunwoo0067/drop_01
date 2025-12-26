@@ -422,14 +422,15 @@ class ProductLifecycleService:
         """상품 등록 일수 계산 (단순화)"""
         # 현재 Product 모델의 기존 필드만 사용
         # 향후 노출/클릭 데이터가 업데이트되면 해당 필드 사용
-        
+
         # 간접 연결: OrderItem ── Order → Product
         # 첫 주문일 기준으로 등록 일수 계산
-        
+
         stmt = (
             select(func.min(Order.created_at))
-            .join(OrderItem, OrderItem.product_id == product.id)
+            .select_from(OrderItem)
             .join(Order, Order.id == OrderItem.order_id)
+            .where(OrderItem.product_id == product.id)
         )
         first_order_date = self.db.execute(stmt).scalar()
 
@@ -523,3 +524,4 @@ class ProductLifecycleService:
                 })
 
         return candidates
+
