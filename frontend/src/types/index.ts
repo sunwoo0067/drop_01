@@ -23,6 +23,8 @@ export interface MarketProduct {
         statusName?: string;
         reason?: string;
         approvalDate?: string;
+        context?: string;
+        message?: string;
         [key: string]: any;
     } | null;
     linkedAt?: string | null;

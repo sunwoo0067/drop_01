@@ -62,6 +62,19 @@ function normalizeCoupangStatus(status?: string | null): string | null {
     return s;
 }
 
+function isRegistrationSkipped(reason?: any): boolean {
+    if (!reason) return false;
+    const ctx = String(reason?.context || "").toLowerCase();
+    if (ctx === "registration_skip") return true;
+    const msg = String(reason?.message || reason?.reason || "");
+    return msg.startsWith("SKIPPED:");
+}
+
+function formatSkipReason(reason?: any): string {
+    const msg = String(reason?.message || reason?.reason || "");
+    return msg.replace(/^SKIPPED:\s*/i, "").trim() || "상세 사유 없음";
+}
+
 export default function RegistrationPage() {
     const [items, setItems] = useState<RegistrationProduct[]>([]);
     const [loading, setLoading] = useState(true);
@@ -493,10 +506,14 @@ export default function RegistrationPage() {
                                         </div>
                                         <div className="flex flex-col items-end">
                                             <span className="text-muted-foreground text-[10px] uppercase font-bold tracking-tighter">마켓 상태</span>
-                                            {normalizeCoupangStatus(item.coupangStatus) === 'DENIED' ? (
-                                                <Badge variant="destructive" className="text-[10px] animate-pulse">
-                                                    승인 반려
-                                                </Badge>
+                                    {isRegistrationSkipped(item.rejectionReason) ? (
+                                        <Badge variant="warning" className="text-[10px]">
+                                            등록 제외
+                                        </Badge>
+                                    ) : normalizeCoupangStatus(item.coupangStatus) === 'DENIED' ? (
+                                        <Badge variant="destructive" className="text-[10px] animate-pulse">
+                                            승인 반려
+                                        </Badge>
                                             ) : normalizeCoupangStatus(item.coupangStatus) === 'IN_REVIEW' ? (
                                                 <Badge variant="secondary" className="text-[10px] bg-blue-100 text-blue-700">
                                                     심사 중
@@ -520,6 +537,18 @@ export default function RegistrationPage() {
                                             )}
                                         </div>
                                     </div>
+
+                                    {isRegistrationSkipped(item.rejectionReason) && (
+                                        <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 space-y-2">
+                                            <div className="flex items-center gap-2 text-amber-700">
+                                                <AlertTriangle className="h-4 w-4" />
+                                                <span className="text-xs font-bold">등록 제외 사유</span>
+                                            </div>
+                                            <p className="text-xs text-amber-700/90 leading-relaxed line-clamp-3">
+                                                {formatSkipReason(item.rejectionReason)}
+                                            </p>
+                                        </div>
+                                    )}
 
                                     {normalizeCoupangStatus(item.coupangStatus) === 'DENIED' && item.rejectionReason && (
                                         <div className="p-3 rounded-xl bg-destructive/5 border border-destructive/10 space-y-2">

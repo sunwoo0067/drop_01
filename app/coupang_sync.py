@@ -38,6 +38,10 @@ from app.settings import settings
 logger = logging.getLogger(__name__)
 
 
+class SkipCoupangRegistrationError(Exception):
+    """상품 등록을 정책상 건너뛰는 경우 사용."""
+
+
 def _preserve_detail_html(product: Product | None = None) -> bool:
     """
     상품의 상태에 따라 상세페이지 HTML 보존 여부를 결정합니다.
@@ -1092,6 +1096,40 @@ def _log_fetch(session: Session, account: MarketAccount, endpoint: str, payload:
         logger.warning(f"API 로그 기록 실패: {e}")
 
 
+def _log_registration_skip(
+    session: Session,
+    account: MarketAccount,
+    product_id: uuid.UUID,
+    reason: str,
+    category_code: int | None = None,
+) -> None:
+    payload = {
+        "productId": str(product_id),
+        "reason": reason,
+    }
+    if category_code is not None:
+        payload["categoryCode"] = int(category_code)
+    _log_fetch(session, account, "register_product_skipped", payload, 0, {"code": "SKIPPED", "message": reason})
+
+    try:
+        from app.db import SessionLocal
+        with SessionLocal() as log_session:
+            listing = (
+                log_session.query(MarketListing)
+                .filter(MarketListing.market_account_id == account.id)
+                .filter(MarketListing.product_id == product_id)
+                .first()
+            )
+            if listing:
+                listing.rejection_reason = {
+                    "message": reason,
+                    "context": "registration_skip",
+                }
+                log_session.commit()
+    except Exception as e:
+        logger.warning(f"스킵 사유 저장 실패: {e}")
+
+
 def sync_market_listing_status(session: Session, listing_id: uuid.UUID) -> tuple[bool, str | None]:
     """
     쿠팡 API를 통해 MarketListing의 최신 상태를 동기화하고 반려 사유가 있다면 저장합니다.
@@ -1229,18 +1267,33 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
     if not meta_result["ok"]:
         return False, meta_result["error"]
 
-    payload = _map_product_to_coupang_payload(
-        product,
-        account,
-        meta_result["return_center_code"],
-        meta_result["outbound_center_code"],
-        meta_result["predicted_category_code"],
-        meta_result["return_center_detail"],
-        meta_result["notice_meta"],
-        meta_result["shipping_fee"],
-        meta_result["delivery_company_code"],
-        image_urls=payload_images,
-    )
+    try:
+        payload = _map_product_to_coupang_payload(
+            product,
+            account,
+            meta_result["return_center_code"],
+            meta_result["outbound_center_code"],
+            meta_result["predicted_category_code"],
+            meta_result["return_center_detail"],
+            meta_result["notice_meta"],
+            meta_result["shipping_fee"],
+            meta_result["delivery_company_code"],
+            image_urls=payload_images,
+        )
+    except SkipCoupangRegistrationError as e:
+        reason = f"SKIPPED: {e}"
+        logger.info(f"상품 등록 스킵: {e}")
+        _log_registration_skip(
+            session,
+            account,
+            product.id,
+            reason,
+            meta_result.get("predicted_category_code"),
+        )
+        return False, reason
+    except ValueError as e:
+        logger.error(f"상품 등록 사전검증 실패: {e}")
+        return False, str(e)
     
     # 2. API 호출 (429 대응을 위한 재시도 로직 포함)
     max_retries = 3
@@ -1572,18 +1625,33 @@ def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_i
             return False, meta_result["error"]
 
         # 2. 페이로드 생성 (Full Sync 방식: 내부 매핑 함수 활용)
-        payload = _map_product_to_coupang_payload(
-            product,
-            account,
-            meta_result["return_center_code"],
-            meta_result["outbound_center_code"],
-            meta_result["predicted_category_code"],
-            meta_result["return_center_detail"],
-            meta_result["notice_meta"],
-            meta_result["shipping_fee"],
-            meta_result["delivery_company_code"],
-            image_urls=_get_original_image_urls(session, product),
-        )
+        try:
+            payload = _map_product_to_coupang_payload(
+                product,
+                account,
+                meta_result["return_center_code"],
+                meta_result["outbound_center_code"],
+                meta_result["predicted_category_code"],
+                meta_result["return_center_detail"],
+                meta_result["notice_meta"],
+                meta_result["shipping_fee"],
+                meta_result["delivery_company_code"],
+                image_urls=_get_original_image_urls(session, product),
+            )
+        except SkipCoupangRegistrationError as e:
+            reason = f"SKIPPED: {e}"
+            logger.info(f"상품 업데이트 스킵: {e}")
+            _log_registration_skip(
+                session,
+                account,
+                product.id,
+                reason,
+                meta_result.get("predicted_category_code"),
+            )
+            return False, reason
+        except ValueError as e:
+            logger.error(f"상품 업데이트 사전검증 실패: {e}")
+            return False, str(e)
         
         # 업데이트 API 규격에 맞춰 sellerProductId 및 requested 추가
         # 쿠팡 API 문서: 상품 수정 시 sellerProductId와 sellerProductItemId 필수
@@ -1791,6 +1859,7 @@ def register_products_bulk(session: Session, account_id: uuid.UUID, product_ids:
     total = len(products)
     success = 0
     failed = 0
+    skipped = 0
     
     logger.info(f"Starting bulk registration for {total} products on account {account.name}")
     
@@ -1810,17 +1879,20 @@ def register_products_bulk(session: Session, account_id: uuid.UUID, product_ids:
                 session.commit()
             continue
 
-        ok, _reason = register_product(session, account.id, p.id)
+        ok, reason = register_product(session, account.id, p.id)
         if ok:
             success += 1
             # Update status to ACTIVE after successful registration
             p.status = "ACTIVE" 
             session.commit()
         else:
-            failed += 1
+            if reason and str(reason).startswith("SKIPPED:"):
+                skipped += 1
+            else:
+                failed += 1
             
-    logger.info(f"Bulk registration finished. Total: {total}, Success: {success}, Failed: {failed}")
-    return {"total": total, "success": success, "failed": failed}
+    logger.info(f"Bulk registration finished. Total: {total}, Success: {success}, Failed: {failed}, Skipped: {skipped}")
+    return {"total": total, "success": success, "failed": failed, "skipped": skipped}
 
 
 def fulfill_coupang_orders_via_ownerclan(
@@ -2391,7 +2463,7 @@ def _map_product_to_coupang_payload(
                         attr_value = "1개"
                         if basic_unit and basic_unit != "없음":
                             attr_value = f"1{basic_unit}"
-                    elif "무게" in attr_type or "weight" in attr_type.lower():
+                    elif "무게" in attr_type or "중량" in attr_type or "weight" in attr_type.lower():
                         attr_value = "1g"
                         if basic_unit and basic_unit != "없음":
                             attr_value = f"1{basic_unit}"
@@ -2451,12 +2523,15 @@ def _map_product_to_coupang_payload(
             mandatory_certs = [c for c in certs if c.get("required") in ["MANDATORY", "RECOMMEND"]]
             
             if mandatory_certs:
-                # 인증대상이 아님으로 설정 (실제 인증이 있는 경우 업데이트 필요)
-                item_certifications.append({
-                    "certificationType": "NOT_REQUIRED",
-                    "certificationCode": ""
-                })
-                logger.info(f"필수/추천 인증 {len(mandatory_certs)}개 감지됨 (NOT_REQUIRED로 설정)")
+                cert_names = []
+                for cert in mandatory_certs:
+                    name = cert.get("name") or cert.get("certificationTypeName") or cert.get("certificationType")
+                    if name:
+                        cert_names.append(str(name))
+                cert_label = ", ".join(cert_names) if cert_names else "미상"
+                raise SkipCoupangRegistrationError(f"필수/추천 인증 정보 필요: {cert_label}")
+    except SkipCoupangRegistrationError:
+        raise
     except Exception as e:
         logger.warning(f"certifications 처리 중 오류 발생: {e}")
 
@@ -2470,9 +2545,15 @@ def _map_product_to_coupang_payload(
             mandatory_docs = [d for d in docs if "MANDATORY" in d.get("required", "")]
             
             if mandatory_docs:
-                logger.warning(f"필수 구비서류 {len(mandatory_docs)}개 감지됨: {[d.get('templateName') for d in mandatory_docs]}")
-                # 필수 구비서류가 있는 경우 별도 처리 필요
-                # 현재는 warning만 남기고 실제 업로드는 건너뜀
+                doc_names = []
+                for doc in mandatory_docs:
+                    name = doc.get("templateName") or doc.get("documentName")
+                    if name:
+                        doc_names.append(str(name))
+                doc_label = ", ".join(doc_names) if doc_names else "미상"
+                raise SkipCoupangRegistrationError(f"필수 구비서류 정보 필요: {doc_label}")
+    except SkipCoupangRegistrationError:
+        raise
     except Exception as e:
         logger.warning(f"requiredDocuments 처리 중 오류 발생: {e}")
 

@@ -57,8 +57,9 @@ class MarketService:
             success, msg = register_coupang_product(self.db, account_id, product_id)
             if success:
                 return {"status": "success", "message": msg or "Registered successfully"}
-            else:
-                return {"status": "error", "message": msg or "Registration failed"}
+            if msg and str(msg).startswith("SKIPPED:"):
+                return {"status": "skipped", "message": str(msg)}
+            return {"status": "error", "message": msg or "Registration failed"}
         elif market_code == "SMARTSTORE":
             from app.smartstore_sync import register_smartstore_product
             result = register_smartstore_product(self.db, account_id, product_id)

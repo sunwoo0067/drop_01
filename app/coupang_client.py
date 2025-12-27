@@ -44,10 +44,11 @@ def _normalize_coupang_error_message(status_code: int, data: dict[str, Any]) -> 
     # 쿠팡 API 특정 에러 메시지 처리
     if message:
         # 한글 메시지가 있으면 그대로 사용
-        if any(ord(c) >= 0xAC00 and ord(c) <= 0xD7A3 for c in message):
-            return f"{base_message}: {message}"
+        message_text = message if isinstance(message, str) else str(message)
+        if any(ord(c) >= 0xAC00 and ord(c) <= 0xD7A3 for c in message_text):
+            return f"{base_message}: {message_text}"
         # 영문 메시지는 번역 시도
-        message_lower = message.lower()
+        message_lower = message_text.lower()
         
         # 일반적인 에러 메시지 매핑
         error_mapping = {
@@ -64,7 +65,7 @@ def _normalize_coupang_error_message(status_code: int, data: dict[str, Any]) -> 
             if eng_msg in message_lower:
                 return f"{base_message}: {kor_msg}"
         
-        return f"{base_message}: {message}"
+        return f"{base_message}: {message_text}"
     
     if details:
         return f"{base_message}: {details}"
@@ -178,10 +179,12 @@ class CoupangClient:
                     return 500, {"code": "INTERNAL_ERROR", "message": str(e)}
 
         if not resp.content:
-            return resp.status_code, {
-                "code": "EMPTY_RESPONSE",
-                "message": _normalize_coupang_error_message(resp.status_code, {}),
-            }
+            if resp.status_code >= 400:
+                return resp.status_code, {
+                    "code": "EMPTY_RESPONSE",
+                    "message": _normalize_coupang_error_message(resp.status_code, {}),
+                }
+            return resp.status_code, {}
             
         try:
             data = resp.json()
@@ -354,7 +357,10 @@ class CoupangClient:
             - permittedCount: 생성 가능한 최대 상품수 (null로 표시될 경우 제한없음)
         """
         vid = (vendor_id or self._vendor_id).strip()
-        return self.get(f"/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/inflow-status?vendorId={vid}")
+        return self.get(
+            "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/inflow-status",
+            {"vendorId": vid},
+        )
     
     def get_products_by_time_frame(
         self,
@@ -375,7 +381,12 @@ class CoupangClient:
         """
         vid = (vendor_id or self._vendor_id).strip()
         return self.get(
-            f"/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/time-frame?vendorId={vid}&createdAtFrom={created_at_from}&createdAtTo={created_at_to}"
+            "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/time-frame",
+            {
+                "vendorId": vid,
+                "createdAtFrom": created_at_from,
+                "createdAtTo": created_at_to,
+            },
         )
     
     def get_product_status_history(
@@ -971,4 +982,3 @@ class CoupangClient:
     def get_rocket_product(self, seller_product_id: str) -> tuple[int, dict[str, Any]]:
         """로켓그로스 상품 조회"""
         return self.get(f"/v2/providers/rocket_growth_api/apis/api/v1/products/{seller_product_id}")
-
