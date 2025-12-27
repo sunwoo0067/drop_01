@@ -10,6 +10,71 @@ from typing import Any
 import httpx
 
 
+def _normalize_coupang_error_message(status_code: int, data: dict[str, Any]) -> str:
+    """
+    쿠팡 API 에러 메시지를 사용자 친화적으로 변환합니다.
+    
+    Args:
+        status_code: HTTP 상태 코드
+        data: API 응답 데이터
+    
+    Returns:
+        정규화된 에러 메시지
+    """
+    if not isinstance(data, dict):
+        return f"HTTP {status_code}: 알 수 없는 오류"
+    
+    code = data.get("code", "")
+    message = data.get("message", "")
+    details = data.get("details", "")
+    
+    # 에러 코드별 메시지 정규화
+    error_messages = {
+        400: "요청 파라미터 오류",
+        401: "인증 오류",
+        403: "권한 없음",
+        404: "리소스를 찾을 수 없음",
+        429: "요청 한도 초과 (잠시 후 재시도 필요)",
+        500: "서버 오류 (잠시 후 재시도 필요)",
+        503: "서비스 일시 중단 (잠시 후 재시도 필요)",
+    }
+    
+    base_message = error_messages.get(status_code, f"HTTP {status_code} 오류")
+    
+    # 쿠팡 API 특정 에러 메시지 처리
+    if message:
+        # 한글 메시지가 있으면 그대로 사용
+        if any(ord(c) >= 0xAC00 and ord(c) <= 0xD7A3 for c in message):
+            return f"{base_message}: {message}"
+        # 영문 메시지는 번역 시도
+        message_lower = message.lower()
+        
+        # 일반적인 에러 메시지 매핑
+        error_mapping = {
+            "invalid signature": "인증 서명 오류",
+            "unauthorized": "인증 실패",
+            "not found": "리소스를 찾을 수 없음",
+            "bad request": "잘못된 요청",
+            "too many requests": "요청 한도 초과",
+            "internal server error": "서버 내부 오류",
+            "service unavailable": "서비스 일시 중단",
+        }
+        
+        for eng_msg, kor_msg in error_mapping.items():
+            if eng_msg in message_lower:
+                return f"{base_message}: {kor_msg}"
+        
+        return f"{base_message}: {message}"
+    
+    if details:
+        return f"{base_message}: {details}"
+    
+    if code and code != "SUCCESS":
+        return f"{base_message}: {code}"
+    
+    return base_message
+
+
 class CoupangClient:
     def __init__(
         self,
@@ -113,14 +178,25 @@ class CoupangClient:
                     return 500, {"code": "INTERNAL_ERROR", "message": str(e)}
 
         if not resp.content:
-            return resp.status_code, {}
+            return resp.status_code, {
+                "code": "EMPTY_RESPONSE",
+                "message": _normalize_coupang_error_message(resp.status_code, {}),
+            }
             
         try:
             data = resp.json()
         except Exception:
-            return resp.status_code, {"_raw_text": resp.text}
+            return resp.status_code, {
+                "code": "PARSE_ERROR",
+                "message": _normalize_coupang_error_message(resp.status_code, {}),
+                "_raw_text": resp.text[:500],  # 최대 500자만 저장
+            }
 
         if isinstance(data, dict):
+            # 에러 응답인 경우 메시지 정규화
+            if resp.status_code >= 400 or data.get("code") not in ("SUCCESS", None):
+                normalized_msg = _normalize_coupang_error_message(resp.status_code, data)
+                data["_normalized_message"] = normalized_msg
             return resp.status_code, data
         
         return resp.status_code, {"_raw": data}
