@@ -67,6 +67,7 @@ def _build_smartstore_payload(
     detail_attribute: dict | None = None,
     image_urls: list[str] | None = None,
     origin: str | None = None,
+    origin_area_code: str | None = None,
 ) -> dict:
     images_list = []
     for url in (image_urls or []):
@@ -90,7 +91,7 @@ def _build_smartstore_payload(
         "stockQuantity": stock_quantity,
         "originArea": {
             "type": "IMPORT",
-            "code": "0000",
+            "code": origin_area_code,
             "content": origin or "상세설명참조",
         },
     }
@@ -118,6 +119,10 @@ def _build_detail_attribute(
     model_name: str | None,
     manufacturer: str | None,
     origin: str | None,
+    after_service_phone: str | None,
+    certification_kind_type: str | None,
+    certification_name: str | None,
+    certification_number: str | None,
 ) -> dict:
     content = "상품상세참조"
     if isinstance(raw_meta, dict):
@@ -128,20 +133,26 @@ def _build_detail_attribute(
                 content = " / ".join([str(item) for item in category_specific if item])
     manufacturer_value = manufacturer or origin or "상세설명참조"
     model_value = model_name or "상세설명참조"
+    after_service_value = after_service_phone or "010-0000-0000"
+    certification_kind = certification_kind_type or "NOT_REQUIRED"
+    certification_info = {
+        "kindType": certification_kind,
+        "name": certification_name or "상세설명참조",
+        "certificationNumber": certification_number or "상세설명참조",
+        "certificationType": certification_kind,
+    }
     return {
         "afterServiceInfo": {
-            "afterServiceContactNumber": "010-0000-0000",
+            "afterServiceContactNumber": after_service_value,
             "afterServiceGuideContent": "문의는 판매자에게 연락 바랍니다.",
-            "afterServiceTelephoneNumber": "010-0000-0000",
+            "afterServiceTelephoneNumber": after_service_value,
         },
         "minorPurchasable": True,
         "originAreaInfo": {
             "originAreaInfoType": "IMPORT",
             "originAreaInfoContent": content,
         },
-        "productCertificationInfos": [
-            {"kindType": "NOT_REQUIRED"},
-        ],
+        "productCertificationInfos": [certification_info],
         "productInfoProvidedNotice": {
             "productInfoProvidedNoticeType": "ETC",
             "etc": {
@@ -325,6 +336,18 @@ class SmartStoreSync:
                 raw_payload = raw_item.raw if raw_item and isinstance(raw_item.raw, dict) else None
                 raw_meta = raw_payload.get("metadata") if isinstance(raw_payload, dict) else None
 
+            account_creds = account.credentials if account else {}
+            default_origin_area_code = (account_creds or {}).get("default_origin_area_code")
+            default_after_service_phone = (account_creds or {}).get("after_service_phone")
+            default_certification_kind_type = (account_creds or {}).get("default_certification_kind_type")
+            default_certification_name = (account_creds or {}).get("default_certification_name")
+            default_certification_number = (account_creds or {}).get("default_certification_number")
+            if not default_origin_area_code:
+                return {
+                    "status": "error",
+                    "message": "SmartStore originArea code가 없습니다. 계정 credentials.default_origin_area_code를 설정해 주세요.",
+                }
+
             if payload_override is not None:
                 if not isinstance(payload_override, dict):
                     return {"status": "error", "message": "payload는 object 형식이어야 합니다."}
@@ -335,6 +358,12 @@ class SmartStoreSync:
                 image_urls = product.processed_image_urls if isinstance(product.processed_image_urls, list) else []
                 if not image_urls and isinstance(raw_payload, dict):
                     image_urls = raw_payload.get("images") if isinstance(raw_payload.get("images"), list) else []
+                if image_urls:
+                    uploaded_urls = self.client.upload_images(image_urls)
+                    if uploaded_urls:
+                        image_urls = uploaded_urls
+                if not image_urls:
+                    return {"status": "error", "message": "SmartStore 등록을 위해 이미지가 필요합니다."}
                 payload = _build_smartstore_payload(
                     name=name,
                     detail_content=product.description or f"{name}의 상세 설명입니다.",
@@ -347,9 +376,14 @@ class SmartStoreSync:
                         model_name=(raw_payload or {}).get("model") if isinstance(raw_payload, dict) else None,
                         manufacturer=(raw_payload or {}).get("manufacturer") if isinstance(raw_payload, dict) else None,
                         origin=(raw_payload or {}).get("origin") if isinstance(raw_payload, dict) else None,
+                        after_service_phone=default_after_service_phone,
+                        certification_kind_type=default_certification_kind_type,
+                        certification_name=default_certification_name,
+                        certification_number=default_certification_number,
                     ),
                     image_urls=image_urls,
                     origin=(raw_payload or {}).get("origin") if isinstance(raw_payload, dict) else None,
+                    origin_area_code=str(default_origin_area_code),
                 )
 
             try:
