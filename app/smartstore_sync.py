@@ -6,10 +6,53 @@ from sqlalchemy import select, func, and_, or_
 
 from app.db import get_session
 from app.session_factory import session_factory
-from app.models import MarketAccount, MarketListing, Product
+from app.models import MarketAccount, MarketListing, Product, SupplierItemRaw
 from app.smartstore_client import SmartStoreClient
 
 logger = logging.getLogger(__name__)
+
+_CATEGORY_KEYS = (
+    "naverCategoryNo",
+    "naver_category_no",
+    "smartstoreCategoryNo",
+    "smartstore_category_no",
+    "categoryNo",
+    "category_no",
+    "categoryId",
+    "category_id",
+    "cate_cd",
+    "cateCd",
+    "categoryCode",
+    "category_code",
+)
+
+
+def _coerce_category_no(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text
+
+
+def _extract_category_no_from_raw(raw: dict) -> str | None:
+    if not isinstance(raw, dict):
+        return None
+    for key in _CATEGORY_KEYS:
+        if raw.get(key):
+            return _coerce_category_no(raw.get(key))
+    category = raw.get("category")
+    if isinstance(category, dict):
+        for key in _CATEGORY_KEYS:
+            if category.get(key):
+                return _coerce_category_no(category.get(key))
+    metadata = raw.get("metadata")
+    if isinstance(metadata, dict):
+        for key in _CATEGORY_KEYS:
+            if metadata.get(key):
+                return _coerce_category_no(metadata.get(key))
+    return None
 
 
 class SmartStoreSync:
@@ -43,6 +86,28 @@ class SmartStoreSync:
             return None
 
         return SmartStoreClient(client_id, client_secret)
+
+    def _extract_category_no(self, product: Product, account: MarketAccount | None) -> str | None:
+        raw_category = None
+        if account:
+            raw_category = (account.credentials or {}).get("default_category_no")
+
+        raw_item = None
+        if not raw_category and product.supplier_item_id:
+            raw_item = self.db.get(SupplierItemRaw, product.supplier_item_id)
+            raw_payload = raw_item.raw if raw_item and isinstance(raw_item.raw, dict) else {}
+            raw_category = _extract_category_no_from_raw(raw_payload)
+
+        if not raw_category:
+            raw_category = getattr(product, "processed_category", None)
+
+        if raw_category is None:
+            return None
+
+        raw_category = str(raw_category).strip()
+        if not raw_category or raw_category == "0":
+            return None
+        return raw_category
 
     def sync_products(self, market_code: str, account_id: uuid.UUID) -> int:
         """
@@ -127,6 +192,7 @@ class SmartStoreSync:
             self.client = self._get_client(account_id)
             if not self.client:
                 return {"status": "error", "message": "Failed to get SmartStore client"}
+        account = self.db.get(MarketAccount, account_id)
 
         # 상품 정보 조회
         with session_factory() as tmp_db:
@@ -137,17 +203,21 @@ class SmartStoreSync:
             # 네이버 API 등록 요청 준비
             name = product.processed_name or product.name or f"상품 {product.id}"
             sale_price = int(product.selling_price or 0)
-            category_no = str(product.category_id or "").strip()
-            if not category_no or category_no == "0":
-                return {"status": "error", "message": "SmartStore categoryNo가 없습니다. 유효한 카테고리를 지정해 주세요."}
+            category_no = _coerce_category_no(self._extract_category_no(product, account))
+            if not category_no:
+                return {
+                    "status": "error",
+                    "message": "SmartStore categoryNo가 없습니다. 계정 credentials.default_category_no 또는 상품/원본 카테고리를 지정해 주세요.",
+                }
             if sale_price <= 0:
                 return {"status": "error", "message": "SmartStore salePrice가 0입니다. 판매가를 설정해 주세요."}
 
             if payload_override is not None:
                 if not isinstance(payload_override, dict):
                     return {"status": "error", "message": "payload는 object 형식이어야 합니다."}
-                payload = payload_override
+                payload = dict(payload_override)
                 payload.setdefault("name", name)
+                payload.setdefault("categoryNo", category_no)
             else:
                 payload = {
                     "name": name,
