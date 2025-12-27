@@ -69,6 +69,7 @@ def _build_smartstore_payload(
     origin_product = {
         "statusType": "SALE",
         "categoryNo": category_no,
+        "leafCategoryId": category_no,
         "name": name,
         "detailContent": detail_content,
         "salePrice": sale_price,
