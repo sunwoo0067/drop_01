@@ -64,6 +64,7 @@ def _build_smartstore_payload(
     sale_price: int,
     category_no: str,
     stock_quantity: int,
+    detail_attribute: dict | None = None,
 ) -> dict:
     origin_product = {
         "statusType": "SALE",
@@ -73,6 +74,8 @@ def _build_smartstore_payload(
         "salePrice": sale_price,
         "stockQuantity": stock_quantity,
     }
+    if detail_attribute:
+        origin_product["detailAttribute"] = detail_attribute
     smartstore_channel_product = {
         "channelProductDisplayStatusType": "ON",
         "channelProductSaleStatusType": "ON",
@@ -83,6 +86,31 @@ def _build_smartstore_payload(
     return {
         "originProduct": origin_product,
         "smartstoreChannelProduct": smartstore_channel_product,
+    }
+
+
+def _build_detail_attribute(raw_meta: dict | None) -> dict:
+    content = "상품상세참조"
+    if isinstance(raw_meta, dict):
+        notice = raw_meta.get("productNotificationInformation")
+        if isinstance(notice, dict):
+            category_specific = notice.get("categorySpecific")
+            if isinstance(category_specific, list) and category_specific:
+                content = " / ".join([str(item) for item in category_specific if item])
+    return {
+        "afterServiceInfo": {
+            "afterServiceContactNumber": "010-0000-0000",
+            "afterServiceGuideContent": "문의는 판매자에게 연락 바랍니다.",
+        },
+        "originAreaInfo": {
+            "originAreaInfoType": "IMPORT",
+            "originAreaInfoContent": content,
+        },
+        "productInfoProvidedNotice": {
+            "productInfoProvidedNoticeType": "ETC",
+            "etc": {"content": content},
+        },
+        "sellerCodeInfo": {"sellerCode": "SKU"},
     }
 
 
@@ -246,6 +274,12 @@ class SmartStoreSync:
             if sale_price <= 0:
                 return {"status": "error", "message": "SmartStore salePrice가 0입니다. 판매가를 설정해 주세요."}
 
+            raw_item = None
+            raw_meta = None
+            if product.supplier_item_id:
+                raw_item = tmp_db.get(SupplierItemRaw, product.supplier_item_id)
+                raw_meta = raw_item.raw.get("metadata") if raw_item and isinstance(raw_item.raw, dict) else None
+
             if payload_override is not None:
                 if not isinstance(payload_override, dict):
                     return {"status": "error", "message": "payload는 object 형식이어야 합니다."}
@@ -259,6 +293,7 @@ class SmartStoreSync:
                     sale_price=sale_price,
                     category_no=category_no,
                     stock_quantity=stock_quantity,
+                    detail_attribute=_build_detail_attribute(raw_meta),
                 )
 
             try:
