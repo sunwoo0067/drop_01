@@ -57,6 +57,35 @@ def _extract_category_no_from_raw(raw: dict) -> str | None:
     return None
 
 
+def _build_smartstore_payload(
+    *,
+    name: str,
+    detail_content: str,
+    sale_price: int,
+    category_no: str,
+    stock_quantity: int,
+) -> dict:
+    origin_product = {
+        "statusType": "SALE",
+        "categoryNo": category_no,
+        "name": name,
+        "detailContent": detail_content,
+        "salePrice": sale_price,
+        "stockQuantity": stock_quantity,
+    }
+    smartstore_channel_product = {
+        "channelProductDisplayStatusType": "ON",
+        "channelProductSaleStatusType": "ON",
+        "channelProductType": "NORMAL",
+        "channelProductName": name,
+        "channelProductSalePrice": sale_price,
+    }
+    return {
+        "originProduct": origin_product,
+        "smartstoreChannelProduct": smartstore_channel_product,
+    }
+
+
 class SmartStoreSync:
     """
     네이버(스마트스토어) 동기화 및 상품 관리 서비스
@@ -205,6 +234,9 @@ class SmartStoreSync:
             # 네이버 API 등록 요청 준비
             name = product.processed_name or product.name or f"상품 {product.id}"
             sale_price = int(product.selling_price or 0)
+            stock_quantity = int(getattr(product, "stock_quantity", 0) or 0)
+            if stock_quantity <= 0:
+                stock_quantity = 9999
             category_no = _coerce_category_no(self._extract_category_no(product, account))
             if not category_no:
                 return {
@@ -221,15 +253,13 @@ class SmartStoreSync:
                 payload.setdefault("name", name)
                 payload.setdefault("categoryNo", category_no)
             else:
-                payload = {
-                    "name": name,
-                    "detailContent": product.description or f"{name}의 상세 설명입니다.",
-                    "salePrice": sale_price,
-                    "categoryNo": category_no,
-                    "displaySalesStatus": "SALE",
-                    "channelType": "ONLINE",
-                    "detailUrl": f"https://yourstore.com/products/{product.id}",
-                }
+                payload = _build_smartstore_payload(
+                    name=name,
+                    detail_content=product.description or f"{name}의 상세 설명입니다.",
+                    sale_price=sale_price,
+                    category_no=category_no,
+                    stock_quantity=stock_quantity,
+                )
 
             try:
                 # 네이버 상품 등록
