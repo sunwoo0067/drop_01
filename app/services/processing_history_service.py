@@ -643,3 +643,4 @@ class ProcessingHistoryService:
             summary["image_count"] = len(data["image_urls"]) if isinstance(data["image_urls"], list) else 0
 
         return summary
+

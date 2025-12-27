@@ -525,3 +525,4 @@ class ProductLifecycleService:
 
         return candidates
 
+

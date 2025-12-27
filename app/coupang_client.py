@@ -400,25 +400,30 @@ class CoupangClient:
         place_names: str | None = None
     ) -> tuple[int, dict[str, Any]]:
         """출고지 조회"""
-        params: dict[str, Any] = {
-            "pageNum": page_num,
-            "pageSize": page_size,
-        }
+        params: dict[str, Any] = {}
+        if place_codes or place_names:
+            if place_codes:
+                params["placeCodes"] = place_codes
+            if place_names:
+                params["placeNames"] = place_names
+        else:
+            params["pageNum"] = page_num
+            params["pageSize"] = page_size
 
-        # 일부 문서/계정에서는 outboundShippingCenters 목록 조회 GET이 막혀있거나(POST만 지원),
-        # 다른 경로를 사용해야 하는 경우가 있어 fallback 합니다.
-        code, data = self.get(f"/v2/providers/openapi/apis/api/v5/vendors/{self._vendor_id}/outboundShippingCenters", params)
+        # 문서 기준 기본 경로(v2) 우선 사용, 필요 시 v5로 fallback.
+        code, data = self.get("/v2/providers/marketplace_openapi/apis/api/v2/vendor/shipping-place/outbound", params)
         msg = (data.get("message") if isinstance(data, dict) else None) or ""
         if code == 404 and ("No matched http method" in msg or "PRECONDITION" in str(data.get("code"))):
-            params2: dict[str, Any] = {
-                "pageNum": page_num,
-                "pageSize": page_size,
-            }
-            if place_codes:
-                params2["placeCodes"] = place_codes
-            if place_names:
-                params2["placeNames"] = place_names
-            return self.get("/v2/providers/marketplace_openapi/apis/api/v2/vendor/shipping-place/outbound", params2)
+            params2: dict[str, Any] = {}
+            if place_codes or place_names:
+                if place_codes:
+                    params2["placeCodes"] = place_codes
+                if place_names:
+                    params2["placeNames"] = place_names
+            else:
+                params2["pageNum"] = page_num
+                params2["pageSize"] = page_size
+            return self.get(f"/v2/providers/openapi/apis/api/v5/vendors/{self._vendor_id}/outboundShippingCenters", params2)
 
         return code, data
 
@@ -628,5 +633,4 @@ class CoupangClient:
     def get_rocket_product(self, seller_product_id: str) -> tuple[int, dict[str, Any]]:
         """로켓그로스 상품 조회"""
         return self.get(f"/v2/providers/rocket_growth_api/apis/api/v1/products/{seller_product_id}")
-
 

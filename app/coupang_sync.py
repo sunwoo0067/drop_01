@@ -1963,6 +1963,25 @@ def _get_default_centers(client: CoupangClient, account: MarketAccount | None = 
 
         return None
 
+    def _extract_delivery_codes(entries: object) -> list[str]:
+        if not isinstance(entries, list):
+            return []
+        codes: list[str] = []
+        for entry in entries:
+            code = None
+            if isinstance(entry, dict):
+                code = (
+                    entry.get("deliveryCompanyCode")
+                    or entry.get("deliveryCode")
+                    or entry.get("code")
+                    or entry.get("id")
+                )
+            else:
+                code = str(entry)
+            if isinstance(code, str) and code.strip():
+                codes.append(code.strip())
+        return codes
+
     # 출고지 (Outbound) 및 택배사 (Delivery Company)
     outbound_rc, outbound_data = client.get_outbound_shipping_centers(page_size=10)
     
@@ -1993,28 +2012,37 @@ def _get_default_centers(client: CoupangClient, account: MarketAccount | None = 
                 
                 remote_infos = c.get("remoteInfos") or []
                 codes = c.get("deliveryCompanyCodes") or c.get("usableDeliveryCompanies") or []
-                
-                has_cj = False
-                for entry in codes:
-                    e_code = ""
-                    if isinstance(entry, dict):
-                        e_code = entry.get("deliveryCompanyCode") or entry.get("code") or entry.get("id") or ""
-                    else:
-                        e_code = str(entry)
-                    if e_code == "CJGLS":
-                        has_cj = True
-                        break
+
+                remote_codes = _extract_delivery_codes(remote_infos)
+                delivery_codes = _extract_delivery_codes(codes)
+                has_cj_remote = "CJGLS" in remote_codes
+                has_cj = "CJGLS" in delivery_codes
+
+                if has_cj_remote:
+                    delivery_code = "CJGLS"
+                elif has_cj:
+                    delivery_code = "CJGLS"
+                elif remote_codes:
+                    delivery_code = remote_codes[0]
+                elif delivery_codes:
+                    delivery_code = delivery_codes[0]
+                else:
+                    delivery_code = None
                 
                 # 강점 점수 계산 (단순화된 방식)
                 score = 0
-                if remote_infos: score += 10
-                if has_cj: score += 5
+                if remote_infos:
+                    score += 10
+                if has_cj_remote:
+                    score += 5
+                elif has_cj:
+                    score += 3
                 
                 if best_center is None or score > best_center["score"]:
                     best_center = {
                         "code": str(c_code),
-                        "has_cj": has_cj,
-                        "codes": codes,
+                        "delivery_code": delivery_code,
+                        "codes": delivery_codes,
                         "score": score
                     }
                     if score >= 15: # CJGLS와 remoteInfos 모두 있으면 베스트
@@ -2022,18 +2050,10 @@ def _get_default_centers(client: CoupangClient, account: MarketAccount | None = 
             
             if best_center:
                 outbound_code = best_center["code"]
-                if best_center["has_cj"]:
-                    delivery_company_code = "CJGLS"
+                if best_center["delivery_code"]:
+                    delivery_company_code = best_center["delivery_code"]
                 elif best_center["codes"]:
-                    first_entry = best_center["codes"][0]
-                    if isinstance(first_entry, dict):
-                        delivery_company_code = (
-                            first_entry.get("deliveryCompanyCode") or 
-                            first_entry.get("code") or 
-                            first_entry.get("id")
-                        )
-                    else:
-                        delivery_company_code = str(first_entry)
+                    delivery_company_code = best_center["codes"][0]
             
             if not outbound_code and content:
                 # fallback: 어쩔 수 없이 첫 번째 코드라도 선택
