@@ -1023,6 +1023,90 @@ class CoupangClient:
             
         return self.post(path, payload)
 
+    def get_exchange_requests(
+        self,
+        created_at_from: str,
+        created_at_to: str,
+        status: str | None = None,
+        order_id: int | str | None = None,
+        next_token: str | None = None,
+        max_per_page: int = 10
+    ) -> tuple[int, dict[str, Any]]:
+        """
+        교환 요청 목록 조회 - v4
+        
+        Args:
+            created_at_from: 검색 시작일 (yyyy-MM-ddTHH:mm:ss)
+            created_at_to: 검색 종료일 (yyyy-MM-ddTHH:mm:ss)
+            status: 교환진행상태 (RECEIPT, PROGRESS, SUCCESS, REJECT, CANCEL)
+            order_id: 주문번호
+            next_token: 다음 페이지 토큰
+            max_per_page: 최대 조회 요청 값 (기본 10)
+        """
+        params: dict[str, Any] = {
+            "createdAtFrom": created_at_from,
+            "createdAtTo": created_at_to,
+            "maxPerPage": max_per_page
+        }
+        if status:
+            params["status"] = status
+        if order_id:
+            params["orderId"] = order_id
+        if next_token:
+            params["nextToken"] = next_token
+            
+        return self.get(f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/exchangeRequests", params)
+
+    def confirm_exchange_receipt(self, exchange_id: int | str) -> tuple[int, dict[str, Any]]:
+        """
+        교환요청 상품 입고 확인처리 - v4
+        """
+        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/exchangeRequests/{exchange_id}/receiveConfirmation"
+        payload = {
+            "exchangeId": int(exchange_id),
+            "vendorId": self._vendor_id
+        }
+        return self.put(path, payload)
+
+    def reject_exchange_request(self, exchange_id: int | str, reject_code: str) -> tuple[int, dict[str, Any]]:
+        """
+        교환요청 거부 처리 - v4
+        
+        Args:
+            exchange_id: 교환 접수번호
+            reject_code: 거절원인코드 (SOLDOUT, WITHDRAW)
+        """
+        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/exchangeRequests/{exchange_id}/rejection"
+        payload = {
+            "exchangeId": str(exchange_id), # 문서 예제에 문자열로 되어 있는 경우도 있어 유연하게 처리
+            "exchangeRejectCode": reject_code,
+            "vendorId": self._vendor_id
+        }
+        return self.put(path, payload)
+
+    def upload_exchange_invoice(
+        self,
+        exchange_id: int | str,
+        shipment_box_id: int | str,
+        delivery_company_code: str,
+        invoice_number: str
+    ) -> tuple[int, dict[str, Any]]:
+        """
+        교환상품 송장 업로드 처리 - v4
+        """
+        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/exchangeRequests/{exchange_id}/invoices"
+        # 문서에 따르면 리스트 형태의 페이로드
+        payload = [
+            {
+                "exchangeId": str(exchange_id),
+                "vendorId": self._vendor_id,
+                "shipmentBoxId": str(shipment_box_id),
+                "goodsDeliveryCode": delivery_company_code,
+                "invoiceNumber": invoice_number
+            }
+        ]
+        return self.post(path, payload)
+
     # --------------------------------------------------------------------------
     # 5. CS API
     # --------------------------------------------------------------------------
@@ -1132,48 +1216,6 @@ class CoupangClient:
         """배송비 정책 생성"""
         return self.post("/v2/providers/marketplace_openapi/apis/api/v1/vendor/shipping-policies", payload)
 
-    # --------------------------------------------------------------------------
-    # 7. 교환 API (Exchange API)
-    # --------------------------------------------------------------------------
-
-    def get_exchange_requests(
-        self,
-        created_at_from: str,
-        created_at_to: str,
-        status: str | None = None,
-        next_token: str | None = None,
-        max_per_page: int = 50
-    ) -> tuple[int, dict[str, Any]]:
-        """교환요청 목록조회"""
-        params: dict[str, Any] = {
-            "createdAtFrom": created_at_from,
-            "createdAtTo": created_at_to
-        }
-        if status:
-            params["status"] = status
-        if next_token:
-            params["nextToken"] = next_token
-        if max_per_page:
-            params["maxPerPage"] = max_per_page
-            
-        return self.get(f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/exchangeRequests", params)
-
-    def confirm_exchange_item(self, receipt_id: str) -> tuple[int, dict[str, Any]]:
-        """교환상품 입고 확인처리"""
-        return self.put(f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/exchangeRequests/{receipt_id}/confirmation")
-
-    def reject_exchange_request(self, receipt_id: str, reason: str) -> tuple[int, dict[str, Any]]:
-        """교환요청 거부 처리"""
-        payload = {"rejectReason": reason}
-        return self.put(f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/exchangeRequests/{receipt_id}/rejection", payload)
-
-    def upload_exchange_invoice(self, receipt_id: str, delivery_company_code: str, invoice_number: str) -> tuple[int, dict[str, Any]]:
-        """교환상품 송장 업로드 처리"""
-        payload = {
-            "deliveryCompanyCode": delivery_company_code,
-            "invoiceNumber": invoice_number
-        }
-        return self.put(f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/exchangeRequests/{receipt_id}/invoice", payload)
 
 
     # --------------------------------------------------------------------------
