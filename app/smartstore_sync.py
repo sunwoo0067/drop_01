@@ -129,11 +129,19 @@ class SmartStoreSync:
                 return {"status": "error", "message": f"Product not found: {product_id}"}
 
             # 네이버 API 등록 요청 준비
+            name = product.processed_name or product.name or f"상품 {product.id}"
+            sale_price = int(product.selling_price or 0)
+            category_no = str(product.category_id or "").strip()
+            if not category_no or category_no == "0":
+                return {"status": "error", "message": "SmartStore categoryNo가 없습니다. 유효한 카테고리를 지정해 주세요."}
+            if sale_price <= 0:
+                return {"status": "error", "message": "SmartStore salePrice가 0입니다. 판매가를 설정해 주세요."}
+
             payload = {
-                "name": product.name or f"상품 {product.id}",
-                "detailContent": product.description or f"{product.name}의 상세 설명입니다.",
-                "salePrice": product.selling_price or 0,
-                "categoryNo": product.category_id or "0",
+                "name": name,
+                "detailContent": product.description or f"{name}의 상세 설명입니다.",
+                "salePrice": sale_price,
+                "categoryNo": category_no,
                 "displaySalesStatus": "SALE",
                 "channelType": "ONLINE",
                 "detailUrl": f"https://yourstore.com/products/{product.id}",
@@ -144,8 +152,17 @@ class SmartStoreSync:
                 status_code, response_data = self.client.create_product(payload)
 
                 if status_code not in (200, 201):
-                    logger.error(f"SmartStore registration failed: {response_data.get('message', 'Unknown error')}")
-                    return {"status": "error", "message": response_data.get('message', 'Registration failed')}
+                    logger.error(
+                        "SmartStore registration failed (status=%s, message=%s, productId=%s)",
+                        status_code,
+                        response_data.get("message", "Unknown error"),
+                        product.id,
+                    )
+                    return {
+                        "status": "error",
+                        "message": response_data.get("message", "Registration failed"),
+                        "details": response_data,
+                    }
 
                 # 성공 시 Product 상태 업데이트
                 product.smartstore_status = "REGISTERED"
