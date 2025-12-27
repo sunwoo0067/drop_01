@@ -134,7 +134,7 @@ def _build_detail_attribute(
     manufacturer_value = manufacturer or origin or "상세설명참조"
     model_value = model_name or "상세설명참조"
     after_service_value = after_service_phone or "010-0000-0000"
-    certification_kind = certification_kind_type or "NOT_REQUIRED"
+    certification_kind = certification_kind_type or "KC_CERTIFICATION"
     certification_info = {
         "kindType": certification_kind,
         "name": certification_name or "상세설명참조",
@@ -389,9 +389,10 @@ class SmartStoreSync:
             try:
                 # 네이버 상품 등록
                 logger.info(
-                    "SmartStore create payload keys(productId=%s, keys=%s)",
+                    "SmartStore create payload keys(productId=%s, keys=%s, originKeys=%s)",
                     product.id,
                     list(payload.keys()),
+                    list((payload.get("originProduct") or {}).keys()),
                 )
                 status_code, response_data = self.client.create_product(payload)
 
