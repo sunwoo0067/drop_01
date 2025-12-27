@@ -89,7 +89,14 @@ def _build_smartstore_payload(
     }
 
 
-def _build_detail_attribute(raw_meta: dict | None) -> dict:
+def _build_detail_attribute(
+    *,
+    raw_meta: dict | None,
+    name: str,
+    model_name: str | None,
+    manufacturer: str | None,
+    origin: str | None,
+) -> dict:
     content = "상품상세참조"
     if isinstance(raw_meta, dict):
         notice = raw_meta.get("productNotificationInformation")
@@ -97,18 +104,26 @@ def _build_detail_attribute(raw_meta: dict | None) -> dict:
             category_specific = notice.get("categorySpecific")
             if isinstance(category_specific, list) and category_specific:
                 content = " / ".join([str(item) for item in category_specific if item])
+    manufacturer_value = manufacturer or origin or "상세설명참조"
+    model_value = model_name or "상세설명참조"
     return {
         "afterServiceInfo": {
             "afterServiceContactNumber": "010-0000-0000",
             "afterServiceGuideContent": "문의는 판매자에게 연락 바랍니다.",
         },
+        "minorPurchasable": True,
         "originAreaInfo": {
             "originAreaInfoType": "IMPORT",
             "originAreaInfoContent": content,
         },
         "productInfoProvidedNotice": {
             "productInfoProvidedNoticeType": "ETC",
-            "etc": {"content": content},
+            "etc": {
+                "itemName": name,
+                "modelName": model_value,
+                "manufacturer": manufacturer_value,
+                "content": content,
+            },
         },
         "sellerCodeInfo": {"sellerCode": "SKU"},
     }
@@ -276,9 +291,11 @@ class SmartStoreSync:
 
             raw_item = None
             raw_meta = None
+            raw_payload = None
             if product.supplier_item_id:
                 raw_item = tmp_db.get(SupplierItemRaw, product.supplier_item_id)
-                raw_meta = raw_item.raw.get("metadata") if raw_item and isinstance(raw_item.raw, dict) else None
+                raw_payload = raw_item.raw if raw_item and isinstance(raw_item.raw, dict) else None
+                raw_meta = raw_payload.get("metadata") if isinstance(raw_payload, dict) else None
 
             if payload_override is not None:
                 if not isinstance(payload_override, dict):
@@ -293,7 +310,13 @@ class SmartStoreSync:
                     sale_price=sale_price,
                     category_no=category_no,
                     stock_quantity=stock_quantity,
-                    detail_attribute=_build_detail_attribute(raw_meta),
+                    detail_attribute=_build_detail_attribute(
+                        raw_meta=raw_meta,
+                        name=name,
+                        model_name=(raw_payload or {}).get("model") if isinstance(raw_payload, dict) else None,
+                        manufacturer=(raw_payload or {}).get("manufacturer") if isinstance(raw_payload, dict) else None,
+                        origin=(raw_payload or {}).get("origin") if isinstance(raw_payload, dict) else None,
+                    ),
                 )
 
             try:
