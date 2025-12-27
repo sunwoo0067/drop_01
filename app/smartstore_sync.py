@@ -120,6 +120,7 @@ def _build_detail_attribute(
     manufacturer: str | None,
     origin: str | None,
     after_service_phone: str | None,
+    after_service_director: str | None,
     certification_kind_type: str | None,
     certification_name: str | None,
     certification_number: str | None,
@@ -134,6 +135,7 @@ def _build_detail_attribute(
     manufacturer_value = manufacturer or origin or "상세설명참조"
     model_value = model_name or "상세설명참조"
     after_service_value = after_service_phone or "010-0000-0000"
+    after_service_director_value = after_service_director or after_service_value
     certification_kind = certification_kind_type or "KC_CERTIFICATION"
     certification_info = {
         "kindType": certification_kind,
@@ -159,6 +161,7 @@ def _build_detail_attribute(
                 "itemName": name,
                 "modelName": model_value,
                 "manufacturer": manufacturer_value,
+                "afterServiceDirector": after_service_director_value,
                 "content": content,
             },
         },
@@ -339,6 +342,7 @@ class SmartStoreSync:
             account_creds = account.credentials if account else {}
             default_origin_area_code = (account_creds or {}).get("default_origin_area_code")
             default_after_service_phone = (account_creds or {}).get("after_service_phone")
+            default_after_service_director = (account_creds or {}).get("after_service_director")
             default_certification_kind_type = (account_creds or {}).get("default_certification_kind_type")
             default_certification_name = (account_creds or {}).get("default_certification_name")
             default_certification_number = (account_creds or {}).get("default_certification_number")
@@ -377,6 +381,7 @@ class SmartStoreSync:
                         manufacturer=(raw_payload or {}).get("manufacturer") if isinstance(raw_payload, dict) else None,
                         origin=(raw_payload or {}).get("origin") if isinstance(raw_payload, dict) else None,
                         after_service_phone=default_after_service_phone,
+                        after_service_director=default_after_service_director,
                         certification_kind_type=default_certification_kind_type,
                         certification_name=default_certification_name,
                         certification_number=default_certification_number,
