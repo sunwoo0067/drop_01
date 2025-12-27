@@ -105,6 +105,7 @@ def _build_smartstore_payload(
         "channelProductType": "NORMAL",
         "channelProductName": name,
         "channelProductSalePrice": sale_price,
+        "naverShoppingRegistration": False,
     }
     return {
         "originProduct": origin_product,
@@ -121,9 +122,7 @@ def _build_detail_attribute(
     origin: str | None,
     after_service_phone: str | None,
     after_service_director: str | None,
-    certification_kind_type: str | None,
-    certification_name: str | None,
-    certification_number: str | None,
+    certification_infos: list[dict],
 ) -> dict:
     content = "상품상세참조"
     if isinstance(raw_meta, dict):
@@ -136,13 +135,6 @@ def _build_detail_attribute(
     model_value = model_name or "상세설명참조"
     after_service_value = after_service_phone or "010-0000-0000"
     after_service_director_value = after_service_director or after_service_value
-    certification_kind = certification_kind_type or "KC_CERTIFICATION"
-    certification_info = {
-        "kindType": certification_kind,
-        "name": certification_name or "상세설명참조",
-        "certificationNumber": certification_number or "상세설명참조",
-        "certificationType": certification_kind,
-    }
     return {
         "afterServiceInfo": {
             "afterServiceContactNumber": after_service_value,
@@ -154,7 +146,7 @@ def _build_detail_attribute(
             "originAreaInfoType": "IMPORT",
             "originAreaInfoContent": content,
         },
-        "productCertificationInfos": [certification_info],
+        "productCertificationInfos": certification_infos,
         "productInfoProvidedNotice": {
             "productInfoProvidedNoticeType": "ETC",
             "etc": {
@@ -343,13 +335,21 @@ class SmartStoreSync:
             default_origin_area_code = (account_creds or {}).get("default_origin_area_code")
             default_after_service_phone = (account_creds or {}).get("after_service_phone")
             default_after_service_director = (account_creds or {}).get("after_service_director")
-            default_certification_kind_type = (account_creds or {}).get("default_certification_kind_type")
-            default_certification_name = (account_creds or {}).get("default_certification_name")
-            default_certification_number = (account_creds or {}).get("default_certification_number")
+            default_certification_infos = (account_creds or {}).get("default_certification_infos")
             if not default_origin_area_code:
                 return {
                     "status": "error",
                     "message": "SmartStore originArea code가 없습니다. 계정 credentials.default_origin_area_code를 설정해 주세요.",
+                }
+            certification_infos = []
+            if isinstance(default_certification_infos, list):
+                certification_infos = [c for c in default_certification_infos if isinstance(c, dict)]
+            elif isinstance(default_certification_infos, dict):
+                certification_infos = [default_certification_infos]
+            if not certification_infos:
+                return {
+                    "status": "error",
+                    "message": "SmartStore certification 정보가 없습니다. 계정 credentials.default_certification_infos를 설정해 주세요.",
                 }
 
             if payload_override is not None:
@@ -382,9 +382,7 @@ class SmartStoreSync:
                         origin=(raw_payload or {}).get("origin") if isinstance(raw_payload, dict) else None,
                         after_service_phone=default_after_service_phone,
                         after_service_director=default_after_service_director,
-                        certification_kind_type=default_certification_kind_type,
-                        certification_name=default_certification_name,
-                        certification_number=default_certification_number,
+                        certification_infos=certification_infos,
                     ),
                     image_urls=image_urls,
                     origin=(raw_payload or {}).get("origin") if isinstance(raw_payload, dict) else None,
