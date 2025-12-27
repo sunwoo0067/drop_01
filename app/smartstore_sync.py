@@ -263,6 +263,11 @@ class SmartStoreSync:
 
             try:
                 # 네이버 상품 등록
+                logger.info(
+                    "SmartStore create payload keys(productId=%s, keys=%s)",
+                    product.id,
+                    list(payload.keys()),
+                )
                 status_code, response_data = self.client.create_product(payload)
 
                 if status_code not in (200, 201):
