@@ -24,6 +24,30 @@ class SmartStoreRegisterIn(BaseModel):
     payload: dict | None = None
 
 
+class SmartStoreMultiUpdateItem(BaseModel):
+    originProductNo: int
+    multiUpdateTypes: list[str]
+    productSalePrice: dict | None = None
+    immediateDiscountPolicy: dict | None = None
+    stockQuantity: int | None = None
+
+
+class SmartStoreMultiUpdateIn(BaseModel):
+    multiProductUpdateRequestVos: list[SmartStoreMultiUpdateItem]
+
+
+class SmartStoreChangeStatusIn(BaseModel):
+    statusType: str
+    saleStartDate: str | None = None
+    saleEndDate: str | None = None
+    stockQuantity: int | None = None
+
+
+class SmartStoreOptionStockIn(BaseModel):
+    productSalePrice: dict
+    optionInfo: dict
+
+
 @router.post("/smartstore/register/{product_id}", status_code=202)
 async def register_smartstore_product(
     product_id: uuid.UUID,
@@ -61,6 +85,92 @@ async def register_smartstore_product(
     except Exception as e:
         logger.error(f"SmartStore product registration failed: {e}", exc_info=True)
         return {"status": "error", "message": str(e)}
+
+
+@router.patch("/smartstore/origin-products/multi-update", status_code=200)
+def multi_update_smartstore_origin_products(
+    payload: SmartStoreMultiUpdateIn,
+    account_id: uuid.UUID = Query(alias="accountId"),
+    session: Session = Depends(get_session),
+):
+    """
+    네이버 원상품 다건 업데이트(판매가/할인/재고/상태).
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail=f"마켓 계정을 찾을 수 없습니다: {account_id}")
+
+    creds = account.credentials or {}
+    client_id = creds.get("client_id")
+    client_secret = creds.get("client_secret")
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=400, detail="스마트스토어 API 정보가 설정되지 않았습니다.")
+
+    from app.smartstore_client import SmartStoreClient
+    client = SmartStoreClient(client_id=client_id, client_secret=client_secret)
+    status_code, response_data = client.multi_update_origin_products(payload.model_dump())
+    if status_code != 200:
+        raise HTTPException(status_code=status_code, detail=response_data)
+    return response_data
+
+
+@router.put("/smartstore/origin-products/{origin_product_no}/change-status", status_code=200)
+def change_smartstore_origin_product_status(
+    origin_product_no: int,
+    payload: SmartStoreChangeStatusIn,
+    account_id: uuid.UUID = Query(alias="accountId"),
+    session: Session = Depends(get_session),
+):
+    """
+    네이버 원상품 판매 상태 변경.
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail=f"마켓 계정을 찾을 수 없습니다: {account_id}")
+
+    creds = account.credentials or {}
+    client_id = creds.get("client_id")
+    client_secret = creds.get("client_secret")
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=400, detail="스마트스토어 API 정보가 설정되지 않았습니다.")
+
+    from app.smartstore_client import SmartStoreClient
+    client = SmartStoreClient(client_id=client_id, client_secret=client_secret)
+    status_code, response_data = client.change_origin_product_status(str(origin_product_no), payload.model_dump())
+    if status_code != 200:
+        raise HTTPException(status_code=status_code, detail=response_data)
+    return response_data
+
+
+@router.put("/smartstore/origin-products/{origin_product_no}/option-stock", status_code=200)
+def update_smartstore_origin_product_option_stock(
+    origin_product_no: int,
+    payload: SmartStoreOptionStockIn,
+    account_id: uuid.UUID = Query(alias="accountId"),
+    session: Session = Depends(get_session),
+):
+    """
+    네이버 원상품 옵션 재고/가격 변경.
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail=f"마켓 계정을 찾을 수 없습니다: {account_id}")
+
+    creds = account.credentials or {}
+    client_id = creds.get("client_id")
+    client_secret = creds.get("client_secret")
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=400, detail="스마트스토어 API 정보가 설정되지 않았습니다.")
+
+    from app.smartstore_client import SmartStoreClient
+    client = SmartStoreClient(client_id=client_id, client_secret=client_secret)
+    status_code, response_data = client.update_origin_product_option_stock(
+        str(origin_product_no),
+        payload.model_dump(),
+    )
+    if status_code != 200:
+        raise HTTPException(status_code=status_code, detail=response_data)
+    return response_data
 
 
 @router.get("/smartstore/products", status_code=200)

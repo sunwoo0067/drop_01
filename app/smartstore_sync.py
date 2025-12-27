@@ -66,8 +66,6 @@ def _build_smartstore_payload(
     stock_quantity: int,
     detail_attribute: dict | None = None,
     image_urls: list[str] | None = None,
-    origin: str | None = None,
-    origin_area_code: str | None = None,
 ) -> dict:
     images_list = []
     for url in (image_urls or []):
@@ -89,11 +87,6 @@ def _build_smartstore_payload(
         "detailContent": detail_content,
         "salePrice": sale_price,
         "stockQuantity": stock_quantity,
-        "originArea": {
-            "type": "IMPORT",
-            "code": origin_area_code,
-            "content": origin or "상세설명참조",
-        },
     }
     if images:
         origin_product["images"] = images
@@ -120,8 +113,10 @@ def _build_detail_attribute(
     model_name: str | None,
     manufacturer: str | None,
     origin: str | None,
+    origin_area_code: str | None,
     after_service_phone: str | None,
     after_service_director: str | None,
+    notice_type: str | None,
     certification_infos: list[dict],
 ) -> dict:
     content = "상품상세참조"
@@ -135,20 +130,27 @@ def _build_detail_attribute(
     model_value = model_name or "상세설명참조"
     after_service_value = after_service_phone or "010-0000-0000"
     after_service_director_value = after_service_director or after_service_value
-    return {
+    resolved_notice_type = notice_type or "ETC"
+    if resolved_notice_type != "ETC":
+        resolved_notice_type = "ETC"
+    origin_area_info = None
+    if origin_area_code:
+        origin_area_info = {
+            "originAreaCode": origin_area_code,
+            "content": origin or content,
+        }
+        if str(origin_area_code).startswith("02"):
+            origin_area_info["importer"] = manufacturer_value
+    detail_attribute = {
         "afterServiceInfo": {
             "afterServiceContactNumber": after_service_value,
             "afterServiceGuideContent": "문의는 판매자에게 연락 바랍니다.",
             "afterServiceTelephoneNumber": after_service_value,
         },
         "minorPurchasable": True,
-        "originAreaInfo": {
-            "originAreaInfoType": "IMPORT",
-            "originAreaInfoContent": content,
-        },
         "productCertificationInfos": certification_infos,
         "productInfoProvidedNotice": {
-            "productInfoProvidedNoticeType": "ETC",
+            "productInfoProvidedNoticeType": resolved_notice_type,
             "etc": {
                 "itemName": name,
                 "modelName": model_value,
@@ -159,6 +161,57 @@ def _build_detail_attribute(
         },
         "sellerCodeInfo": {"sellerCode": "SKU"},
     }
+    if origin_area_info:
+        detail_attribute["originAreaInfo"] = origin_area_info
+    return detail_attribute
+
+
+def _normalize_certification_infos(
+    raw_value: object,
+    allowed_kind_types: set[str] | None,
+) -> list[dict]:
+    items: list[dict] = []
+    if isinstance(raw_value, list):
+        items = [item for item in raw_value if isinstance(item, dict)]
+    elif isinstance(raw_value, dict):
+        items = [raw_value]
+    if not items:
+        return []
+    if not allowed_kind_types:
+        return items
+    filtered: list[dict] = []
+    for item in items:
+        kind_type = (
+            item.get("certificationKindType")
+            or item.get("kindType")
+            or item.get("certificationType")
+            or item.get("certificationKindType")
+        )
+        if kind_type and kind_type not in allowed_kind_types:
+            continue
+        if kind_type and not item.get("certificationKindType"):
+            item = dict(item)
+            item["certificationKindType"] = kind_type
+            item.setdefault("kindType", kind_type)
+        if item.get("certificationName") and not item.get("name"):
+            item = dict(item)
+            item["name"] = item["certificationName"]
+        filtered.append(item)
+    return filtered
+
+
+def _pick_notice_type(notice_items: list[dict]) -> str:
+    types = [
+        item.get("productInfoProvidedNoticeType")
+        for item in notice_items
+        if isinstance(item, dict)
+    ]
+    if "ETC" in types:
+        return "ETC"
+    for value in types:
+        if value:
+            return value
+    return "ETC"
 
 
 class SmartStoreSync:
@@ -192,6 +245,131 @@ class SmartStoreSync:
             return None
 
         return SmartStoreClient(client_id, client_secret)
+
+    def _get_category_detail(self, category_no: str) -> dict | None:
+        status, data = self.client.get_category(category_no)
+        if status != 200:
+            logger.warning(
+                "SmartStore category fetch failed (categoryNo=%s, status=%s, message=%s)",
+                category_no,
+                status,
+                data,
+            )
+            return None
+        return data if isinstance(data, dict) else None
+
+    def _resolve_notice_type(self, category_detail: dict | None) -> str:
+        if not category_detail:
+            return "ETC"
+        whole_name = category_detail.get("wholeCategoryName")
+        if not whole_name:
+            return "ETC"
+        top_name = whole_name.split(">")[0].strip()
+        status, categories = self.client.list_categories()
+        if status != 200 or not isinstance(categories, list):
+            logger.warning("SmartStore category list fetch failed (status=%s)", status)
+            return "ETC"
+        top_category = next(
+            (
+                item
+                for item in categories
+                if isinstance(item, dict)
+                and item.get("name") == top_name
+                and item.get("last") is False
+            ),
+            None,
+        )
+        if not top_category:
+            return "ETC"
+        top_id = top_category.get("id")
+        if not top_id:
+            return "ETC"
+        status, notice_items = self.client.get_product_notice_types(str(top_id))
+        if status != 200 or not isinstance(notice_items, list):
+            logger.warning(
+                "SmartStore notice types fetch failed (categoryId=%s, status=%s)",
+                top_id,
+                status,
+            )
+            return "ETC"
+        return _pick_notice_type(notice_items)
+
+    def _resolve_certification_infos(
+        self,
+        *,
+        category_detail: dict | None,
+        raw_value: object,
+    ) -> list[dict]:
+        allowed_kind_types: set[str] | None = None
+        kc_required = False
+        if isinstance(category_detail, dict):
+            exceptional = category_detail.get("exceptionalCategories") or []
+            kc_required = "KC_CERTIFICATION" in exceptional
+            allowed_kind_types = set()
+            for info in category_detail.get("certificationInfos", []) or []:
+                if not isinstance(info, dict):
+                    continue
+                for kind in info.get("kindTypes") or []:
+                    if kind:
+                        allowed_kind_types.add(kind)
+        normalized = _normalize_certification_infos(raw_value, allowed_kind_types)
+        if not kc_required and normalized:
+            normalized = [
+                item
+                for item in normalized
+                if (
+                    item.get("certificationKindType")
+                    or item.get("kindType")
+                    or item.get("certificationType")
+                )
+                not in {"KC_CERTIFICATION", "CHILD_CERTIFICATION"}
+            ]
+        if normalized and isinstance(category_detail, dict):
+            kc_info = None
+            for info in category_detail.get("certificationInfos", []) or []:
+                if not isinstance(info, dict):
+                    continue
+                if "KC_CERTIFICATION" in (info.get("kindTypes") or []):
+                    kc_info = info
+                    break
+            if kc_info:
+                for item in normalized:
+                    if not isinstance(item, dict):
+                        continue
+                    if item.get("certificationInfoId"):
+                        continue
+                    kind_type = (
+                        item.get("certificationKindType")
+                        or item.get("kindType")
+                        or item.get("certificationType")
+                    )
+                    if kind_type == "KC_CERTIFICATION":
+                        item.setdefault("certificationInfoId", kc_info.get("id"))
+                        item.setdefault("certificationName", kc_info.get("name"))
+                        item.setdefault("name", kc_info.get("name"))
+        if normalized:
+            return normalized
+        if not kc_required:
+            return []
+        fallback_info = {}
+        if isinstance(category_detail, dict):
+            for info in category_detail.get("certificationInfos", []) or []:
+                if not isinstance(info, dict):
+                    continue
+                kind_types = info.get("kindTypes") or []
+                if "KC_CERTIFICATION" in kind_types:
+                    fallback_info = {
+                        "certificationInfoId": info.get("id"),
+                        "certificationName": info.get("name"),
+                        "name": info.get("name"),
+                        "certificationKindType": "KC_CERTIFICATION",
+                        "certificationType": "KC_CERTIFICATION",
+                        "certificationNumber": "상세설명참조",
+                    }
+                    break
+        if fallback_info:
+            return [fallback_info]
+        return []
 
     def _extract_category_no(self, product: Product, account: MarketAccount | None) -> str | None:
         raw_category = None
@@ -323,6 +501,9 @@ class SmartStoreSync:
             if sale_price <= 0:
                 return {"status": "error", "message": "SmartStore salePrice가 0입니다. 판매가를 설정해 주세요."}
 
+            category_detail = self._get_category_detail(category_no)
+            notice_type = self._resolve_notice_type(category_detail)
+
             raw_item = None
             raw_meta = None
             raw_payload = None
@@ -341,15 +522,18 @@ class SmartStoreSync:
                     "status": "error",
                     "message": "SmartStore originArea code가 없습니다. 계정 credentials.default_origin_area_code를 설정해 주세요.",
                 }
-            certification_infos = []
-            if isinstance(default_certification_infos, list):
-                certification_infos = [c for c in default_certification_infos if isinstance(c, dict)]
-            elif isinstance(default_certification_infos, dict):
-                certification_infos = [default_certification_infos]
-            if not certification_infos:
+            certification_infos = self._resolve_certification_infos(
+                category_detail=category_detail,
+                raw_value=default_certification_infos,
+            )
+            kc_required = False
+            if isinstance(category_detail, dict):
+                exceptional = category_detail.get("exceptionalCategories") or []
+                kc_required = "KC_CERTIFICATION" in exceptional
+            if kc_required and not certification_infos:
                 return {
                     "status": "error",
-                    "message": "SmartStore certification 정보가 없습니다. 계정 credentials.default_certification_infos를 설정해 주세요.",
+                    "message": "SmartStore KC 인증 대상 카테고리입니다. 계정 credentials.default_certification_infos를 설정해 주세요.",
                 }
 
             if payload_override is not None:
@@ -380,13 +564,13 @@ class SmartStoreSync:
                         model_name=(raw_payload or {}).get("model") if isinstance(raw_payload, dict) else None,
                         manufacturer=(raw_payload or {}).get("manufacturer") if isinstance(raw_payload, dict) else None,
                         origin=(raw_payload or {}).get("origin") if isinstance(raw_payload, dict) else None,
+                        origin_area_code=str(default_origin_area_code),
                         after_service_phone=default_after_service_phone,
                         after_service_director=default_after_service_director,
+                        notice_type=notice_type,
                         certification_infos=certification_infos,
                     ),
                     image_urls=image_urls,
-                    origin=(raw_payload or {}).get("origin") if isinstance(raw_payload, dict) else None,
-                    origin_area_code=str(default_origin_area_code),
                 )
 
             try:

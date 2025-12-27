@@ -90,6 +90,42 @@ class SmartStoreClient:
             logger.error(f"SmartStore get_products exception: {e}")
             return 500, {"message": str(e)}
 
+    def get_category(self, category_id: str) -> tuple[int, Dict[str, Any]]:
+        """카테고리 상세 조회"""
+        url = f"{self.base_url}/v1/categories/{category_id}"
+        try:
+            response = requests.get(url, headers=self._get_headers())
+            return response.status_code, response.json()
+        except Exception as e:
+            logger.error(f"SmartStore get_category exception: {e}")
+            return 500, {"message": str(e)}
+
+    def list_categories(self, last: bool | None = None) -> tuple[int, list[Dict[str, Any]]]:
+        """전체 카테고리 조회"""
+        url = f"{self.base_url}/v1/categories"
+        params = {}
+        if last is not None:
+            params["last"] = "true" if last else "false"
+        try:
+            response = requests.get(url, headers=self._get_headers(), params=params or None)
+            return response.status_code, response.json()
+        except Exception as e:
+            logger.error(f"SmartStore list_categories exception: {e}")
+            return 500, []
+
+    def get_product_notice_types(self, category_id: str | None = None) -> tuple[int, list[Dict[str, Any]]]:
+        """상품정보제공고시 상품군 목록 조회"""
+        url = f"{self.base_url}/v1/products-for-provided-notice"
+        params = {}
+        if category_id:
+            params["categoryId"] = category_id
+        try:
+            response = requests.get(url, headers=self._get_headers(), params=params or None)
+            return response.status_code, response.json()
+        except Exception as e:
+            logger.error(f"SmartStore get_product_notice_types exception: {e}")
+            return 500, []
+
     def create_product(self, payload: Dict[str, Any]) -> tuple[int, Dict[str, Any]]:
         """신규 상품 등록"""
         url = f"{self.base_url}/v2/products"
@@ -98,6 +134,36 @@ class SmartStoreClient:
             return response.status_code, response.json()
         except Exception as e:
             logger.error(f"SmartStore create_product error: {e}")
+            return 500, {"message": str(e)}
+
+    def multi_update_origin_products(self, payload: Dict[str, Any]) -> tuple[int, Dict[str, Any]]:
+        """원상품 다건 업데이트"""
+        url = f"{self.base_url}/v1/products/origin-products/multi-update"
+        try:
+            response = requests.patch(url, headers=self._get_headers(), json=payload)
+            return response.status_code, response.json()
+        except Exception as e:
+            logger.error(f"SmartStore multi_update_origin_products error: {e}")
+            return 500, {"message": str(e)}
+
+    def change_origin_product_status(self, origin_product_no: str, payload: Dict[str, Any]) -> tuple[int, Dict[str, Any]]:
+        """원상품 판매 상태 변경"""
+        url = f"{self.base_url}/v1/products/origin-products/{origin_product_no}/change-status"
+        try:
+            response = requests.put(url, headers=self._get_headers(), json=payload)
+            return response.status_code, response.json()
+        except Exception as e:
+            logger.error(f"SmartStore change_origin_product_status error: {e}")
+            return 500, {"message": str(e)}
+
+    def update_origin_product_option_stock(self, origin_product_no: str, payload: Dict[str, Any]) -> tuple[int, Dict[str, Any]]:
+        """원상품 옵션 재고/가격 변경"""
+        url = f"{self.base_url}/v1/products/origin-products/{origin_product_no}/option-stock"
+        try:
+            response = requests.put(url, headers=self._get_headers(), json=payload)
+            return response.status_code, response.json()
+        except Exception as e:
+            logger.error(f"SmartStore update_origin_product_option_stock error: {e}")
             return 500, {"message": str(e)}
 
     def update_product(self, origin_product_no: str, payload: Dict[str, Any]) -> tuple[int, Dict[str, Any]]:
