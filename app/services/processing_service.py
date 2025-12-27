@@ -2,6 +2,7 @@ import logging
 import uuid
 import asyncio
 import json
+from functools import lru_cache
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
@@ -13,6 +14,10 @@ from app.services.detail_html_normalizer import normalize_ownerclan_html
 
 logger = logging.getLogger(__name__)
 
+# Few-shot 예제 캐시 (TTL 5분)
+_few_shot_cache = {"data": None, "timestamp": 0}
+_FEW_SHOT_CACHE_TTL = 300  # 5분
+
 class ProcessingService:
     def __init__(self, db: Session):
         self.db = db
@@ -20,6 +25,38 @@ class ProcessingService:
 
     def _name_only_processing(self) -> bool:
         return settings.product_processing_name_only
+
+    def _get_cached_few_shot_examples(self, category: str = "일반", limit: int = 3) -> list[dict]:
+        """
+        캐시된 Few-shot 예제를 반환합니다.
+        """
+        import time
+        current_time = time.time()
+        
+        # 캐시 유효성 확인
+        if _few_shot_cache["data"] is not None and (current_time - _few_shot_cache["timestamp"]) < _FEW_SHOT_CACHE_TTL:
+            return _few_shot_cache["data"]
+        
+        # 캐시 갱신
+        try:
+            from app.models import Product
+            stmt = (
+                select(Product.name, Product.processed_name)
+                .where(Product.processing_status == "COMPLETED")
+                .limit(limit)
+            )
+            results = self.db.execute(stmt).all()
+            examples = [
+                {"original": r[0], "processed": r[1]}
+                for r in results
+                if r[0] and r[1]
+            ]
+            _few_shot_cache["data"] = examples
+            _few_shot_cache["timestamp"] = current_time
+            return examples
+        except Exception as e:
+            logger.warning(f"Failed to fetch few-shot examples: {e}")
+            return []
 
     async def process_product(self, product_id: uuid.UUID, min_images_required: int = 1) -> bool:
         """
@@ -86,7 +123,7 @@ class ProcessingService:
                         if detail_html and raw_item and raw_item.supplier_code == "ownerclan":
                             detail_html = normalize_ownerclan_html(detail_html)
                             product.description = detail_html
-                            self.db.commit()
+                            # 중간 commit 제거 - 최종 commit에서 한 번에 처리
 
                             detail_html, _detail_imgs = image_processing_service.replace_html_image_urls(
                                 detail_html,
@@ -99,7 +136,7 @@ class ProcessingService:
                                         raw_images.append(u)
                             
                             product.description = detail_html
-                            self.db.commit()
+                            # 중간 commit 제거 - 최종 commit에서 한 번에 처리
                 except Exception as e:
                     logger.error(f"Error extracting data for product {product_id}: {e}")
 
@@ -143,6 +180,8 @@ class ProcessingService:
             except Exception as e:
                 logger.error(f"ProcessingAgent 실행 실패(productId={product_id}): {e}")
                 if not self._name_only_processing() and (not product.processed_image_urls) and raw_images:
+                    # 비동기 이미지 처리 사용 (호출하는 곳이 async이므로 await 추가 필요)
+                    # 하지만 이 부분은 fallback이므로 동기 메서드 유지
                     product.processed_image_urls = image_processing_service.process_and_upload_images(
                         raw_images, product_id=str(product_id)
                     )
@@ -172,17 +211,31 @@ class ProcessingService:
             return False
 
     async def process_pending_products(self, limit: int = 10, min_images_required: int = 1):
-        stmt = select(Product).where(Product.processing_status == "PENDING").limit(limit)
-        products = self.db.scalars(stmt).all()
+        # 대기 중인 상품 ID 목록만 먼저 가져옴 (세션 공유 최소화)
+        stmt = select(Product.id).where(Product.processing_status == "PENDING").limit(limit)
+        product_ids = self.db.scalars(stmt).all()
+        
+        if not product_ids:
+            return 0
+
+        from app.session_factory import session_factory
         
         # 병렬 처리를 위한 세마포어 (API 부하 조절)
-        sem = asyncio.Semaphore(10)
+        sem = asyncio.Semaphore(20)
         
         async def _limited_process(p_id):
             async with sem:
-                return await self.process_product(p_id, min_images_required=min_images_required)
+                # 각 가공 테스크마다 독립된 DB 세션 생성하여 충돌 방지
+                with session_factory() as tmp_db:
+                    try:
+                        # 새 세션을 사용하는 별도의 서비스 인스턴스 생성
+                        scoped_service = ProcessingService(tmp_db)
+                        return await scoped_service.process_product(p_id, min_images_required=min_images_required)
+                    except Exception as e:
+                        logger.error(f"Error in scoped processing for product {p_id}: {e}")
+                        return False
         
-        tasks = [_limited_process(p.id) for p in products]
+        tasks = [_limited_process(pid) for pid in product_ids]
         results = await asyncio.gather(*tasks)
         return sum(1 for r in results if r)
 
@@ -215,7 +268,7 @@ class ProcessingService:
                 async with httpx.AsyncClient() as client:
                     resp = await client.get(first_image_url)
                     image_data = resp.content
-                features = ai_service.extract_visual_features(image_data)
+                features = await ai_service.extract_visual_features(image_data)
                 benchmark_data = None
                 if product.benchmark_product_id:
                     benchmark = self.db.get(BenchmarkProduct, product.benchmark_product_id)
@@ -224,7 +277,7 @@ class ProcessingService:
                             "visual_analysis": benchmark.visual_analysis,
                             "specs": benchmark.specs
                         }
-                prompts = ai_service.generate_premium_image_prompt(features, benchmark_data)
+                prompts = await ai_service.generate_premium_image_prompt(features, benchmark_data)
                 logger.info(f"Generated Premium Prompts for {product.name}: {prompts}")
                 product.processing_status = "PENDING_APPROVAL"
                 self.db.commit()

@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, memo, useMemo, useCallback } from "react";
+import useSWR from 'swr';
+import Image from "next/image";
 import {
     Loader2,
     Search,
@@ -16,19 +18,16 @@ import {
     Zap,
     Sparkles
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/Card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import api from "@/lib/api";
 import { cn } from "@/lib/utils";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue
-} from "@/components/ui/Select";
+import { Select } from "@/components/ui/Select";
+import MarketProductCard from "@/components/MarketProductCard";
+
+const fetcher = (url: string) => api.get(url).then(res => res.data);
 
 interface MarketAccount {
     id: string;
@@ -54,20 +53,16 @@ interface MarketProduct {
 }
 
 export default function MarketProductsPage() {
-    const [items, setItems] = useState<MarketProduct[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [accounts, setAccounts] = useState<MarketAccount[]>([]);
     const [selectedAccountId, setSelectedAccountId] = useState<string>("all");
-    const [error, setError] = useState<string | null>(null);
     const [searchTerm, setSearchTerm] = useState("");
-    const [total, setTotal] = useState(0);
 
-    const fetchAccounts = async () => {
-        try {
-            const [coupangRes, smartstoreRes] = await Promise.all([
-                api.get("/settings/markets/coupang/accounts"),
-                api.get("/settings/markets/smartstore/accounts")
-            ]);
+    // SWR로 계정 데이터 가져오기
+    const { data: accountsData, error: accountsError } = useSWR(
+        ['/settings/markets/coupang/accounts', '/settings/markets/smartstore/accounts'],
+        async (urls) => {
+            const [coupangRes, smartstoreRes] = await Promise.all(
+                urls.map(url => api.get(url))
+            );
 
             const coupangAccounts = (coupangRes.data || []).map((acc: any) => ({
                 id: acc.id,
@@ -81,79 +76,62 @@ export default function MarketProductsPage() {
                 marketCode: "SMARTSTORE"
             }));
 
-            setAccounts([...coupangAccounts, ...smartstoreAccounts]);
-        } catch (e) {
-            console.error("Failed to fetch accounts", e);
+            return [...coupangAccounts, ...smartstoreAccounts];
+        },
+        { revalidateOnFocus: false, revalidateOnReconnect: false }
+    );
+
+    const accounts = accountsData || [];
+
+    // SWR로 상품 데이터 가져오기 - 캐싱 및 자동 재검증
+    const productsUrl = selectedAccountId && selectedAccountId !== 'all'
+        ? `/market/products?accountId=${selectedAccountId}&limit=100`
+        : '/market/products?limit=100';
+
+    const { data: productsData, error: productsError, isLoading, mutate } = useSWR(
+        productsUrl,
+        fetcher,
+        {
+            revalidateOnFocus: false,
+            revalidateOnReconnect: false,
+            dedupingInterval: 60000, // 60초 동안 중복 요청 방지
         }
-    };
+    );
 
-    const fetchMarketProducts = async (accountId?: string) => {
-        setLoading(true);
-        setError(null);
-        try {
-            const params: any = { limit: 100 };
-            const effectiveAccountId = accountId !== undefined ? accountId : selectedAccountId;
-            if (effectiveAccountId && effectiveAccountId !== "all") {
-                params.accountId = effectiveAccountId;
-            }
+    const items = productsData?.items || [];
+    const total = productsData?.total || 0;
+    const error = productsError ? "마켓 상품 목록을 불러오지 못했습니다." : null;
 
-            const response = await api.get("/market/products", { params });
-            const data = response.data;
-            setItems(Array.isArray(data.items) ? data.items : []);
-            setTotal(data.total || 0);
-        } catch (e) {
-            console.error("Failed to fetch market products", e);
-            setError("마켓 상품 목록을 불러오지 못했습니다.");
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    useEffect(() => {
-        fetchAccounts();
-        fetchMarketProducts();
+    const handleAccountChange = useCallback((value: string) => {
+        setSelectedAccountId(value);
     }, []);
 
-    const handleAccountChange = (value: string) => {
-        setSelectedAccountId(value);
-        fetchMarketProducts(value);
-    };
-
     // 쿠팡 상품 상세 보기 (새 탭)
-    const handleViewOnCoupang = (sellerProductId: string) => {
+    const handleViewOnCoupang = useCallback((sellerProductId: string) => {
         // 쿠팡 Wing 판매자 센터 상품 조회 URL (로그인 필요)
         window.open(`https://wing.coupang.com/product/${sellerProductId}`, '_blank');
-    };
+    }, []);
 
-    const handlePremiumOptimize = async (productId: string) => {
+    const handlePremiumOptimize = useCallback(async (productId: string) => {
         try {
             await api.post(`/products/${productId}/premium-optimize`);
-            // 상태 업데이트를 위해 목록 새로고침
-            fetchMarketProducts();
+            // SWR mutate로 데이터 갱신 (캐시 무시하고 즉시 재요청)
+            await mutate();
             alert("프리미엄 고도화 작업이 시작되었습니다. 결과는 잠시 후 확인하실 수 있습니다.");
         } catch (e) {
             console.error("Failed to trigger premium optimize", e);
             alert("작업 요청에 실패했습니다.");
         }
-    };
+    }, [mutate]);
 
-    const filteredItems = items.filter(item =>
-        (item.name || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (item.processedName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.marketItemId.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-
-    const formatDate = (dateStr: string | null) => {
-        if (!dateStr) return "-";
-        const date = new Date(dateStr);
-        return date.toLocaleDateString('ko-KR', {
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit'
-        });
-    };
+    const filteredItems = useMemo(() => {
+        const searchLower = searchTerm.toLowerCase();
+        return items.filter(item =>
+            (item.name || "").toLowerCase().includes(searchLower) ||
+            (item.processedName || "").toLowerCase().includes(searchLower) ||
+            item.marketItemId.toLowerCase().includes(searchLower)
+        );
+    }, [items, searchTerm]);
 
     return (
         <div className="space-y-8 animate-in fade-in duration-500">
@@ -180,7 +158,7 @@ export default function MarketProductsPage() {
                         <ArrowLeft className="mr-2 h-4 w-4" />
                         등록 페이지
                     </Button>
-                    <Button variant="outline" className="rounded-xl h-11 px-6 border-2 hover:bg-accent" onClick={fetchMarketProducts}>
+                    <Button variant="outline" className="rounded-xl h-11 px-6 border-2 hover:bg-accent" onClick={() => mutate()}>
                         <RotateCw className="mr-2 h-4 w-4" />
                         새로고침
                     </Button>
@@ -220,24 +198,18 @@ export default function MarketProductsPage() {
             {/* 필터 및 검색 */}
             <div className="flex flex-col md:flex-row gap-4 items-center">
                 <div className="w-full md:w-64">
-                    <Select value={selectedAccountId} onValueChange={handleAccountChange}>
-                        <SelectTrigger className="h-12 rounded-2xl bg-accent/50 border-none focus:ring-2 focus:ring-primary/20">
-                            <SelectValue placeholder="모든 계정 보기" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="all">모든 계정 보기</SelectItem>
-                            {accounts.map(acc => (
-                                <SelectItem key={acc.id} value={acc.id}>
-                                    <span className="flex items-center gap-2">
-                                        <Badge variant="outline" className="text-[10px] py-0 h-4 uppercase">
-                                            {acc.marketCode}
-                                        </Badge>
-                                        {acc.name}
-                                    </span>
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
+                    <Select
+                        value={selectedAccountId}
+                        options={[
+                            { value: 'all', label: '모든 계정 보기' },
+                            ...accounts.map(acc => ({
+                                value: acc.id,
+                                label: `${acc.marketCode.toUpperCase()} - ${acc.name}`
+                            }))
+                        ]}
+                        onChange={(e) => handleAccountChange(e.target.value)}
+                        className="h-12 rounded-2xl bg-accent/50 border-none focus:ring-2 focus:ring-primary/20"
+                    />
                 </div>
                 <div className="relative flex-1 group w-full">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground group-focus-within:text-primary transition-colors" />
@@ -252,7 +224,7 @@ export default function MarketProductsPage() {
 
             {/* 상품 목록 */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {loading ? (
+                {isLoading ? (
                     <div className="col-span-full h-80 flex flex-col items-center justify-center space-y-4">
                         <div className="h-12 w-12 rounded-full border-4 border-primary/20 border-t-primary animate-spin" />
                         <p className="text-muted-foreground font-medium animate-pulse">마켓 상품을 불러오는 중...</p>
@@ -263,7 +235,7 @@ export default function MarketProductsPage() {
                             <AlertCircle className="h-12 w-12 text-destructive mb-4" />
                             <h3 className="text-xl font-bold mb-2">오류 발생</h3>
                             <p className="text-muted-foreground">{error}</p>
-                            <Button className="mt-6 rounded-xl" variant="outline" onClick={fetchMarketProducts}>다시 시도</Button>
+                            <Button className="mt-6 rounded-xl" variant="outline" onClick={() => mutate()}>다시 시도</Button>
                         </CardContent>
                     </Card>
                 ) : filteredItems.length === 0 ? (
@@ -279,119 +251,12 @@ export default function MarketProductsPage() {
                     </div>
                 ) : (
                     filteredItems.map((item) => (
-                        <Card
+                        <MarketProductCard
                             key={item.id}
-                            className="group overflow-hidden border-none shadow-md hover:shadow-2xl transition-all duration-500 rounded-3xl bg-card/40 backdrop-blur-xl border border-white/10"
-                        >
-                            {/* 이미지 미리보기 */}
-                            <div className="aspect-[4/3] relative overflow-hidden bg-muted">
-                                {item.processedImageUrls && item.processedImageUrls.length > 0 ? (
-                                    <img
-                                        src={item.processedImageUrls[0]}
-                                        alt={item.name || "상품"}
-                                        className="object-cover w-full h-full transition-transform duration-700 group-hover:scale-110"
-                                    />
-                                ) : (
-                                    <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground/30 space-y-2">
-                                        <ShoppingBag className="h-12 w-12" />
-                                        <span className="text-xs font-medium uppercase tracking-widest">No Image</span>
-                                    </div>
-                                )}
-
-                                {/* 상태 배지 */}
-                                <div className="absolute top-4 left-4">
-                                    <Badge
-                                        className={cn(
-                                            "backdrop-blur-md border-0 text-[10px] font-bold tracking-widest uppercase py-1",
-                                            item.status === "ACTIVE" ? "bg-emerald-500/80 text-white" : "bg-gray-500/80 text-white"
-                                        )}
-                                    >
-                                        {item.status === "ACTIVE" ? "판매중" : item.status}
-                                    </Badge>
-                                </div>
-
-                                {/* 마켓 계정 배지 */}
-                                <div className="absolute top-4 right-4">
-                                    <Badge
-                                        className={cn(
-                                            "backdrop-blur-md border-0 text-[10px] font-bold py-1",
-                                            item.marketCode === "COUPANG" ? "bg-orange-500/80 text-white" : "bg-green-600/80 text-white"
-                                        )}
-                                    >
-                                        {item.accountName || (item.marketCode === "COUPANG" ? "쿠팡" : "스토어")}
-                                    </Badge>
-                                </div>
-
-                                {/* 외부 링크 */}
-                                <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <Button
-                                        size="icon"
-                                        variant="secondary"
-                                        className="h-9 w-9 rounded-full shadow-lg"
-                                        onClick={() => handleViewOnCoupang(item.marketItemId)}
-                                    >
-                                        <ExternalLink className="h-4 w-4" />
-                                    </Button>
-                                </div>
-                            </div>
-
-                            <CardContent className="p-5 space-y-4">
-                                <div className="space-y-1">
-                                    <h3 className="font-bold text-lg leading-tight truncate group-hover:text-primary transition-colors">
-                                        {item.processedName || item.name || "상품명 없음"}
-                                    </h3>
-                                    <p className="text-xs text-muted-foreground truncate">
-                                        마켓 ID: {item.marketItemId}
-                                    </p>
-                                </div>
-
-                                <div className="flex items-center justify-between text-sm py-3 border-y border-foreground/5">
-                                    <div className="flex flex-col">
-                                        <span className="text-muted-foreground text-[10px] uppercase font-bold tracking-tighter">판매가</span>
-                                        <span className="font-bold text-base text-primary">{item.sellingPrice.toLocaleString()}원</span>
-                                    </div>
-                                    <div className="flex flex-col items-end">
-                                        <span className="text-muted-foreground text-[10px] uppercase font-bold tracking-tighter">등록일</span>
-                                        <span className="text-sm">{formatDate(item.linkedAt)}</span>
-                                    </div>
-                                </div>
-                            </CardContent>
-
-                            <CardFooter className="px-5 pb-5 pt-0 gap-2">
-                                <Button
-                                    className="flex-1 rounded-2xl font-bold bg-accent hover:bg-accent/80 text-foreground border-none transition-all"
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => handleViewOnCoupang(item.marketItemId)}
-                                >
-                                    <ExternalLink className="mr-2 h-4 w-4" />
-                                    조회
-                                </Button>
-                                <Button
-                                    className={cn(
-                                        "flex-[1.5] rounded-2xl font-black transition-all",
-                                        item.processingStatus === "PROCESSING"
-                                            ? "bg-amber-100 text-amber-600 cursor-not-allowed"
-                                            : "bg-emerald-500 text-white hover:bg-emerald-600 hover:shadow-lg hover:shadow-emerald-500/30"
-                                    )}
-                                    size="sm"
-                                    disabled={item.processingStatus === "PROCESSING"}
-                                    onClick={() => handlePremiumOptimize(item.productId)}
-                                >
-                                    {item.processingStatus === "PROCESSING" ? (
-                                        <>
-                                            <RotateCw className="mr-2 h-4 w-4 animate-spin" />
-                                            가공 중
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Sparkles className="mr-2 h-4 w-4 fill-current" />
-                                            프리미엄 최적화
-                                        </>
-                                    )}
-                                </Button>
-                            </CardFooter>
-                        </Card>
+                            item={item}
+                            onViewOnCoupang={handleViewOnCoupang}
+                            onPremiumOptimize={handlePremiumOptimize}
+                        />
                     ))
                 )}
             </div>

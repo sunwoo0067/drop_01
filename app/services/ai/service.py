@@ -8,16 +8,69 @@ from app.services.ai.base import AIProvider
 from app.services.ai.providers.gemini import GeminiProvider
 from app.services.ai.providers.ollama import OllamaProvider
 from app.services.ai.providers.openai import OpenAIProvider
+from app.services.ai.exceptions import (
+    AIError,
+    APIError,
+    DatabaseError,
+    ValidationError,
+    wrap_exception
+)
 
 logger = logging.getLogger(__name__)
 
 ProviderType = Literal["gemini", "ollama", "openai", "auto"]
 
+# API 키 캐시 (TTL 10분)
+_api_key_cache = {"data": None, "timestamp": 0}
+_API_KEY_CACHE_TTL = 600  # 10분
+
+def _get_cached_db_keys() -> Dict[str, List[str]]:
+    """
+    캐시된 API 키를 반환합니다.
+    """
+    import time
+    current_time = time.time()
+    
+    # 캐시 유효성 확인
+    if _api_key_cache["data"] is not None and (current_time - _api_key_cache["timestamp"]) < _API_KEY_CACHE_TTL:
+        return _api_key_cache["data"]
+    
+    # 캐시 갱신
+    try:
+        with SessionLocal() as db:
+            gemini_keys = db.query(APIKey.key).filter(
+                APIKey.provider == "gemini",
+                APIKey.is_active == True
+            ).all()
+            openai_keys = db.query(APIKey.key).filter(
+                APIKey.provider == "openai",
+                APIKey.is_active == True
+            ).all()
+            
+            cached_data = {
+                "gemini": [k[0] for k in gemini_keys],
+                "openai": [k[0] for k in openai_keys]
+            }
+            _api_key_cache["data"] = cached_data
+            _api_key_cache["timestamp"] = current_time
+            return cached_data
+    except Exception as e:
+        wrapped_error = wrap_exception(
+            e,
+            DatabaseError,
+            table_name="api_keys",
+            operation="select",
+            recoverable=True
+        )
+        logger.error(f"Failed to fetch API keys from DB: {wrapped_error}")
+        return {"gemini": [], "openai": []}
+
 class AIService:
     def __init__(self):
-        # 1. Fetch DB Keys
-        db_gemini_keys = self._get_db_keys("gemini")
-        db_openai_keys = self._get_db_keys("openai")
+        # 1. Fetch DB Keys (캐시 사용)
+        cached_keys = _get_cached_db_keys()
+        db_gemini_keys = cached_keys.get("gemini", [])
+        db_openai_keys = cached_keys.get("openai", [])
 
         # 2. Setup Gemini Keys (Env + DB)
         gemini_keys = settings.gemini_api_keys.copy()
@@ -31,7 +84,7 @@ class AIService:
 
         self.gemini = GeminiProvider(api_keys=gemini_keys)
         self.ollama = OllamaProvider(
-            base_url=settings.ollama_base_url, 
+            base_url=settings.ollama_base_url,
             model_name=settings.ollama_model,
             function_model_name=settings.ollama_function_model,
             reasoning_model_name=settings.ollama_reasoning_model,
@@ -45,16 +98,9 @@ class AIService:
         self.default_provider_name = settings.default_ai_provider
 
     def _get_db_keys(self, provider: str) -> List[str]:
-        try:
-            with SessionLocal() as db:
-                keys = db.query(APIKey.key).filter(
-                    APIKey.provider == provider, 
-                    APIKey.is_active == True
-                ).all()
-                return [k[0] for k in keys]
-        except Exception as e:
-            logger.error(f"Failed to fetch {provider} keys from DB: {e}")
-            return []
+        """캐시된 API 키 반환 (호환성 유지)"""
+        cached_keys = _get_cached_db_keys()
+        return cached_keys.get(provider, [])
 
     def _get_provider(self, provider_type: ProviderType = "auto") -> AIProvider:
         if provider_type == "auto":
@@ -69,7 +115,7 @@ class AIService:
         else:
             return self.openai
 
-    def extract_specs(self, text: str, provider: ProviderType = "auto") -> Dict[str, Any]:
+    async def extract_specs(self, text: str, provider: ProviderType = "auto") -> Dict[str, Any]:
         text_len = len(text)
         is_ollama = provider == "ollama" or (provider == "auto" and self.default_provider_name == "ollama")
         target_provider = self._get_provider(provider)
@@ -91,9 +137,9 @@ class AIService:
         
         Text: {text[:100000]}
         """
-        return target_provider.generate_json(prompt, model=target_model)
+        return await target_provider.generate_json(prompt, model=target_model)
 
-    def analyze_pain_points(self, text: str, provider: ProviderType = "auto") -> List[str]:
+    async def analyze_pain_points(self, text: str, provider: ProviderType = "auto") -> List[str]:
         text_len = len(text)
         is_ollama = provider == "ollama" or (provider == "auto" and self.default_provider_name == "ollama")
         
@@ -114,78 +160,83 @@ class AIService:
         
         Text: {text[:100000]}
         """
-        result = target_provider.generate_json(prompt, model=target_model)
+        result = await target_provider.generate_json(prompt, model=target_model)
         if isinstance(result, list):
             return result
         return []
 
-    def optimize_seo(
-        self, 
-        product_name: str, 
-        keywords: List[str], 
-        context: Optional[str] = None, 
+    async def optimize_seo(
+        self,
+        product_name: str,
+        keywords: List[str],
+        context: Optional[str] = None,
         benchmark_name: Optional[str] = None,
         category: str = "일반",
         market: str = "Coupang",
         examples: Optional[List[Dict[str, str]]] = None,
         provider: ProviderType = "auto"
     ) -> Dict[str, Any]:
-        clean_keywords = [str(k) for k in keywords if k]
-        target_provider = self._get_provider(provider)
-        
-        target_model = None
-        if provider == "ollama" or (provider == "auto" and self.default_provider_name == "ollama"):
-            target_model = settings.ollama_logic_model
+        try:
+            clean_keywords = [str(k) for k in keywords if k]
+            target_provider = self._get_provider(provider)
             
-        context_str = f"\nContext/Details: {context[:5000]}" if context else ""
-        benchmark_str = f"\nBenchmark Product Name (Top Reference): {benchmark_name}" if benchmark_name else ""
-        category_str = f"\nCategory: {category}"
-        
-        # Market-specific guidelines
-        market_guidelines = ""
-        if market.lower() == "coupang":
-            market_guidelines = """
-            [Coupang SEO Guidelines]
-            - Recommended length: within 50-100 characters.
-            - Format: Brand + Product Name + Key Attributes.
-            - Prohibited words: 'Best', 'Cheapest', 'Discount', 'Sale', etc.
-            - Do not include model numbers or internal codes unless essential.
+            target_model = None
+            if provider == "ollama" or (provider == "auto" and self.default_provider_name == "ollama"):
+                target_model = settings.ollama_logic_model
+                
+            context_str = f"\nContext/Details: {context[:5000]}" if context else ""
+            benchmark_str = f"\nBenchmark Product Name (Top Reference): {benchmark_name}" if benchmark_name else ""
+            category_str = f"\nCategory: {category}"
+            
+            # Market-specific guidelines
+            market_guidelines = ""
+            if market.lower() == "coupang":
+                market_guidelines = """
+                [Coupang SEO Guidelines]
+                - Recommended length: within 50-100 characters.
+                - Format: Brand + Product Name + Key Attributes.
+                - Prohibited words: 'Best', 'Cheapest', 'Discount', 'Sale', etc.
+                - Do not include model numbers or internal codes unless essential.
+                """
+            elif market.lower() == "smartstore":
+                market_guidelines = """
+                [Naver SmartStore SEO Guidelines]
+                - Length: max 50 characters for better visibility.
+                - Use relevant keywords that people actually search for.
+                - Avoid special characters like ★, ■.
+                """
+
+            # Few-shot examples
+            example_str = ""
+            if examples:
+                example_str = "\n[Learning Examples - Follow this style]\n"
+                for ex in examples:
+                    example_str += f"- Original: {ex.get('original')}\n  Processed: {ex.get('processed')}\n"
+
+            prompt = f"""
+            이커머스({market}) SEO 전문가로서 상품명을 최적화해줘.
+            
+            원본 상품명: {product_name}
+            키워드: {', '.join(clean_keywords)}{benchmark_str}{category_str}{context_str}
+            {example_str}
+            {market_guidelines}
+
+            [가이드라인]
+            - 브랜드 + 상품명 + 핵심속성 순서로 구성할 것.
+            - 벤치마크 상품명에서 클릭률이 높을 것 같은 핵심 키워드를 추출하여 반영하되, 똑같이 베끼지는 말 것.
+            - 쿠팡 금지어(최고, 제일, 특가 등)는 제외할 것.
+            - 불필요한 모델번호나 내부 코드는 삭제할 것.
+            - 카테고리가 가전이면 '모델명/성능'을, 패션이면 '색상/사이즈'를 중요하게 다룰 것.
+            
+            결과는 JSON {{ "title": "...", "tags": [...] }} 형태로 반환해줘.
             """
-        elif market.lower() == "smartstore":
-            market_guidelines = """
-            [Naver SmartStore SEO Guidelines]
-            - Length: max 50 characters for better visibility.
-            - Use relevant keywords that people actually search for.
-            - Avoid special characters like ★, ■.
-            """
+            return await target_provider.generate_json(prompt, model=target_model)
+        except Exception as e:
+            wrapped_error = wrap_exception(e, AIError, provider=provider, prompt="optimize_seo")
+            logger.error(f"optimize_seo failed: {wrapped_error}")
+            raise wrapped_error
 
-        # Few-shot examples
-        example_str = ""
-        if examples:
-            example_str = "\n[Learning Examples - Follow this style]\n"
-            for ex in examples:
-                example_str += f"- Original: {ex.get('original')}\n  Processed: {ex.get('processed')}\n"
-
-        prompt = f"""
-        이커머스({market}) SEO 전문가로서 상품명을 최적화해줘.
-        
-        원본 상품명: {product_name}
-        키워드: {', '.join(clean_keywords)}{benchmark_str}{category_str}{context_str}
-        {example_str}
-        {market_guidelines}
-
-        [가이드라인]
-        - 브랜드 + 상품명 + 핵심속성 순서로 구성할 것.
-        - 벤치마크 상품명에서 클릭률이 높을 것 같은 핵심 키워드를 추출하여 반영하되, 똑같이 베끼지는 말 것.
-        - 쿠팡 금지어(최고, 제일, 특가 등)는 제외할 것.
-        - 불필요한 모델번호나 내부 코드는 삭제할 것.
-        - 카테고리가 가전이면 '모델명/성능'을, 패션이면 '색상/사이즈'를 중요하게 다룰 것.
-        
-        결과는 JSON {{ "title": "...", "tags": [...] }} 형태로 반환해줘.
-        """
-        return target_provider.generate_json(prompt, model=target_model)
-
-    def expand_keywords(self, keyword: str, provider: ProviderType = "auto") -> List[str]:
+    async def expand_keywords(self, keyword: str, provider: ProviderType = "auto") -> List[str]:
         target_provider = self._get_provider(provider)
         target_model = None
         if provider == "ollama" or (provider == "auto" and self.default_provider_name == "ollama"):
@@ -197,28 +248,33 @@ class AIService:
         Focus on specific categories, features, or target users. (e.g., 'humidifier' -> 'desk mini humidifier', 'silent ultrasonic humidifier', etc.)
         Return ONLY a list of strings in JSON format.
         """
-        result = target_provider.generate_json(prompt, model=target_model)
+        result = await target_provider.generate_json(prompt, model=target_model)
         if isinstance(result, list):
             return [str(k) for k in result]
         return []
 
-    def predict_seasonality(self, product_name: str, provider: ProviderType = "auto") -> Dict[str, Any]:
-        import datetime
-        current_month = datetime.datetime.now().month
-        target_provider = self._get_provider(provider)
-        
-        # Use logic model for seasonality prediction if using Ollama
-        target_model = None
-        if provider == "ollama" or (provider == "auto" and self.default_provider_name == "ollama"):
-            target_model = settings.ollama_logic_model
+    async def predict_seasonality(self, product_name: str, provider: ProviderType = "auto") -> Dict[str, Any]:
+        try:
+            import datetime
+            current_month = datetime.datetime.now().month
+            target_provider = self._get_provider(provider)
             
-        prompt = f"""
-        Analyze seasonality for "{product_name}".
-        Return JSON {{ "months": [int], "current_month_score": float (relevance to month {current_month}) }}
-        """
-        return target_provider.generate_json(prompt, model=target_model)
+            # Use logic model for seasonality prediction if using Ollama
+            target_model = None
+            if provider == "ollama" or (provider == "auto" and self.default_provider_name == "ollama"):
+                target_model = settings.ollama_logic_model
+                
+            prompt = f"""
+            Analyze seasonality for "{product_name}".
+            Return JSON {{ "months": [int], "current_month_score": float (relevance to month {current_month}) }}
+            """
+            return await target_provider.generate_json(prompt, model=target_model)
+        except Exception as e:
+            wrapped_error = wrap_exception(e, AIError, provider=provider, prompt="predict_seasonality")
+            logger.error(f"predict_seasonality failed: {wrapped_error}")
+            raise wrapped_error
 
-    def plan_seasonal_strategy(self, context_products: Optional[List[Dict[str, Any]]] = None, provider: ProviderType = "auto") -> Dict[str, Any]:
+    async def plan_seasonal_strategy(self, context_products: Optional[List[Dict[str, Any]]] = None, provider: ProviderType = "auto") -> Dict[str, Any]:
         """
         현재 날짜 및 과거 판매 데이터를 기반으로 이커머스 시즌 전략을 수립합니다.
         오케스트레이터의 1단계(Planning)에서 사용됩니다.
@@ -262,25 +318,43 @@ class AIService:
             "action_priority": ["작업1", "작업2"]
         }}
         """
-        return target_provider.generate_json(prompt, model=target_model)
+        return await target_provider.generate_json(prompt, model=target_model)
 
-    def generate_json(self, prompt: str, model: Optional[str] = None, provider: ProviderType = "auto") -> Dict[str, Any]:
+    async def generate_json(self, prompt: str, model: Optional[str] = None, provider: ProviderType = "auto") -> Dict[str, Any]:
         """Generic JSON generation method for agents"""
-        target_provider = self._get_provider(provider)
-        
-        # Default to logic model for general JSON tasks if using Ollama and no specific model provided
-        if not model and (provider == "ollama" or (provider == "auto" and self.default_provider_name == "ollama")):
-            model = settings.ollama_logic_model
+        try:
+            target_provider = self._get_provider(provider)
             
-        return target_provider.generate_json(prompt, model=model)
+            # Default to logic model for general JSON tasks if using Ollama and no specific model provided
+            if not model and (provider == "ollama" or (provider == "auto" and self.default_provider_name == "ollama")):
+                model = settings.ollama_logic_model
+                
+            return await target_provider.generate_json(prompt, model=model)
+        except Exception as e:
+            wrapped_error = wrap_exception(e, AIError, provider=provider, prompt="generate_json")
+            logger.error(f"generate_json failed: {wrapped_error}")
+            raise wrapped_error
 
-    def describe_image(self, image_data: bytes, prompt: str = "이 이미지를 상세히 설명해주세요. 특히 상품의 특징, 색상, 디자인, 재질 등을 중심으로 설명해주세요.", provider: ProviderType = "auto") -> str:
-        return self._get_provider(provider).describe_image(image_data, prompt)
+    async def describe_image(self, image_data: bytes, prompt: str = "이 이미지를 상세히 설명해주세요. 특히 상품의 특징, 색상, 디자인, 재질 등을 중심으로 설명해주세요.", provider: ProviderType = "auto") -> str:
+        try:
+            return await self._get_provider(provider).describe_image(image_data, prompt)
+        except Exception as e:
+            wrapped_error = wrap_exception(e, AIError, provider=provider, prompt="describe_image")
+            logger.error(f"describe_image failed: {wrapped_error}")
+            raise wrapped_error
 
-    def extract_text_from_image(self, image_data: bytes, format: Literal["text", "markdown", "json"] = "text", provider: ProviderType = "auto") -> str:
-        return self._get_provider(provider).extract_text_from_image(image_data, format=format)
+    async def extract_text_from_image(self, image_data: bytes, format: Literal["text", "markdown", "json"] = "text", provider: ProviderType = "auto") -> str:
+        try:
+            return await self._get_provider(provider).extract_text_from_image(image_data, format=format)
+        except Exception as e:
+            wrapped_error = wrap_exception(e, AIError, provider=provider, prompt="extract_text_from_image")
+            logger.error(f"extract_text_from_image failed: {wrapped_error}")
+            raise wrapped_error
 
-    def suggest_sourcing_strategy(self, market_trends: str, existing_products: List[str], provider: ProviderType = "auto") -> str:
+    async def analyze_visual_layout(self, image_data: bytes, prompt: str = "Identify the main product features, logo position, and design style in this image.", provider: ProviderType = "auto") -> str:
+        return await self._get_provider(provider).analyze_visual_layout(image_data, prompt=prompt)
+
+    async def suggest_sourcing_strategy(self, market_trends: str, existing_products: List[str], provider: ProviderType = "auto") -> str:
         target_provider = self._get_provider(provider)
         
         # Use logic model for strategy reasoning if using Ollama
@@ -301,9 +375,9 @@ class AIService:
         
         Provide a comprehensive strategy report.
         """
-        return target_provider.generate_reasoning(prompt, model=target_model)
+        return await target_provider.generate_reasoning(prompt, model=target_model)
 
-    def extract_visual_features(self, image_data: bytes, provider: ProviderType = "auto") -> Dict[str, Any]:
+    async def extract_visual_features(self, image_data: bytes, provider: ProviderType = "auto") -> Dict[str, Any]:
         """Exract detailed visual features from product image for image generation."""
         target_provider = self._get_provider(provider)
         
@@ -318,9 +392,9 @@ class AIService:
 
         Return ONLY a valid JSON object.
         """
-        return target_provider.generate_json(prompt, image_data=image_data)
+        return await target_provider.generate_json(prompt, image_data=image_data)
 
-    def generate_premium_image_prompt(self, product_features: Dict[str, Any], benchmark_data: Optional[Dict[str, Any]] = None, provider: ProviderType = "auto") -> Dict[str, Any]:
+    async def generate_premium_image_prompt(self, product_features: Dict[str, Any], benchmark_data: Optional[Dict[str, Any]] = None, provider: ProviderType = "auto") -> Dict[str, Any]:
         """Generate high-quality SD prompt based on features and benchmark aesthetics."""
         target_provider = self._get_provider(provider)
         
@@ -348,4 +422,4 @@ class AIService:
         
         Return JSON with "positive_prompt" and "negative_prompt".
         """
-        return target_provider.generate_json(prompt, model=target_model)
+        return await target_provider.generate_json(prompt, model=target_model)

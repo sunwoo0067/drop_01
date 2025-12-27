@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 
-type SettingsTab = "supplier" | "market" | "ai";
+type SettingsTab = "supplier" | "market" | "ai" | "orchestration";
 
 type OwnerClanStatus = {
     configured: boolean;
@@ -154,11 +154,19 @@ export default function SettingsPage() {
         isActive: true,
     });
 
+    const [orchestratorLoading, setOrchestratorLoading] = useState(false);
+    const [orchestratorForm, setOrchestratorForm] = useState({
+        listing_limit: 15000,
+        sourcing_keyword_limit: 30,
+        continuous_mode: false,
+    });
+
     const tabButtons = useMemo(
         () => [
             { id: "supplier" as const, label: "공급사" },
             { id: "market" as const, label: "마켓" },
             { id: "ai" as const, label: "AI 키" },
+            { id: "orchestration" as const, label: "오케스트레이션" },
         ],
         []
     );
@@ -228,12 +236,25 @@ export default function SettingsPage() {
         }
     };
 
+    const fetchOrchestratorSettings = async () => {
+        setOrchestratorLoading(true);
+        try {
+            const res = await api.get("/settings/orchestrator");
+            setOrchestratorForm(res.data);
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setOrchestratorLoading(false);
+        }
+    };
+
     useEffect(() => {
         fetchOwnerClanStatus();
         fetchOwnerClanAccounts();
         fetchCoupangAccounts();
         fetchSmartstoreAccounts();
         fetchAIKeys();
+        fetchOrchestratorSettings();
     }, []);
 
     const handleOwnerClanSave = async () => {
@@ -516,18 +537,16 @@ export default function SettingsPage() {
         }
     };
 
-    const deleteAIKey = async (key: AIKey) => {
-        if (!confirm("이 API Key를 삭제하시겠습니까?")) return;
-
-        setAiLoading(true);
+    const saveOrchestratorSettings = async () => {
+        setOrchestratorLoading(true);
         try {
-            await api.delete(`/settings/ai/keys/${key.id}`);
-            await fetchAIKeys();
+            await api.post("/settings/orchestrator", orchestratorForm);
+            alert("오케스트레이터 설정이 저장되었습니다.");
         } catch (e) {
             console.error(e);
             alert(getErrorMessage(e));
         } finally {
-            setAiLoading(false);
+            setOrchestratorLoading(false);
         }
     };
 
@@ -1115,8 +1134,65 @@ export default function SettingsPage() {
                         </CardContent>
                     </Card>
                 </div>
-            )
-            }
+            )}
+
+            {tab === "orchestration" && (
+                <div className="space-y-6">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>데일리 오케스트레이션 설정</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-6">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div className="space-y-2">
+                                    <div className="text-sm font-medium">1회 사이클 당 최대 등록 상품 수</div>
+                                    <Input
+                                        type="number"
+                                        value={orchestratorForm.listing_limit}
+                                        onChange={(e) => setOrchestratorForm((prev) => ({ ...prev, listing_limit: parseInt(e.target.value) || 0 }))}
+                                        placeholder="15000"
+                                    />
+                                    <p className="text-xs text-muted-foreground">가공 및 등록 대상 상품의 최대 개수입니다. (권장: 5,000 ~ 20,000)</p>
+                                </div>
+                                <div className="space-y-2">
+                                    <div className="text-sm font-medium">소싱 키워드 개수 제한</div>
+                                    <Input
+                                        type="number"
+                                        value={orchestratorForm.sourcing_keyword_limit}
+                                        onChange={(e) => setOrchestratorForm((prev) => ({ ...prev, sourcing_keyword_limit: parseInt(e.target.value) || 0 }))}
+                                        placeholder="30"
+                                    />
+                                    <p className="text-xs text-muted-foreground">AI가 도출한 전략 키워드 중 실제 소싱에 사용할 키워드 수입니다.</p>
+                                </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 p-4 border rounded-lg bg-secondary/20">
+                                <input
+                                    type="checkbox"
+                                    id="continuous_mode"
+                                    className="w-4 h-4"
+                                    checked={orchestratorForm.continuous_mode}
+                                    onChange={(e) => setOrchestratorForm((prev) => ({ ...prev, continuous_mode: e.target.checked }))}
+                                />
+                                <div className="flex-1">
+                                    <label htmlFor="continuous_mode" className="text-sm font-medium cursor-pointer">지속 등록 모드 (Continuous Listing)</label>
+                                    <p className="text-xs text-muted-foreground">사이클이 완료된 후에도 백그라운드에서 상품 등록 작업을 계속 유지합니다.</p>
+                                </div>
+                            </div>
+
+                            <div className="p-4 border border-warning/50 rounded-lg bg-warning/10">
+                                <p className="text-sm font-medium text-warning-foreground">⚠️ 주의</p>
+                                <p className="text-xs text-muted-foreground">너무 많은 양의 상품을 짧은 시간에 등록할 경우 마켓 API 제한으로 인해 계정이 일시 정지될 수 있습니다.</p>
+                            </div>
+                        </CardContent>
+                        <CardFooter className="flex justify-end">
+                            <Button onClick={saveOrchestratorSettings} isLoading={orchestratorLoading}>
+                                설정 저장
+                            </Button>
+                        </CardFooter>
+                    </Card>
+                </div>
+            )}
 
             {
                 tab === "ai" && (

@@ -67,6 +67,12 @@ class Settings(BaseSettings):
     }
 
     
+    # 성능 최적화 설정
+    processing_concurrent_limit: int = 20  # 상품 가공 병렬 처리 수
+    image_download_concurrent: int = 5     # 이미지 다운로드 동시성
+    few_shot_cache_ttl: int = 300         # Few-shot 예제 캐시 TTL (초)
+    api_key_cache_ttl: int = 600          # API 키 캐시 TTL (초)
+    
     # AI Settings
     default_ai_provider: str = "ollama" # gemini, ollama, or openai
     
@@ -76,14 +82,14 @@ class Settings(BaseSettings):
     
     # Ollama
     ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "gemma3:4b"
+    ollama_model: str = "qwen3:8b"  # gemma3:4b → qwen3:8b (최신 모델로 업그레이드)
     ollama_function_model: str = "functiongemma"
-    ollama_embedding_model: str = "embeddinggemma"
+    ollama_embedding_model: str = "qwen3-embedding"  # embeddinggemma → qwen3-embedding (최신 모델로 업그레이드)
     ollama_reasoning_model: str = "rnj-1"
-    ollama_vision_model: str = "drop-vision"
+    ollama_vision_model: str = "qwen3-vl:8b"  # drop-vision → qwen3-vl:8b (최신 모델로 업그레이드)
     ollama_ocr_model: str = "drop-ocr"
-    ollama_qwen_vl_model: str = "drop-qwen-vl"
-    ollama_logic_model: str = "granite4"
+    ollama_qwen_vl_model: str = "qwen3-vl:8b"  # drop-qwen-vl → qwen3-vl:8b (최신 모델로 업그레이드)
+    ollama_logic_model: str = "qwen3:8b"  # granite4 → qwen3:8b (최신 모델로 업그레이드)
 
     # OpenAI
     openai_api_keys: list[str] = [] # List of keys for rotation

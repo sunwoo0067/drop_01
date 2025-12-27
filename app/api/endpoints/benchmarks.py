@@ -34,6 +34,8 @@ def list_benchmarks(
     q: str | None = Query(default=None),
     market_code: str | None = Query(default=None, alias="marketCode"),
     order_by: str | None = Query(default=None, alias="orderBy"),
+    min_price: float | None = Query(default=None, alias="minPrice"),
+    max_price: float | None = Query(default=None, alias="maxPrice"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> dict:
@@ -59,6 +61,10 @@ def list_benchmarks(
     if q:
         like = f"%{q}%"
         filters.append(BenchmarkProduct.name.ilike(like))
+    if min_price is not None:
+        filters.append(BenchmarkProduct.price >= min_price)
+    if max_price is not None:
+        filters.append(BenchmarkProduct.price <= max_price)
 
     for condition in filters:
         stmt = stmt.where(condition)

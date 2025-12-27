@@ -695,3 +695,44 @@ def delete_ai_key(key_id: uuid.UUID, session: Session = Depends(get_session)) ->
     session.commit()
 
     return {"deleted": True, "id": str(key_id)}
+
+
+class OrchestratorSettingIn(BaseModel):
+    listing_limit: int = 15000
+    sourcing_keyword_limit: int = 30
+    continuous_mode: bool = False
+
+
+@router.get("/orchestrator")
+def get_orchestrator_settings(session: Session = Depends(get_session)) -> dict:
+    from app.models import SystemSetting
+    setting = session.query(SystemSetting).filter_by(key="orchestrator").one_or_none()
+    
+    if not setting:
+        # 기본값 반환
+        return {
+            "listing_limit": 15000,
+            "sourcing_keyword_limit": 30,
+            "continuous_mode": False
+        }
+    
+    return setting.value
+
+
+@router.post("/orchestrator")
+def update_orchestrator_settings(payload: OrchestratorSettingIn, session: Session = Depends(get_session)) -> dict:
+    from app.models import SystemSetting
+    setting = session.query(SystemSetting).filter_by(key="orchestrator").one_or_none()
+    
+    if not setting:
+        setting = SystemSetting(
+            key="orchestrator",
+            value=payload.model_dump(),
+            description="Orchestrator Service Configuration"
+        )
+        session.add(setting)
+    else:
+        setting.value = payload.model_dump()
+    
+    session.commit()
+    return setting.value

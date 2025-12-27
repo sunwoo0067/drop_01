@@ -5,9 +5,11 @@ except Exception:
     cv2 = None
 import numpy as np
 import requests
+import httpx
+import asyncio
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
-from typing import List, Optional
+from typing import List, Optional, Tuple
 import random
 import math
 
@@ -52,11 +54,41 @@ class ImageProcessingService:
                 return resp.content
         return None
 
+    async def _download_image_async(self, url: str, client: httpx.AsyncClient) -> bytes | None:
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+        }
+        referer = self._build_referer(url)
+        if referer:
+            headers["Referer"] = referer
+
+        for _ in range(2):
+            try:
+                resp = await client.get(url, headers=headers, timeout=10)
+                if resp.status_code == 200:
+                    return resp.content
+            except Exception as e:
+                logger.debug(f"Download attempt failed for {url}: {e}")
+                continue
+        
+        if url.startswith("http://"):
+            https_url = "https://" + url[len("http://") :]
+            referer = self._build_referer(https_url)
+            if referer:
+                headers["Referer"] = referer
+            try:
+                resp = await client.get(https_url, headers=headers, timeout=10)
+                if resp.status_code == 200:
+                    return resp.content
+            except Exception as e:
+                logger.debug(f"HTTPS download attempt failed for {https_url}: {e}")
+        return None
+
     def replace_html_image_urls(
         self,
         html_content: str,
         product_id: str = "temp",
-        limit: int = 20,
+        limit: int = 50,
     ) -> tuple[str, list[str]]:
         if not html_content:
             return html_content, []
@@ -129,7 +161,13 @@ class ImageProcessingService:
             if src in mapping:
                 img["src"] = mapping[src]
 
-        return str(soup), uploaded
+        # Use decode_contents() to get only the inner HTML if it was a fragment.
+        # However, if it was a full document (has <html> or <body>), keep the full structure.
+        is_full_doc = any(tag in html_content.lower() for tag in ["<html", "<body"])
+        if is_full_doc:
+            return str(soup), uploaded
+        else:
+            return soup.decode_contents(), uploaded
     
     def extract_images_from_html(self, html_content: str, limit: int = 10) -> List[str]:
         """
@@ -427,6 +465,166 @@ class ImageProcessingService:
                 stats["exceptions"],
                 len(processed_urls),
                 stats["validation_failures"],
+            )
+
+        return processed_urls
+
+    async def process_and_upload_images_async(
+        self,
+        image_urls: List[str],
+        detail_html: str = "",
+        product_id: str = "temp",
+        max_images: int = 9,
+        max_concurrent: int = 5,
+    ) -> List[str]:
+        """
+        비동기 병렬 이미지 처리 파이프라인
+        
+        Args:
+            image_urls: 이미지 URL 목록
+            detail_html: 상세 HTML (추가 이미지 추출용)
+            product_id: 상품 ID
+            max_images: 최대 이미지 수
+            max_concurrent: 동시 다운로드 수
+        
+        Returns:
+            처리된 이미지 URL 목록
+        """
+        max_images = max(1, int(max_images))
+        max_images = min(max_images, 9)
+        
+        candidates = image_urls[:]
+        html_images = self.extract_images_from_html(detail_html, limit=20)
+        if html_images:
+            candidates.extend(html_images)
+
+        # Deduplicate
+        seen = set()
+        unique_candidates = []
+        for url in candidates:
+            if url and url not in seen:
+                unique_candidates.append(url)
+                seen.add(url)
+
+        logger.info(f"Processing {len(unique_candidates)} images for product {product_id} (async, max_concurrent={max_concurrent})...")
+        
+        # 이미지 처리 결과를 저장할 리스트
+        processed_urls = []
+        
+        # 세마포어로 동시성 제어
+        sem = asyncio.Semaphore(max_concurrent)
+        
+        async def process_single_image(url: str) -> Tuple[str, bytes | None, str | None]:
+            async with sem:
+                try:
+                    async with httpx.AsyncClient(timeout=15.0) as client:
+                        image_bytes = await self._download_image_async(url, client)
+                        
+                        if not image_bytes:
+                            return (url, None, "download_failed")
+                        
+                        validation = validate_image_bytes(image_bytes)
+                        if not validation.ok:
+                            logger.warning(
+                                "이미지 검증 실패(url=%s, reason=%s, size=%s, width=%s, height=%s)",
+                                url,
+                                validation.reason,
+                                validation.size_bytes,
+                                validation.width,
+                                validation.height,
+                            )
+                            return (url, None, f"validation_failed:{validation.reason}")
+                        
+                        # 업로드
+                        new_url = storage_service.upload_image(
+                            image_bytes,
+                            path_prefix=f"market_processing/{product_id}"
+                        )
+                        
+                        if new_url:
+                            return (url, new_url, None)
+                        else:
+                            return (url, None, "upload_failed")
+                            
+                except Exception as e:
+                    logger.error(f"이미지 처리 실패(url={url}): {e}")
+                    return (url, None, f"exception:{str(e)}")
+        
+        # 병렬 처리
+        tasks = [process_single_image(url) for url in unique_candidates]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # 결과 수집
+        download_ok = 0
+        download_fail = 0
+        validation_fail = 0
+        upload_ok = 0
+        upload_fail = 0
+        exceptions = 0
+        validation_failures = {}
+        
+        for result in results:
+            if isinstance(result, Exception):
+                exceptions += 1
+                continue
+            
+            url, new_url, error = result
+            
+            if error:
+                if "download_failed" in error:
+                    download_fail += 1
+                elif "validation_failed" in error:
+                    validation_fail += 1
+                    reason = error.split(":", 1)[1] if ":" in error else "unknown"
+                    validation_failures[reason] = validation_failures.get(reason, 0) + 1
+                elif "upload_failed" in error:
+                    upload_fail += 1
+                elif "exception" in error:
+                    exceptions += 1
+                download_fail += 1
+            else:
+                download_ok += 1
+                if new_url:
+                    processed_urls.append(new_url)
+                    upload_ok += 1
+                else:
+                    upload_fail += 1
+            
+            # 최대 이미지 수 도달 시 중단
+            if len(processed_urls) >= max_images:
+                break
+        
+        logger.info(
+            "이미지 처리 요약(productId=%s, target=%s, input=%s, unique=%s, downloadOk=%s, downloadFail=%s, validationFail=%s, uploadOk=%s, uploadFail=%s, exceptions=%s, result=%s, validationFailures=%s)",
+            product_id,
+            max_images,
+            len(candidates),
+            len(unique_candidates),
+            download_ok,
+            download_fail,
+            validation_fail,
+            upload_ok,
+            upload_fail,
+            exceptions,
+            len(processed_urls),
+            validation_failures,
+        )
+
+        if download_fail > 0 or upload_fail > 0 or exceptions > 0 or validation_fail > 0:
+            logger.warning(
+                "이미지 처리 경고(productId=%s, target=%s, input=%s, unique=%s, downloadOk=%s, downloadFail=%s, validationFail=%s, uploadOk=%s, uploadFail=%s, exceptions=%s, result=%s, validationFailures=%s)",
+                product_id,
+                max_images,
+                len(candidates),
+                len(unique_candidates),
+                download_ok,
+                download_fail,
+                validation_fail,
+                upload_ok,
+                upload_fail,
+                exceptions,
+                len(processed_urls),
+                validation_failures,
             )
 
         return processed_urls

@@ -18,7 +18,8 @@ import {
     Download,
     Database,
     Upload,
-    Store
+    Store,
+    TrendingUp
 } from "lucide-react";
 import { useState } from "react";
 import { motion } from "framer-motion";
@@ -55,6 +56,7 @@ const menuGroups = [
         title: "Intelligence",
         items: [
             { name: "에이전트", href: "/agents", icon: Bot },
+            { name: "매출 등대", href: "/analytics", icon: TrendingUp },
         ]
     },
     {
