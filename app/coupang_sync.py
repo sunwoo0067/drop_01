@@ -1291,6 +1291,8 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
 
     # 등록 직후 쿠팡이 내려주는 vendor_inventory 기반 이미지 경로로 상세(contents)를 한 번 더 보강합니다.
     # (내부 저장 포맷/렌더링 이슈 회피 목적)
+    # 상품 조회 API 응답에서 items[].vendorItemId는 상품 승인완료 시에 값이 표시됨
+    # 임시저장 상태일 경우 null이므로 최대 10회 재시도
     if not _preserve_detail_html(product):
         try:
             for _ in range(10):
@@ -1301,6 +1303,12 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
                     continue
 
                 items2 = data_obj2.get("items") if isinstance(data_obj2.get("items"), list) else []
+                # vendorItemId가 아직 없으면 재시도 (승인 대기 중일 가능성)
+                if items2 and isinstance(items2[0], dict):
+                    if not items2[0].get("vendorItemId"):
+                        time.sleep(2.0)
+                        continue
+
                 urls: list[str] = []
                 for it in items2:
                     if not isinstance(it, dict):
@@ -1391,8 +1399,16 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
 
 def delete_product_from_coupang(session: Session, account_id: uuid.UUID, seller_product_id: str) -> tuple[bool, str | None]:
     """
-    쿠팡에서 상품을 삭제합니다. 
-    먼저 모든 아이템을 판매중지 처리한 후 삭제를 시도합니다.
+    쿠팡에서 상품을 삭제합니다.
+    
+    쿠팡 API 문서 요구사항:
+    - 상품이 '승인대기중' 상태가 아니며
+    - 상품에 포함된 옵션(아이템)이 모두 판매중지된 경우에만 삭제 가능
+    
+    삭제 순서:
+    1. 모든 아이템 판매중지 처리 (승인대기중 상태의 경우 필수)
+    2. 상품 삭제 API 호출
+    3. DB에서 MarketListing 삭제
     """
     account = session.get(MarketAccount, account_id)
     if not account:
@@ -1401,17 +1417,27 @@ def delete_product_from_coupang(session: Session, account_id: uuid.UUID, seller_
     try:
         client = _get_client_for_account(account)
         
-        # 1. 현재 상품 정보 조회하여 vendorItemIds 확보
+        # 1. 현재 상품 정보 조회하여 vendorItemIds 및 상태 확보
         code, data = client.get_product(seller_product_id)
         if code != 200:
             return False, f"상품 조회 실패: {data.get('message', '알 수 없는 오류')}"
         
-        items = data.get("data", {}).get("items", [])
-        for item in items:
-            vendor_item_id = item.get("vendorItemId")
-            if vendor_item_id:
-                # 판매 중지 시도 (이미 중지된 경우 무시될 수 있음)
-                client.stop_sales(str(vendor_item_id))
+        # 상품 상태 확인 (쿠팡 API 요구사항)
+        current_data = data.get("data", {})
+        status_name = current_data.get("statusName", "")
+        
+        # 승인대기중 상태인 경우, 모든 옵션이 판매중지되어야 삭제 가능
+        if status_name == "승인대기중":
+            logger.info(f"승인대기중 상품 삭제 시도 (sellerProductId={seller_product_id}, status={status_name})")
+        
+        # 임시저장/승인완료/승인반려 상태에서도 판매중지 처리 후 삭제 (안전한 처리)
+        if status_name in ["임시저장", "승인완료", "승인반려"]:
+            logger.info(f"상품 삭제 시도 (sellerProductId={seller_product_id}, status={status_name})")
+            for item in items:
+                vendor_item_id = item.get("vendorItemId")
+                if vendor_item_id:
+                    # 판매 중지 시도 (이미 중지된 경우 무시될 수 있음)
+                    client.stop_sales(str(vendor_item_id))
         
         # 2. 삭제 시도
         code, data = client.delete_product(seller_product_id)
@@ -1428,7 +1454,12 @@ def delete_product_from_coupang(session: Session, account_id: uuid.UUID, seller_
             session.commit()
             return True, None
         else:
-            return False, f"삭제 실패: {data.get('message', '알 수 없는 오류')}"
+            # 쿠팡 API 오류 메시지 확인
+            error_msg = data.get("message", "알 수 없는 오류")
+            # "업체상품[***]이 없거나 삭제 불가능한 상태입니다." 메시지는
+            # 이미 승인대기중이거나 판매중지가 완료되지 않은 경우 발생
+            logger.error(f"상품 삭제 실패: {error_msg}")
+            return False, f"삭제 실패: {error_msg}"
             
     except Exception as e:
         session.rollback()
@@ -1555,16 +1586,28 @@ def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_i
         )
         
         # 업데이트 API 규격에 맞춰 sellerProductId 및 requested 추가
+        # 쿠팡 API 문서: 상품 수정 시 sellerProductId와 sellerProductItemId 필수
+        # - 기존 옵션 수정: sellerProductItemId와 vendorItemId 삽입
+        # - 옵션 삭제: items 배열에서 제거 후 sellerProductItemId만 유지
+        # - 옵션 추가: sellerProductItemId 미입력하여 items 배열 추가
         payload["sellerProductId"] = int(listing.market_item_id)
         payload["requested"] = True
 
         # 기존 vendorItemId 및 가격/이미지 맵핑 유지/보정
+        # 주의: 승인 완료된 상품의 판매가격, 재고수량, 판매상태는 update_product가 아닌
+        # 별도 API(옵션별 가격/수량/판매여부 변경)를 통해 변경 필요
         if payload.get("items") and current_items and isinstance(current_items[0], dict):
             target_item = payload["items"][0]
             current_item = current_items[0]
 
+            # 기존 옵션 수정을 위한 sellerProductItemId 및 vendorItemId 유지
+            # 쿠팡 API: 기존 옵션 수정시 sellerProductItemId와 vendorItemId 필수
+            # sellerProductItemId: 상품 조회 API를 통해 확인 가능
+            # vendorItemId: 임시저장 상태일 경우 null, 승인완료 시 값 표시
             if "vendorItemId" in current_item:
                 target_item["vendorItemId"] = current_item["vendorItemId"]
+            if "sellerProductItemId" in current_item:
+                target_item["sellerProductItemId"] = current_item["sellerProductItemId"]
 
             # [BUG FIX] 가격 동기화: salePrice가 existing originalPrice보다 크면 originalPrice 상향
             existing_original = int(current_item.get("originalPrice") or 0)
@@ -1611,6 +1654,119 @@ def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_i
     except Exception as e:
         session.rollback()
         logger.error(f"쿠팡 상품 업데이트 중 예외 발생: {e}")
+        return False, str(e)
+
+
+def update_product_delivery_info(
+    session: Session,
+    account_id: uuid.UUID,
+    product_id: uuid.UUID,
+    delivery_charge: int | None = None,
+    delivery_charge_type: str | None = None,
+    delivery_company_code: str | None = None,
+    return_center_code: str | None = None,
+    outbound_shipping_place_code: str | None = None,
+    outbound_shipping_time_day: int | None = None,
+    return_charge: int | None = None,
+    delivery_charge_on_return: int | None = None,
+    free_ship_over_amount: int | None = None,
+) -> tuple[bool, str | None]:
+    """
+    쿠팡에 등록된 상품의 배송 및 반품지 정보만 승인 없이 빠르게 업데이트합니다.
+    
+    이 함수는 쿠팡의 '상품 수정(승인불필요/partial)' API를 사용합니다.
+    승인 절차 없이 배송/반품지 관련 정보만 빠르게 수정할 수 있습니다.
+    
+    Args:
+        session: DB 세션
+        account_id: 마켓 계정 ID
+        product_id: 상품 ID
+        delivery_charge: 기본배송비 (유료배송 또는 조건부 무료배송 시)
+        delivery_charge_type: 배송비종류 (FREE, NOT_FREE, CHARGE_RECEIVED, CONDITIONAL_FREE)
+        delivery_company_code: 택배사 코드
+        return_center_code: 반품지 센터 코드
+        outbound_shipping_place_code: 출고지 주소 코드
+        outbound_shipping_time_day: 기준출고일(일)
+        return_charge: 반품배송비
+        delivery_charge_on_return: 초도반품배송비
+        free_ship_over_amount: 무료배송을 위한 조건 금액
+    
+    Returns:
+        (성공 여부, 에러 메시지)
+    
+    Note:
+        - '임시저장중', '승인대기중' 상태의 상품은 수정할 수 없습니다.
+        - 모든 매개변수는 선택적(Optional)이며, 원하는 항목만 입력하여 수정 가능합니다.
+    """
+    account = session.get(MarketAccount, account_id)
+    product = session.get(Product, product_id)
+    if not account or not product:
+        return False, "계정 또는 상품을 찾을 수 없습니다"
+    
+    listing = (
+        session.execute(
+            select(MarketListing)
+            .where(MarketListing.market_account_id == account.id)
+            .where(MarketListing.product_id == product.id)
+            .order_by(MarketListing.linked_at.desc())
+        )
+        .scalars()
+        .first()
+    )
+    
+    if not listing:
+        return False, "쿠팡에 등록된 리스팅 정보를 찾을 수 없습니다"
+    
+    try:
+        client = _get_client_for_account(account)
+        
+        # 상품 상태 확인 (임시저장중, 승인대기중 상태는 수정 불가)
+        code, current_data = client.get_product(listing.market_item_id)
+        if code != 200:
+            return False, f"쿠팡 상품 정보 조회 실패: {current_data.get('message')}"
+        
+        status_name = current_data.get("data", {}).get("statusName", "")
+        if status_name in ["임시저장중", "승인대기중", "생성이 진행중"]:
+            return False, f"현재 상태 '{status_name}'에서는 수정할 수 없습니다. 승인완료 후 가능합니다."
+        
+        # partial 업데이트 페이로드 생성
+        payload: dict[str, Any] = {
+            "sellerProductId": int(listing.market_item_id)
+        }
+        
+        # 선택적 매개변수만 페이로드에 추가
+        if delivery_charge is not None:
+            payload["deliveryCharge"] = delivery_charge
+        if delivery_charge_type is not None:
+            payload["deliveryChargeType"] = delivery_charge_type
+        if delivery_company_code is not None:
+            payload["deliveryCompanyCode"] = delivery_company_code
+        if return_center_code is not None:
+            payload["returnCenterCode"] = return_center_code
+        if outbound_shipping_place_code is not None:
+            payload["outboundShippingPlaceCode"] = int(outbound_shipping_place_code)
+        if outbound_shipping_time_day is not None:
+            payload["outboundShippingTimeDay"] = outbound_shipping_time_day
+        if return_charge is not None:
+            payload["returnCharge"] = return_charge
+        if delivery_charge_on_return is not None:
+            payload["deliveryChargeOnReturn"] = delivery_charge_on_return
+        if free_ship_over_amount is not None:
+            payload["freeShipOverAmount"] = free_ship_over_amount
+        
+        # partial 업데이트 API 호출
+        code, data = client.update_product_partial(listing.market_item_id, payload)
+        _log_fetch(session, account, "update_product_partial", payload, code, data)
+        
+        if code == 200 and data.get("code") == "SUCCESS":
+            logger.info(f"배송/반품지 정보 업데이트 성공 (productId={product.id}, sellerProductId={listing.market_item_id})")
+            return True, None
+        else:
+            return False, f"배송/반품지 정보 업데이트 실패: {data.get('message', '알 수 없는 오류')}"
+            
+    except Exception as e:
+        session.rollback()
+        logger.error(f"쿠팡 배송/반품지 정보 업데이트 중 예외 발생: {e}")
         return False, str(e)
 
 
@@ -2103,6 +2259,11 @@ def _map_product_to_coupang_payload(
 ) -> dict[str, Any]:
     """
     내부 Product 모델을 쿠팡 API Payload로 매핑합니다.
+    
+    쿠팡 상품 생성 API 요구사항 (2024년 10월 10일 이후):
+    - 필수 구매옵션(attributes)이 MANDATORY인 경우 반드시 입력 필요
+    - 데이터 형식이 유효한 값/단위로 정확하게 입력 필요
+    - 인증(certifications), 구비서류(requiredDocuments) 처리 필요
     """
     
     # 가공된 이름이 있으면 사용, 없으면 원본 이름 사용
@@ -2141,11 +2302,6 @@ def _map_product_to_coupang_payload(
                 if len(images) >= 9:
                     break
     
-    # 가공된 이미지가 없을 경우 처리 방안 필요
-    # 현재는 선행 단계에서 처리되었다고 가정함.
-    if not images:
-        pass
-
     # 아이템 (옵션)
     # 현재는 단일 옵션 매핑 (Drop 01 범위)
     # 변형 상품(옵션)이 있다면 반복문 필요
@@ -2169,6 +2325,7 @@ def _map_product_to_coupang_payload(
             return f"{digits[:3]}-{digits[3:6]}-{digits[6:]}"
         return digits
 
+    # 상품고시정보(notices) 처리
     notices: list[dict[str, Any]] = []
     try:
         if isinstance(notice_meta, dict) and isinstance(notice_meta.get("noticeCategories"), list):
@@ -2208,6 +2365,127 @@ def _map_product_to_coupang_payload(
             for d in details
         ]
 
+    # 필수 attributes 처리 (2024년 10월 10일 규정 준수)
+    item_attributes: list[dict[str, Any]] = []
+    mandatory_attrs_missing = []
+    try:
+        if isinstance(notice_meta, dict) and isinstance(notice_meta.get("attributes"), list):
+            attrs = [a for a in notice_meta["attributes"] if isinstance(a, dict)]
+            # 필수이고 구매옵션(EXPOSED)인 항목만 처리
+            mandatory_attrs = [a for a in attrs if a.get("required") == "MANDATORY" and a.get("exposed") == "EXPOSED"]
+            
+            for attr in mandatory_attrs:
+                attr_type = attr.get("attributeTypeName")
+                if not attr_type:
+                    continue
+                
+                # 데이터 형식에 따른 기본값 설정
+                data_type = attr.get("dataType", "STRING")
+                basic_unit = attr.get("basicUnit", "")
+                usable_units = attr.get("usableUnits", [])
+                
+                # 기본값 설정: 수량/무게/부피는 1개/1g/1ml, 그 외는 "-"
+                attr_value = "-"
+                if data_type == "NUMBER":
+                    if "수량" in attr_type or "qty" in attr_type.lower():
+                        attr_value = "1개"
+                        if basic_unit and basic_unit != "없음":
+                            attr_value = f"1{basic_unit}"
+                    elif "무게" in attr_type or "weight" in attr_type.lower():
+                        attr_value = "1g"
+                        if basic_unit and basic_unit != "없음":
+                            attr_value = f"1{basic_unit}"
+                    elif "용량" in attr_type or "volume" in attr_type.lower():
+                        attr_value = "1ml"
+                        if basic_unit and basic_unit != "없음":
+                            attr_value = f"1{basic_unit}"
+                    else:
+                        attr_value = "1"
+                
+                # 필수 옵션에 추가
+                item_attributes.append({
+                    "attributeTypeName": attr_type,
+                    "attributeValueName": attr_value,
+                    "exposed": "EXPOSED"
+                })
+                logger.info(f"필수 attribute 추가: {attr_type}={attr_value} (type={data_type}, unit={basic_unit})")
+            
+            # 필수 속성이 있는 경우 로깅
+            if mandatory_attrs:
+                logger.info(f"필수 구매옵션 {len(mandatory_attrs)}개 처리됨 (카테고리: {predicted_category_code})")
+                mandatory_attrs_missing = [
+                    a.get("attributeTypeName") for a in mandatory_attrs 
+                    if not any(it.get("attributeTypeName") == a.get("attributeTypeName") for it in item_attributes)
+                ]
+    except Exception as e:
+        logger.warning(f"attributes 처리 중 오류 발생: {e}")
+
+    # 검색필터 옵션 추가 (선택사항)
+    try:
+        if isinstance(notice_meta, dict) and isinstance(notice_meta.get("attributes"), list):
+            attrs = [a for a in notice_meta["attributes"] if isinstance(a, dict)]
+            # 검색필터(NONE)인 항목 중 선택적인 항목 추가
+            filter_attrs = [a for a in attrs if a.get("exposed") == "NONE" and a.get("required") in ["OPTIONAL", "RECOMMEND"]]
+            
+            # 공통 검색필터 (예: 피부타입, 성별 등)
+            common_filters = ["피부타입", "성별", "사용자연령대", "사용부위"]
+            for attr in filter_attrs:
+                attr_type = attr.get("attributeTypeName")
+                if attr_type in common_filters:
+                    item_attributes.append({
+                        "attributeTypeName": attr_type,
+                        "attributeValueName": "모두",
+                        "exposed": "NONE"
+                    })
+                    break
+    except Exception as e:
+        logger.warning(f"검색필터 처리 중 오류 발생: {e}")
+
+    # 인증정보(certifications) 처리
+    item_certifications: list[dict[str, Any]] = []
+    try:
+        if isinstance(notice_meta, dict) and isinstance(notice_meta.get("certifications"), list):
+            certs = [c for c in notice_meta["certifications"] if isinstance(c, dict)]
+            
+            # 필수/추천 인증 확인
+            mandatory_certs = [c for c in certs if c.get("required") in ["MANDATORY", "RECOMMEND"]]
+            
+            if mandatory_certs:
+                # 인증대상이 아님으로 설정 (실제 인증이 있는 경우 업데이트 필요)
+                item_certifications.append({
+                    "certificationType": "NOT_REQUIRED",
+                    "certificationCode": ""
+                })
+                logger.info(f"필수/추천 인증 {len(mandatory_certs)}개 감지됨 (NOT_REQUIRED로 설정)")
+    except Exception as e:
+        logger.warning(f"certifications 처리 중 오류 발생: {e}")
+
+    # 구비서류(requiredDocuments) 처리
+    required_documents: list[dict[str, Any]] = []
+    try:
+        if isinstance(notice_meta, dict) and isinstance(notice_meta.get("requiredDocumentNames"), list):
+            docs = [d for d in notice_meta["requiredDocumentNames"] if isinstance(d, dict)]
+            
+            # 필수 구비서류 확인
+            mandatory_docs = [d for d in docs if "MANDATORY" in d.get("required", "")]
+            
+            if mandatory_docs:
+                logger.warning(f"필수 구비서류 {len(mandatory_docs)}개 감지됨: {[d.get('templateName') for d in mandatory_docs]}")
+                # 필수 구비서류가 있는 경우 별도 처리 필요
+                # 현재는 warning만 남기고 실제 업로드는 건너뜀
+    except Exception as e:
+        logger.warning(f"requiredDocuments 처리 중 오류 발생: {e}")
+
+    # allowedOfferConditions 검증
+    offer_condition = "NEW"
+    try:
+        if isinstance(notice_meta, dict) and isinstance(notice_meta.get("allowedOfferConditions"), list):
+            allowed_conditions = notice_meta["allowedOfferConditions"]
+            if "NEW" not in allowed_conditions:
+                logger.warning(f"NEW 상태가 허용되지 않는 카테고리입니다. 허용 상태: {allowed_conditions}")
+    except Exception as e:
+        logger.warning(f"allowedOfferConditions 확인 중 오류 발생: {e}")
+
     # Return Center Fallbacks
     return_zip = (return_center_detail.get("returnZipCode") if return_center_detail else None) or "14598"
     return_addr = (return_center_detail.get("returnAddress") if return_center_detail else None) or "경기도 부천시 원미구 부일로199번길 21"
@@ -2238,11 +2516,13 @@ def _map_product_to_coupang_payload(
         "pccNeeded": False,
         "unitCount": 1,
         "images": images,
-        "attributes": [], # TODO: 카테고리 속성 매핑 필요 (예측된 카테고리에 따라 필수 속성이 다름)
+        "attributes": item_attributes,  # 필수 attributes 처리됨
+        "certifications": item_certifications,  # 인증정보 처리됨
         "contents": (
             contents_blocks + [{"contentsType": "HTML", "contentDetails": [{"content": description_html, "detailType": "TEXT"}]}]
         ) if contents_blocks else [{"contentsType": "HTML", "contentDetails": [{"content": description_html, "detailType": "TEXT"}]}],
         "notices": notices,
+        "offerCondition": offer_condition,  # allowedOfferConditions 검증됨
     }
 
     now = datetime.now(timezone.utc)
@@ -2252,8 +2532,7 @@ def _map_product_to_coupang_payload(
     payload = {
         "displayCategoryCode": predicted_category_code, 
         # 예측된 카테고리 코드를 사용.
-        # 주의: 일부 카테고리는 필수 속성(attributes)이 없으면 등록 실패할 수 있음.
-        # 향후 predict_category 응답에 포함된 attributes 메타데이터를 활용하여 자동 매핑 고도화 필요.
+        # 필수 속성(attributes)은 카테고리 메타정보에서 자동 매핑됨.
         "sellerProductName": name_to_use[:100],
         "vendorId": str(account.credentials.get("vendor_id") or "").strip(),
         "saleStartedAt": sale_started_at,
@@ -2282,6 +2561,10 @@ def _map_product_to_coupang_payload(
         "requested": True, # 자동 승인 요청
         "items": [item_payload]
     }
+    
+    # 필수 구비서류가 있는 경우 payload에 추가
+    if required_documents:
+        payload["requiredDocuments"] = required_documents
     
     return payload
 

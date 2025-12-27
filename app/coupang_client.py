@@ -149,12 +149,26 @@ class CoupangClient:
         )
 
     def get_category_meta(self, category_code: str) -> tuple[int, dict[str, Any]]:
-        """카테고리 메타정보(속성) 조회"""
-        return self.get(f"/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-attributes?displayCategoryCode={category_code}")
+        """
+        카테고리 메타정보 통합 조회
 
-    def get_category_notices(self, category_code: str) -> tuple[int, dict[str, Any]]:
-        """카테고리별 상품고시정보 목록 조회"""
-        return self.get(f"/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-notices?displayCategoryCode={category_code}")
+        노출 카테고리코드를 이용하여 해당 카테고리에 속한 고시정보, 옵션, 구비서류, 인증정보 목록 등을 조회합니다.
+        상품 생성 시, 쿠팡에서 규정하고 있는 각 카테고리의 메타 정보와 일치하는 항목으로 상품 생성 전문을 구성해야 합니다.
+
+        Returns (상태코드, 데이터):
+            data는 dict 형태로 다음 필드 포함:
+            - isAllowSingleItem: 단일상품 등록 가능 여부 (bool)
+            - attributes: 카테고리 옵션목록 (구매옵션/검색옵션) (list)
+            - noticeCategories: 상품고시정보목록 (list)
+            - requiredDocumentNames: 구비서류목록 (list)
+            - certifications: 상품 인증 정보 (list)
+            - allowedOfferConditions: 허용된 상품 상태 (list)
+
+        참고:
+            2024년 10월 10일부터 필수 구매옵션 입력 시 데이터 형식에 맞게 입력해야 정상적으로 상품등록이 가능합니다.
+            자유 구매옵션 구성을 할 경우 노출에 제한이 됩니다.
+        """
+        return self.get(f"/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/{category_code}")
 
     def upload_image_by_url(self, image_url: str) -> tuple[int, dict[str, Any]]:
         """이미지 업로드 (URL 방식) - OpenAPI v2 기준"""
@@ -182,6 +196,39 @@ class CoupangClient:
     def update_product(self, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         """상품 수정 (승인 필요)"""
         return self.put("/v2/providers/seller_api/apis/api/v1/marketplace/seller-products", payload)
+
+    def update_product_partial(self, seller_product_id: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """
+        상품 수정 (승인 불필요)
+        
+        배송 및 반품지 관련 정보를 별도의 승인 절차 없이 빠르게 수정할 수 있습니다.
+        
+        수정 가능한 속성:
+        - deliveryMethod: 배송방법
+        - deliveryCompanyCode: 택배사 코드
+        - deliveryChargeType: 배송비종류
+        - deliveryCharge: 기본배송비
+        - freeShipOverAmount: 무료배송을 위한 조건 금액
+        - deliveryChargeOnReturn: 초도반품배송비
+        - remoteAreaDeliverable: 도서산간 배송여부
+        - unionDeliveryType: 묶음 배송여부
+        - returnCenterCode: 반품지센터코드
+        - returnChargeName: 반품지명
+        - companyContactNumber: 반품지연락처
+        - returnZipCode: 반품지우편번호
+        - returnAddress: 반품지주소
+        - returnAddressDetail: 반품지주소상세
+        - returnCharge: 반품배송비
+        - outboundShippingPlaceCode: 출고지주소코드
+        - outboundShippingTimeDay: 기준출고일(일)
+        - pccNeeded: PCC(개인통관부호) 필수/비필수 여부
+        - extraInfoMessage: 주문제작 안내 메시지
+        
+        제한사항:
+        - '임시저장중', '승인대기중' 상태의 상품은 수정할 수 없습니다.
+        - 모든 항목은 선택적(Optional)이며, 원하는 항목만 입력하여 수정 가능합니다.
+        """
+        return self.put(f"/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/{seller_product_id}/partial", payload)
     
     def approve_product(self, seller_product_id: str) -> tuple[int, dict[str, Any]]:
         """상품 승인 요청"""
@@ -219,11 +266,136 @@ class CoupangClient:
             params["createdAt"] = created_at
             
         return self.get("/v2/providers/seller_api/apis/api/v1/marketplace/seller-products", params)
-
+    
+    def get_inflow_status(self, vendor_id: str | None = None) -> tuple[int, dict[str, Any]]:
+        """
+        상품 등록 현황 조회
+        
+        Returns:
+            - vendorId: 판매자 ID
+            - restricted: 상품 생성 불가 여부 (true: 생성불가, false: 생성가능)
+            - registeredCount: 등록된 상품수 (삭제 상품 제외)
+            - permittedCount: 생성 가능한 최대 상품수 (null로 표시될 경우 제한없음)
+        """
+        vid = (vendor_id or self._vendor_id).strip()
+        return self.get(f"/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/inflow-status?vendorId={vid}")
+    
+    def get_products_by_time_frame(
+        self,
+        created_at_from: str,
+        created_at_to: str,
+        vendor_id: str | None = None
+    ) -> tuple[int, dict[str, Any]]:
+        """
+        상품 목록 구간 조회 (생성일시 기준, 최대 10분 조회 가능)
+        
+        Args:
+            created_at_from: 생성 시작일시 (yyyy-MM-ddTHH:mm:ss)
+            created_at_to: 생성 종료일시 (yyyy-MM-ddTHH:mm:ss)
+            vendor_id: 판매자 ID (선택사항)
+        
+        Returns:
+            생성일시 기준의 상품 목록
+        """
+        vid = (vendor_id or self._vendor_id).strip()
+        return self.get(
+            f"/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/time-frame?vendorId={vid}&createdAtFrom={created_at_from}&createdAtTo={created_at_to}"
+        )
+    
+    def get_product_status_history(
+        self,
+        seller_product_id: str,
+        next_token: str | None = None,
+        max_per_page: int = 10
+    ) -> tuple[int, dict[str, Any]]:
+        """
+        상품 상태변경 이력 조회
+        
+        Args:
+            seller_product_id: 등록상품ID
+            next_token: 다음 페이지 토큰 (선택사항)
+            max_per_page: 페이지당 건수 (기본값: 10)
+        
+        Returns:
+            상태변경 이력 목록
+            
+            상태값:
+            - 심사중, 임시저장, 승인대기중, 승인완료, 부분승인완료, 승인반려, 상품삭제
+            
+            createdBy:
+            - '쿠팡 셀러 시스템'일 경우 '쿠팡 셀러 시스템'이 자동으로 처리된 것
+        """
+        params: dict[str, Any] = {"maxPerPage": max_per_page}
+        if next_token:
+            params["nextToken"] = next_token
+        
+        return self.get(
+            f"/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/{seller_product_id}/histories",
+            params
+        )
+    
+    def get_products_by_external_sku(
+        self,
+        external_vendor_sku_code: str,
+        vendor_id: str | None = None
+    ) -> tuple[int, dict[str, Any]]:
+        """
+        상품 요약 정보 조회 (externalVendorSku로 조회)
+        
+        Args:
+            external_vendor_sku_code: 판매자 상품코드 (업체상품코드)
+            vendor_id: 판매자 ID (선택사항)
+        
+        Returns:
+            externalVendorSku로 매칭되는 상품 목록
+            
+        주의:
+            - 셀러 서버 에러 발생 시 API가 일시적으로 불가능할 수 있음
+            - 정상시간 이후 재시도 권장
+        """
+        vid = (vendor_id or self._vendor_id).strip()
+        return self.get(
+            f"/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/external-vendor-sku-codes/{external_vendor_sku_code}"
+        )
+    
+    def get_vendor_item_inventory(self, vendor_item_id: str) -> tuple[int, dict[str, Any]]:
+        """
+        상품 아이템별 재고수량, 판매가격, 판매상태를 조회한다.
+        
+        Returns:
+            - sellerItemId: 옵션아이디
+            - amountInStock: 옵션잔여수량
+            - salePrice: 옵션판매가격
+            - onSale: 옵션판매상태 (true/false)
+        """
+        return self.get(f"/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/{vendor_item_id}/inventories")
+    
     def update_stock(self, vendor_item_id: str, quantity: int) -> tuple[int, dict[str, Any]]:
         """상품 아이템별 수량 변경"""
         return self.put(f"/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/{vendor_item_id}/quantities/{quantity}")
-
+    
+    def update_original_price(self, vendor_item_id: str, original_price: int) -> tuple[int, dict[str, Any]]:
+        """
+        상품 아이템별 할인율 기준가격 (originalPrice) 변경
+        
+        할인율 기준가는 할인율(%)표시를 위한 할인전 금액으로,
+        판매가격과 동일하게 입력 시 '쿠팡가'(saleprice)로 노출됩니다.
+        
+        Args:
+            vendor_item_id: 옵션ID (vendorItemId)
+            original_price: 할인율 기준가 (최소 10원 단위)
+        
+        Returns:
+            - code: HTTP 상태코드
+            - data: 응답 데이터
+            
+        주의:
+            - 이 기능은 승인 완료된 상품에서만 사용 가능합니다.
+            - 삭제된 상품의 originalPrice는 변경 불가능합니다.
+            - 10원 단위로 입력 가능합니다 (1원 단위 입력 불가).
+        """
+        return self.put(f"/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/{vendor_item_id}/original-prices/{original_price}")
+    
     def update_price(self, vendor_item_id: str, price: int, force: bool = False) -> tuple[int, dict[str, Any]]:
         """상품 아이템별 가격 변경"""
         return self._update_price_internal(vendor_item_id, price, force) 
@@ -245,7 +417,97 @@ class CoupangClient:
     def resume_sales(self, vendor_item_id: str) -> tuple[int, dict[str, Any]]:
         """상품 아이템별 판매 재개"""
         return self.put(f"/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/{vendor_item_id}/sales/resume")
-
+    
+    def activate_auto_generated_option(self, vendor_item_id: str) -> tuple[int, dict[str, Any]]:
+        """
+        자동생성옵션 활성화 (개별 옵션상품 단위)
+        
+        판매자님이 등록한 상품에 대해 자동생성옵션을 활성화한다면,
+        조건에 맞는 옵션이 자동생성 됩니다.
+        
+        Args:
+            vendor_item_id: 옵션ID (vendorItemId)
+                벤더아이템에 부여되는 고유 번호
+        
+        Returns:
+            - code: HTTP 상태코드
+            - data: 응답 데이터
+                - code: 결과코드 (SUCCESS, PROCESSING, FAILED)
+                - message: 결과 메시지 (FAILED일 경우 원인 포함)
+                - data: "success" 또는 null
+        
+        참고:
+            - 이 기능은 승인 완료된 상품에서만 사용 가능합니다.
+            - 자동생성옵션은 쿠팡 시스템이 자동으로 생성합니다.
+        """
+        return self.post(f"/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/{vendor_item_id}/auto-generated/opt-in")
+    
+    def deactivate_auto_generated_option(self, vendor_item_id: str) -> tuple[int, dict[str, Any]]:
+        """
+        자동생성옵션 비활성화 (개별 옵션상품 단위)
+        
+        더 이상 옵션이 자동 생성되지 않습니다.
+        이미 자동 생성된 옵션을 더 이상 판매하고 싶지 않을 때 사용합니다.
+        판매 중지를 설정하시면 됩니다.
+        
+        Args:
+            vendor_item_id: 옵션ID (vendorItemId)
+                벤더아이템에 부여되는 고유 번호
+        
+        Returns:
+            - code: HTTP 상태코드
+            - data: 응답 데이터
+                - code: 결과코드 (SUCCESS, PROCESSING, FAILED)
+                - message: 결과 메시지
+                - data: "success" 또는 null
+        
+        참고:
+            - 이미 자동 생성된 옵션은 삭제되지 않습니다.
+            - 더 이상 옵션이 생성되지 않습니다.
+        """
+        return self.post(f"/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/{vendor_item_id}/auto-generated/opt-out")
+    
+    def activate_auto_generated_options_all(self) -> tuple[int, dict[str, Any]]:
+        """
+        자동생성옵션 활성화 (전체 상품 단위)
+        
+        판매자님이 등록한 모든 상품에 대해 자동생성옵션을 활성화한다면,
+        조건에 맞는 옵션이 자동생성 됩니다.
+        
+        Returns:
+            - code: HTTP 상태코드
+            - data: 응답 데이터
+                - code: 결과코드 (SUCCESS, PROCESSING, FAILED)
+                - message: 결과 메시지
+                - data: "success" 또는 null
+        
+        참고:
+            - 이 기능은 vendorId가 필요합니다.
+        """
+        return self.post(f"/v2/providers/seller_api/apis/api/v1/marketplace/seller/auto-generated/opt-in")
+    
+    def deactivate_auto_generated_options_all(self) -> tuple[int, dict[str, Any]]:
+        """
+        자동생성옵션 비활성화 (전체 상품 단위)
+        
+        판매자님이 기존 등록 상품에 대해 자동생성옵션을 비활성화 요청한다면,
+        더 이상 옵션이 자동생성되지 않습니다.
+        이미 자동생성된 옵션을 더 이상 판매하고 싶지 않을 때 사용합니다.
+        판매 중지를 설정하시면 됩니다.
+        
+        Returns:
+            - code: HTTP 상태코드
+            - data: 응답 데이터
+                - code: 결과코드 (SUCCESS, PROCESSING, FAILED)
+                - message: 결과 메시지
+                - data: "success" 또는 null
+        
+        참고:
+            - 이 기능은 vendorId가 필요합니다.
+            - 이미 자동 생성된 옵션은 삭제되지 않습니다.
+        """
+        return self.post(f"/v2/providers/seller_api/apis/api/v1/marketplace/seller/auto-generated/opt-out")
+    
     # --------------------------------------------------------------------------
     # 3. 주문/배송 API (Order/Delivery API)
     # --------------------------------------------------------------------------
