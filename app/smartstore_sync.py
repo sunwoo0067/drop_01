@@ -68,12 +68,18 @@ def _build_smartstore_payload(
     image_urls: list[str] | None = None,
     origin: str | None = None,
 ) -> dict:
-    images = []
+    images_list = []
     for url in (image_urls or []):
         if url:
-            images.append({"imageUrl": str(url)})
-        if len(images) >= 10:
+            images_list.append({"imageUrl": str(url)})
+        if len(images_list) >= 10:
             break
+    images = None
+    if images_list:
+        images = {
+            "representativeImage": images_list[0],
+            "optionalImages": images_list[1:],
+        }
     origin_product = {
         "statusType": "SALE",
         "categoryNo": category_no,
@@ -82,13 +88,14 @@ def _build_smartstore_payload(
         "detailContent": detail_content,
         "salePrice": sale_price,
         "stockQuantity": stock_quantity,
-        "images": images,
         "originArea": {
             "type": "IMPORT",
             "code": "0000",
             "content": origin or "상세설명참조",
         },
     }
+    if images:
+        origin_product["images"] = images
     if detail_attribute:
         origin_product["detailAttribute"] = detail_attribute
     smartstore_channel_product = {
