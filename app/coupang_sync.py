@@ -4,7 +4,7 @@ import logging
 import re
 import uuid
 from typing import Any
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import os
 import time
 
@@ -14,19 +14,14 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 
 from app.coupang_client import CoupangClient
-from app.models import (
-    MarketAccount,
-    MarketOrderRaw,
-    MarketProductRaw,
-    SupplierRawFetchLog,
-    Product,
-    MarketListing,
-    SupplierAccount,
-    SupplierItemRaw,
-    SupplierOrderRaw,
     SupplierOrder,
     Order,
     OrderStatusHistory,
+    MarketInquiryRaw,
+    MarketRevenueRaw,
+    MarketSettlementRaw,
+    MarketReturnRaw,
+    MarketExchangeRaw,
 )
 from app.ownerclan_client import OwnerClanClient
 from app.ownerclan_sync import get_primary_ownerclan_account
@@ -2873,3 +2868,287 @@ def _get_coupang_product_metadata(
         "return_center_detail": return_center_detail,
         "shipping_fee": shipping_fee,
     }
+
+
+def sync_coupang_inquiries(session: Session, account_id: uuid.UUID, days: int = 7) -> int:
+    """
+    쿠팡 고객문의(상품/고객센터) 동기화
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account or account.market_code != "COUPANG":
+        return 0
+    client = _get_client_for_account(account)
+
+    end_date = datetime.now(timezone.utc)
+    start_date = end_date - timedelta(days=min(days, 7))  # 쿠팡 API 7일 제한
+    
+    start_str = start_date.strftime("%Y-%m-%d")
+    end_str = end_date.strftime("%Y-%m-%d")
+
+    total = 0
+    # 1. 상품별 온라인 문의
+    for page in range(1, 10):
+        code, data = client.get_customer_inquiries(
+            inquiry_start_at=start_str,
+            inquiry_end_at=end_str,
+            page_num=page,
+            page_size=50
+        )
+        _log_fetch(session, account, "get_customer_inquiries", {"page": page}, code, data)
+        if code != 200: break
+        
+        items = data.get("data", []) if isinstance(data, dict) else []
+        if not items: break
+
+        for item in items:
+            inquiry_id = str(item.get("inquiryId"))
+            stmt = insert(MarketInquiryRaw).values(
+                market_code="COUPANG",
+                account_id=account.id,
+                inquiry_id=inquiry_id,
+                raw=item,
+                fetched_at=datetime.now(timezone.utc)
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["market_code", "account_id", "inquiry_id"],
+                set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at}
+            )
+            session.execute(stmt)
+            total += 1
+        session.commit()
+    
+    # 2. 고객센터 이관 문의
+    for page in range(1, 10):
+        code, data = client.get_call_center_inquiries(
+            inquiry_start_at=start_str,
+            inquiry_end_at=end_str,
+            page_num=page,
+            page_size=30
+        )
+        _log_fetch(session, account, "get_call_center_inquiries", {"page": page}, code, data)
+        if code != 200: break
+        items = data.get("data", []) if isinstance(data, dict) else []
+        if not items: break
+
+        for item in items:
+            inquiry_id = str(item.get("inquiryId"))
+            stmt = insert(MarketInquiryRaw).values(
+                market_code="COUPANG",
+                account_id=account.id,
+                inquiry_id=inquiry_id,
+                raw=item,
+                fetched_at=datetime.now(timezone.utc)
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["market_code", "account_id", "inquiry_id"],
+                set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at}
+            )
+            session.execute(stmt)
+            total += 1
+        session.commit()
+
+    return total
+
+
+def sync_coupang_revenue(session: Session, account_id: uuid.UUID, days: int = 30) -> int:
+    """
+    쿠팡 매출내역 동기화
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account or account.market_code != "COUPANG":
+        return 0
+    client = _get_client_for_account(account)
+
+    end_date = datetime.now(timezone.utc) - timedelta(days=1)  # 전일까지만 조회 가능
+    start_date = end_date - timedelta(days=min(days, 31))  # 최대 31일
+    
+    start_str = start_date.strftime("%Y-%m-%d")
+    end_str = end_date.strftime("%Y-%m-%d")
+
+    total = 0
+    token = ""
+    while True:
+        code, data = client.get_revenue_history(
+            recognition_date_from=start_str,
+            recognition_date_to=end_str,
+            token=token,
+            max_per_page=50
+        )
+        _log_fetch(session, account, "get_revenue_history", {"token": token}, code, data)
+        if code != 200: break
+        
+        items = data.get("data", []) if isinstance(data, dict) else []
+        if not items: break
+
+        for item in items:
+            order_id = str(item.get("orderId"))
+            sale_type = str(item.get("saleType", "SALE"))
+            stmt = insert(MarketRevenueRaw).values(
+                market_code="COUPANG",
+                account_id=account.id,
+                order_id=order_id,
+                sale_type=sale_type,
+                raw=item,
+                fetched_at=datetime.now(timezone.utc)
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["market_code", "account_id", "order_id", "sale_type"],
+                set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at}
+            )
+            session.execute(stmt)
+            total += 1
+        session.commit()
+        
+        token = data.get("nextToken") if isinstance(data, dict) else ""
+        if not token: break
+
+    return total
+
+
+def sync_coupang_settlements(session: Session, account_id: uuid.UUID) -> int:
+    """
+    쿠팡 지급내역 동기화 (최근 3개월)
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account or account.market_code != "COUPANG":
+        return 0
+    client = _get_client_for_account(account)
+
+    now = datetime.now(timezone.utc)
+    total = 0
+    # 최근 3개월치 조회
+    for i in range(3):
+        target_month = (now - timedelta(days=i*30)).strftime("%Y-%m")
+        code, data = client.get_settlement_histories(target_month)
+        _log_fetch(session, account, "get_settlement_histories", {"month": target_month}, code, data)
+        if code != 200: continue
+        
+        # 지급내역은 리스트 형태로 오거나 단건일 수 있음 (문서 확인 필요하나 보통 data에 리스트)
+        items = data.get("data", []) if isinstance(data, dict) else []
+        if not isinstance(items, list): items = [items]
+
+        for item in items:
+            stmt = insert(MarketSettlementRaw).values(
+                market_code="COUPANG",
+                account_id=account.id,
+                recognition_year_month=target_month,
+                raw=item,
+                fetched_at=datetime.now(timezone.utc)
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["market_code", "account_id", "recognition_year_month"],
+                set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at}
+            )
+            session.execute(stmt)
+            total += 1
+        session.commit()
+
+    return total
+
+
+def sync_coupang_returns(session: Session, account_id: uuid.UUID, days: int = 30) -> int:
+    """
+    쿠팡 반품요청 동기화
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account or account.market_code != "COUPANG":
+        return 0
+    client = _get_client_for_account(account)
+
+    end_date = datetime.now(timezone.utc)
+    start_date = end_date - timedelta(days=days)
+    
+    # v6 API: yyyy-MM-ddTHH:mm
+    start_str = start_date.strftime("%Y-%m-%dT%H:%M")
+    end_str = end_date.strftime("%Y-%m-%dT%H:%M")
+
+    total = 0
+    next_token = None
+    while True:
+        code, data = client.get_return_requests(
+            created_at_from=start_str,
+            created_at_to=end_str,
+            next_token=next_token,
+            max_per_page=50
+        )
+        _log_fetch(session, account, "get_return_requests", {"nextToken": next_token}, code, data)
+        if code != 200: break
+        
+        items = data.get("data", []) if isinstance(data, dict) else []
+        if not items: break
+
+        for item in items:
+            receipt_id = str(item.get("receiptId"))
+            stmt = insert(MarketReturnRaw).values(
+                market_code="COUPANG",
+                account_id=account.id,
+                receipt_id=receipt_id,
+                raw=item,
+                fetched_at=datetime.now(timezone.utc)
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["market_code", "account_id", "receipt_id"],
+                set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at}
+            )
+            session.execute(stmt)
+            total += 1
+        session.commit()
+        
+        next_token = data.get("nextToken") if isinstance(data, dict) else None
+        if not next_token: break
+
+    return total
+
+
+def sync_coupang_exchanges(session: Session, account_id: uuid.UUID, days: int = 30) -> int:
+    """
+    쿠팡 교환요청 동기화
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account or account.market_code != "COUPANG":
+        return 0
+    client = _get_client_for_account(account)
+
+    end_date = datetime.now(timezone.utc)
+    start_date = end_date - timedelta(days=days)
+    
+    # v4 API: yyyy-MM-ddTHH:mm:ss
+    start_str = start_date.strftime("%Y-%m-%dT%H:%M:%S")
+    end_str = end_date.strftime("%Y-%m-%dT%H:%M:%S")
+
+    total = 0
+    next_token = None
+    while True:
+        code, data = client.get_exchange_requests(
+            created_at_from=start_str,
+            created_at_to=end_str,
+            next_token=next_token,
+            max_per_page=50
+        )
+        _log_fetch(session, account, "get_exchange_requests", {"nextToken": next_token}, code, data)
+        if code != 200: break
+        
+        items = data.get("data", []) if isinstance(data, dict) else []
+        if not items: break
+
+        for item in items:
+            exchange_id = str(item.get("exchangeId"))
+            stmt = insert(MarketExchangeRaw).values(
+                market_code="COUPANG",
+                account_id=account.id,
+                exchange_id=exchange_id,
+                raw=item,
+                fetched_at=datetime.now(timezone.utc)
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["market_code", "account_id", "exchange_id"],
+                set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at}
+            )
+            session.execute(stmt)
+            total += 1
+        session.commit()
+        
+        next_token = data.get("nextToken") if isinstance(data, dict) else None
+        if not next_token: break
+
+    return total

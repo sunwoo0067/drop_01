@@ -1328,3 +1328,215 @@ class CoupangClient:
     def get_rocket_product(self, seller_product_id: str) -> tuple[int, dict[str, Any]]:
         """로켓그로스 상품 조회"""
         return self.get(f"/v2/providers/rocket_growth_api/apis/api/v1/products/{seller_product_id}")
+
+    # --------------------------------------------------------------------------
+    # 4. 고객문의 API (Customer Service API)
+    # --------------------------------------------------------------------------
+
+    def get_customer_inquiries(
+        self,
+        answered_type: str = "ALL",
+        inquiry_start_at: str | None = None,
+        inquiry_end_at: str | None = None,
+        page_num: int = 1,
+        page_size: int = 10,
+        vendor_id: str | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        """
+        상품별 고객문의 조회
+        
+        Args:
+            answered_type: 답변 상태 (ALL, ANSWERED, NOANSWER)
+            inquiry_start_at: 조회시작일 (yyyy-MM-dd)
+            inquiry_end_at: 조회종료일 (yyyy-MM-dd)
+            page_num: 현재 페이지
+            page_size: 페이지 크기 (최대 50)
+            vendor_id: 판매자 ID (선택사항)
+            
+        최대 조회 기간은 7일까지 설정 가능합니다.
+        """
+        vid = (vendor_id or self._vendor_id).strip()
+        params: dict[str, Any] = {
+            "vendorId": vid,
+            "answeredType": answered_type,
+            "pageNum": page_num,
+            "pageSize": page_size,
+        }
+        if inquiry_start_at:
+            params["inquiryStartAt"] = inquiry_start_at
+        if inquiry_end_at:
+            params["inquiryEndAt"] = inquiry_end_at
+            
+        return self.get(f"/v2/providers/openapi/apis/api/v5/vendors/{vid}/onlineInquiries", params)
+
+    def reply_to_customer_inquiry(
+        self,
+        inquiry_id: int | str,
+        content: str,
+        reply_by: str,
+        vendor_id: str | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        """
+        상품별 고객문의 답변
+        
+        Args:
+            inquiry_id: 질문 ID
+            content: 답변 내용 (줄바꿈은 \\n 사용)
+            reply_by: 응답자 셀러포탈(WING) 아이디
+            vendor_id: 판매자 ID (선택사항)
+        """
+        vid = (vendor_id or self._vendor_id).strip()
+        payload = {
+            "content": content,
+            "vendorId": vid,
+            "replyBy": reply_by,
+        }
+        return self.post(f"/v2/providers/openapi/apis/api/v4/vendors/{vid}/onlineInquiries/{inquiry_id}/replies", payload)
+
+    def get_call_center_inquiries(
+        self,
+        partner_counseling_status: str = "NONE",
+        inquiry_start_at: str | None = None,
+        inquiry_end_at: str | None = None,
+        order_id: int | str | None = None,
+        vendor_item_id: str | None = None,
+        page_num: int = 1,
+        page_size: int = 10,
+        vendor_id: str | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        """
+        쿠팡 고객센터 문의 조회
+        
+        Args:
+            partner_counseling_status: 문의 상태 (NONE, ANSWER, NO_ANSWER, TRANSFER)
+            inquiry_start_at: 조회시작일 (yyyy-MM-dd)
+            inquiry_end_at: 조회종료일 (yyyy-MM-dd)
+            order_id: 주문번호
+            vendor_item_id: 옵션 ID
+            page_num: 현재 페이지
+            page_size: 페이지 크기 (최대 30)
+            vendor_id: 판매자 ID (선택사항)
+            
+        조회 기간은 최대 7일까지 설정 가능합니다.
+        """
+        vid = (vendor_id or self._vendor_id).strip()
+        params: dict[str, Any] = {
+            "vendorId": vid,
+            "partnerCounselingStatus": partner_counseling_status,
+            "pageNum": page_num,
+            "pageSize": page_size,
+        }
+        if inquiry_start_at:
+            params["inquiryStartAt"] = inquiry_start_at
+        if inquiry_end_at:
+            params["inquiryEndAt"] = inquiry_end_at
+        if order_id:
+            params["orderId"] = order_id
+        if vendor_item_id:
+            params["vendorItemId"] = vendor_item_id
+            
+        return self.get(f"/v2/providers/openapi/apis/api/v5/vendors/{vid}/callCenterInquiries", params)
+
+    def get_call_center_inquiry(self, inquiry_id: int | str) -> tuple[int, dict[str, Any]]:
+        """
+        쿠팡 고객센터 문의 단건 조회
+        
+        Args:
+            inquiry_id: 상담번호 (질문 ID)
+        """
+        return self.get(f"/v2/providers/openapi/apis/api/v5/vendors/callCenterInquiries/{inquiry_id}")
+
+    def reply_to_call_center_inquiry(
+        self,
+        inquiry_id: int | str,
+        content: str,
+        reply_by: str,
+        parent_answer_id: int | str,
+        vendor_id: str | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        """
+        쿠팡 고객센터 문의 답변
+        
+        Args:
+            inquiry_id: 상담번호 (질문 ID)
+            content: 답변 내용 (2~1000자, 줄바꿈은 \\n 사용)
+            reply_by: 실사용자ID(쿠팡 Wing ID)
+            parent_answer_id: 부모이관글 ID (answerId)
+            vendor_id: 판매자 ID (선택사항)
+        """
+        vid = (vendor_id or self._vendor_id).strip()
+        payload = {
+            "vendorId": vid,
+            "inquiryId": str(inquiry_id),
+            "content": content,
+            "replyBy": reply_by,
+            "parentAnswerId": parent_answer_id,
+        }
+        return self.post(f"/v2/providers/openapi/apis/api/v4/vendors/{vid}/callCenterInquiries/{inquiry_id}/replies", payload)
+
+    def confirm_call_center_inquiry(
+        self,
+        inquiry_id: int | str,
+        confirm_by: str,
+        vendor_id: str | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        """
+        쿠팡 고객센터 문의 확인 (미확인 상태:TRANSFER 일 때 사용)
+        
+        Args:
+            inquiry_id: 상담번호 (질문 ID)
+            confirm_by: 실사용자ID(쿠팡 Wing ID)
+            vendor_id: 판매자 ID (선택사항)
+        """
+        vid = (vendor_id or self._vendor_id).strip()
+        payload = {
+            "confirmBy": confirm_by,
+        }
+        return self.post(f"/v2/providers/openapi/apis/api/v4/vendors/{vid}/callCenterInquiries/{inquiry_id}/confirms", payload)
+
+    # --------------------------------------------------------------------------
+    # 5. 정산 API (Settlement API)
+    # --------------------------------------------------------------------------
+
+    def get_revenue_history(
+        self,
+        recognition_date_from: str,
+        recognition_date_to: str,
+        token: str = "",
+        max_per_page: int = 50,
+        vendor_id: str | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        """
+        매출내역 조회
+        
+        Args:
+            recognition_date_from: 매출인식 시작일 (yyyy-MM-dd)
+            recognition_date_to: 매출인식 종료일 (yyyy-MM-dd)
+            token: 다음 페이지 조회를 위한 토큰 (첫 페이지는 "")
+            max_per_page: 페이지당 건수 (최대 50)
+            vendor_id: 판매자 ID (선택사항)
+            
+        최대 31일 이내 범위로 조회 가능하며, 전일 날짜까지만 조회할 수 있습니다.
+        """
+        vid = (vendor_id or self._vendor_id).strip()
+        params: dict[str, Any] = {
+            "vendorId": vid,
+            "recognitionDateFrom": recognition_date_from,
+            "recognitionDateTo": recognition_date_to,
+            "token": token,
+            "maxPerPage": max_per_page,
+        }
+        return self.get("/v2/providers/openapi/apis/api/v1/revenue-history", params)
+
+    def get_settlement_histories(
+        self,
+        revenue_recognition_year_month: str,
+    ) -> tuple[int, dict[str, Any]]:
+        """
+        지급내역 조회
+        
+        Args:
+            revenue_recognition_year_month: 매출인식월 (yyyy-MM)
+        """
+        params = {"revenueRecognitionYearMonth": revenue_recognition_year_month}
+        return self.get("/v2/providers/marketplace_openapi/apis/api/v1/settlement-histories", params)

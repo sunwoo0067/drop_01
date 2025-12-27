@@ -14,7 +14,8 @@ from sqlalchemy.orm import Session
 from app.models import (
     SalesAnalytics, Order, OrderItem, Product, 
     SourcingRecommendation, SupplierPerformance,
-    SourcingCandidate, BenchmarkProduct
+    SourcingCandidate, BenchmarkProduct,
+    MarketRevenueRaw, MarketSettlementRaw
 )
 from app.services.ai import AIService
 from app.services.ai.exceptions import wrap_exception, AIError
@@ -74,6 +75,14 @@ class SalesAnalyticsService:
         
         # 주문 데이터 수집
         order_stats = self._collect_order_stats(product_id, period_start, period_end)
+        
+        # 실제 마켓 데이터 수집 (쿠팡 등 정산 데이터 반영)
+        actual_stats = self._collect_actual_market_stats(product_id, period_start, period_end)
+        if actual_stats["actual_revenue"] > 0:
+            logger.info(f"Using actual market revenue for product {product_id}")
+            order_stats["total_revenue"] = actual_stats["actual_revenue"]
+            order_stats["total_profit"] = actual_stats["actual_profit"]
+            order_stats["avg_margin_rate"] = (actual_stats["actual_profit"] / actual_stats["actual_revenue"]) if actual_stats["actual_revenue"] > 0 else 0.0
         
         # 전 대비 성장률 계산
         growth_stats = self._calculate_growth_rate(
@@ -186,6 +195,84 @@ class SalesAnalyticsService:
             "total_revenue": total_revenue,
             "total_profit": total_profit,
             "avg_margin_rate": avg_margin_rate
+        }
+
+    def _collect_actual_market_stats(
+        self,
+        product_id: uuid.UUID,
+        period_start: datetime,
+        period_end: datetime
+    ) -> Dict[str, Any]:
+        """
+        MarketRevenueRaw 데이터를 기반으로 실제 매출 및 비용(수수료 등)을 집계합니다.
+        """
+        # 해당 상품이 포함된 주문들의 order_number 목록 조회 (쿠팡은 order_id가 order_number와 대칭)
+        order_numbers = (
+            self.db.execute(
+                select(Order.order_number)
+                .join(OrderItem, Order.id == OrderItem.order_id)
+                .where(OrderItem.product_id == product_id)
+                .where(Order.created_at >= period_start)
+                .where(Order.created_at <= period_end)
+            )
+            .scalars()
+            .all()
+        )
+        
+        if not order_numbers:
+            return {
+                "actual_revenue": 0,
+                "actual_fees": 0,
+                "actual_profit": 0,
+                "net_settlement": 0
+            }
+
+        # MarketRevenueRaw에서 해당 주문들의 데이터 조회
+        revenue_items = (
+            self.db.execute(
+                select(MarketRevenueRaw)
+                .where(MarketRevenueRaw.order_id.in_(order_numbers))
+            )
+            .scalars()
+            .all()
+        )
+        
+        total_actual_revenue = 0
+        total_fees = 0
+        
+        for item in revenue_items:
+            raw = item.raw
+            # 쿠팡 정산 API: saleAmount(판매액), settlementTargetAmount(정산대상액)
+            sale_amount = raw.get("saleAmount", 0)
+            settlement_amount = raw.get("settlementTargetAmount", 0)
+            
+            total_actual_revenue += sale_amount
+            total_fees += (sale_amount - settlement_amount)
+            
+        # 상품 구매 원가 계산
+        product = self.db.get(Product, product_id)
+        cost_price = product.cost_price if product else 0
+        
+        # 실제 주문 수량 확인
+        total_quantity = (
+            self.db.execute(
+                select(func.sum(OrderItem.quantity))
+                .join(Order, Order.id == OrderItem.order_id)
+                .where(OrderItem.product_id == product_id)
+                .where(Order.created_at >= period_start)
+                .where(Order.created_at <= period_end)
+            )
+            .scalar() or 0
+        )
+        
+        total_cost = cost_price * total_quantity
+        actual_profit = total_actual_revenue - total_fees - total_cost
+        
+        return {
+            "actual_revenue": total_actual_revenue,
+            "actual_fees": total_fees,
+            "actual_profit": actual_profit,
+            "net_settlement": total_actual_revenue - total_fees
         }
     
     def _calculate_growth_rate(

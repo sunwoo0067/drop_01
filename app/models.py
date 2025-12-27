@@ -222,6 +222,78 @@ class MarketProductRaw(MarketBase):
     raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
 
+class MarketInquiryRaw(MarketBase):
+    __tablename__ = "market_inquiry_raw"
+    __table_args__ = (
+        UniqueConstraint("market_code", "account_id", "inquiry_id", name="uq_market_inquiry_raw_account_inquiry"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_code: Mapped[str] = mapped_column(Text, nullable=False)
+    account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_accounts.id"), nullable=False)
+    inquiry_id: Mapped[str] = mapped_column(Text, nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    ai_suggested_answer: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class MarketRevenueRaw(MarketBase):
+    __tablename__ = "market_revenue_raw"
+    __table_args__ = (
+        UniqueConstraint("market_code", "account_id", "order_id", "sale_type", name="uq_market_revenue_raw_account_order_type"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_code: Mapped[str] = mapped_column(Text, nullable=False)
+    account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_accounts.id"), nullable=False)
+    order_id: Mapped[str] = mapped_column(Text, nullable=False)
+    sale_type: Mapped[str] = mapped_column(Text, nullable=False) # SALE, REFUND
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+
+class MarketSettlementRaw(MarketBase):
+    __tablename__ = "market_settlement_raw"
+    __table_args__ = (
+        UniqueConstraint("market_code", "account_id", "recognition_year_month", name="uq_market_settlement_raw_account_month"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_code: Mapped[str] = mapped_column(Text, nullable=False)
+    account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_accounts.id"), nullable=False)
+    recognition_year_month: Mapped[str] = mapped_column(Text, nullable=False) # YYYY-MM
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+
+class MarketReturnRaw(MarketBase):
+    __tablename__ = "market_return_raw"
+    __table_args__ = (
+        UniqueConstraint("market_code", "account_id", "receipt_id", name="uq_market_return_raw_account_return"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_code: Mapped[str] = mapped_column(Text, nullable=False)
+    account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_accounts.id"), nullable=False)
+    receipt_id: Mapped[str] = mapped_column(Text, nullable=False)  # 쿠팡 반품 접수번호
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+
+class MarketExchangeRaw(MarketBase):
+    __tablename__ = "market_exchange_raw"
+    __table_args__ = (
+        UniqueConstraint("market_code", "account_id", "exchange_id", name="uq_market_exchange_raw_account_exchange"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_code: Mapped[str] = mapped_column(Text, nullable=False)
+    account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_accounts.id"), nullable=False)
+    exchange_id: Mapped[str] = mapped_column(Text, nullable=False)  # 쿠팡 교환 접수번호
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+
 # --------------------------------------------------------------------------
 # Core Business Domain (Unified)
 # --------------------------------------------------------------------------

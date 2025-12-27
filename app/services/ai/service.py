@@ -335,6 +335,16 @@ class AIService:
             logger.error(f"generate_json failed: {wrapped_error}")
             raise wrapped_error
 
+    async def generate_text(self, prompt: str, model: Optional[str] = None, provider: ProviderType = "auto") -> str:
+        """Generic text generation method"""
+        try:
+            target_provider = self._get_provider(provider)
+            return await target_provider.generate_text(prompt, model=model)
+        except Exception as e:
+            wrapped_error = wrap_exception(e, AIError, provider=provider, prompt="generate_text")
+            logger.error(f"generate_text failed: {wrapped_error}")
+            raise wrapped_error
+
     async def describe_image(self, image_data: bytes, prompt: str = "이 이미지를 상세히 설명해주세요. 특히 상품의 특징, 색상, 디자인, 재질 등을 중심으로 설명해주세요.", provider: ProviderType = "auto") -> str:
         try:
             return await self._get_provider(provider).describe_image(image_data, prompt)
