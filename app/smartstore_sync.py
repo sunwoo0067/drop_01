@@ -65,7 +65,15 @@ def _build_smartstore_payload(
     category_no: str,
     stock_quantity: int,
     detail_attribute: dict | None = None,
+    image_urls: list[str] | None = None,
+    origin: str | None = None,
 ) -> dict:
+    images = []
+    for url in (image_urls or []):
+        if url:
+            images.append({"imageUrl": str(url)})
+        if len(images) >= 10:
+            break
     origin_product = {
         "statusType": "SALE",
         "categoryNo": category_no,
@@ -74,6 +82,12 @@ def _build_smartstore_payload(
         "detailContent": detail_content,
         "salePrice": sale_price,
         "stockQuantity": stock_quantity,
+        "images": images,
+        "originArea": {
+            "type": "IMPORT",
+            "code": "0000",
+            "content": origin or "상세설명참조",
+        },
     }
     if detail_attribute:
         origin_product["detailAttribute"] = detail_attribute
@@ -111,12 +125,16 @@ def _build_detail_attribute(
         "afterServiceInfo": {
             "afterServiceContactNumber": "010-0000-0000",
             "afterServiceGuideContent": "문의는 판매자에게 연락 바랍니다.",
+            "afterServiceTelephoneNumber": "010-0000-0000",
         },
         "minorPurchasable": True,
         "originAreaInfo": {
             "originAreaInfoType": "IMPORT",
             "originAreaInfoContent": content,
         },
+        "productCertificationInfos": [
+            {"kindType": "NOT_REQUIRED"},
+        ],
         "productInfoProvidedNotice": {
             "productInfoProvidedNoticeType": "ETC",
             "etc": {
@@ -281,6 +299,8 @@ class SmartStoreSync:
             stock_quantity = int(getattr(product, "stock_quantity", 0) or 0)
             if stock_quantity <= 0:
                 stock_quantity = 9999
+            if sale_price > 0:
+                sale_price = (sale_price // 10) * 10
             category_no = _coerce_category_no(self._extract_category_no(product, account))
             if not category_no:
                 return {
@@ -305,6 +325,9 @@ class SmartStoreSync:
                 payload.setdefault("name", name)
                 payload.setdefault("categoryNo", category_no)
             else:
+                image_urls = product.processed_image_urls if isinstance(product.processed_image_urls, list) else []
+                if not image_urls and isinstance(raw_payload, dict):
+                    image_urls = raw_payload.get("images") if isinstance(raw_payload.get("images"), list) else []
                 payload = _build_smartstore_payload(
                     name=name,
                     detail_content=product.description or f"{name}의 상세 설명입니다.",
@@ -318,6 +341,8 @@ class SmartStoreSync:
                         manufacturer=(raw_payload or {}).get("manufacturer") if isinstance(raw_payload, dict) else None,
                         origin=(raw_payload or {}).get("origin") if isinstance(raw_payload, dict) else None,
                     ),
+                    image_urls=image_urls,
+                    origin=(raw_payload or {}).get("origin") if isinstance(raw_payload, dict) else None,
                 )
 
             try:
