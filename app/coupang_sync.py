@@ -764,11 +764,13 @@ def sync_ownerclan_orders_to_coupang_invoices(
             resp: dict[str, Any] | None = None
             while attempts <= retry_count:
                 attempts += 1
+                # CoupangClient의 통일된 cancel_order 메서드 사용
                 code, resp = client.cancel_order(
                     order_id=coupang_order_id,
                     vendor_item_ids=vendor_item_ids,
                     receipt_counts=receipt_counts,
                     user_id=user_id,
+                    middle_cancel_code="CCPNER",  # 주소지 등 제휴사 오류/취소
                 )
                 resp = resp if isinstance(resp, dict) else {"_raw": resp}
                 ok = _is_cancel_success(code, resp)
@@ -873,68 +875,6 @@ def sync_ownerclan_orders_to_coupang_invoices(
         "failures": failures[:50],
     }
         
-    if account.market_code != "COUPANG":
-        logger.error(f"Account {account.name} is not a Coupang account")
-        return 0
-        
-    if not account.is_active:
-        logger.info(f"Account {account.name} is inactive, skipping sync")
-        return 0
-
-    try:
-        client = _get_client_for_account(account)
-    except Exception as e:
-        logger.error(f"Failed to initialize client for {account.name}: {e}")
-        return 0
-
-    logger.info(f"Starting product sync for {account.name} ({account.market_code})")
-    
-    total_processed = 0
-    next_token = None
-    
-    while True:
-        # Fetch page
-        code, data = client.get_products(
-            next_token=next_token,
-            max_per_page=50  # Max allowed by Coupang
-        )
-        
-        # Log fetch attempt (optional but good for debugging)
-        _log_fetch(session, account, "get_products", {"nextToken": next_token}, code, data)
-        
-        if code != 200:
-            logger.error(f"Failed to fetch products for {account.name}: {data}")
-            break
-            
-        products = data.get("data", [])
-        if not products:
-            break
-            
-        # Upsert Raw Data
-        for p in products:
-            seller_product_id = str(p.get("sellerProductId"))
-            stmt = insert(MarketProductRaw).values(
-                market_code="COUPANG",
-                account_id=account.id,
-                market_item_id=seller_product_id,
-                raw=p,
-                fetched_at=datetime.now(timezone.utc),
-            )
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["market_code", "account_id", "market_item_id"],
-                set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at}
-            )
-            session.execute(stmt)
-            
-        session.commit()
-        total_processed += len(products)
-        
-        next_token = data.get("nextToken")
-        if not next_token:
-            break
-            
-    logger.info(f"Finished product sync for {account.name}. Total: {total_processed}")
-    return total_processed
 
 
 def sync_coupang_orders_raw(
@@ -943,12 +883,12 @@ def sync_coupang_orders_raw(
     created_at_from: str,
     created_at_to: str,
     status: str | None = None,
-    max_per_page: int = 100,
+    max_per_page: int = 50,
 ) -> int:
     """
     쿠팡 발주서(주문) 목록을 조회하여 MarketOrderRaw에 저장합니다.
 
-    - created_at_from / created_at_to: 쿠팡 API 규격(yyyy-MM-dd)
+    - created_at_from / created_at_to: yyyy-MM-dd 또는 ISO-8601
     - status: 쿠팡 주문 상태 필터(옵션)
     """
     account = session.get(MarketAccount, account_id)
@@ -970,9 +910,30 @@ def sync_coupang_orders_raw(
         logger.error(f"Failed to initialize client for {account.name}: {e}")
         return 0
 
-    total_processed = 0
+    # 기간에 따라 search_type 결정 (24시간 이내면 timeFrame 권장)
+    search_type = None
+    try:
+        def _parse_dt(s: str) -> datetime:
+            s_clean = s.split("+")[0].split("Z")[0].strip()
+            if "T" in s_clean:
+                formats = ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"]
+                for f in formats:
+                    try:
+                        return datetime.strptime(s_clean, f)
+                    except ValueError:
+                        continue
+            return datetime.strptime(s_clean, "%Y-%m-%d")
 
-    # status가 없으면 신규 처리 대상 중심으로 2개 상태를 조회
+        dt_from = _parse_dt(created_at_from)
+        dt_to = _parse_dt(created_at_to)
+        duration_hours = (dt_to - dt_from).total_seconds() / 3600
+        if duration_hours <= 24:
+            search_type = "timeFrame"
+    except Exception:
+        # 파싱 실패 시 기본값(Daily) 사용
+        pass
+
+    total_processed = 0
     statuses = [status] if status else ["ACCEPT", "INSTRUCT"]
 
     for st in statuses:
@@ -985,6 +946,7 @@ def sync_coupang_orders_raw(
                     status=st,
                     next_token=next_token,
                     max_per_page=max_per_page,
+                    search_type=search_type,
                 )
             except Exception as e:
                 logger.error(f"Failed to fetch ordersheets for {account.name}: {e}")
@@ -994,18 +956,20 @@ def sync_coupang_orders_raw(
                 logger.error(f"Failed to fetch ordersheets for {account.name}: HTTP {code} {data}")
                 break
 
-            if isinstance(data, dict) and data.get("code") not in (None, "SUCCESS", 200, "200"):
-                logger.error(f"Failed to fetch ordersheets for {account.name}: {data}")
+            if not isinstance(data, dict):
                 break
 
-            # 응답 구조 방어: top-level nextToken / data.nextToken 모두 지원
-            root = (data or {}).get("data") if isinstance(data, dict) else None
-            if not isinstance(root, dict):
-                root = {}
+            if data.get("code") not in (None, "SUCCESS", 200, "200"):
+                logger.error(f"Failed to fetch ordersheets for {account.name} (API Error): {data}")
+                break
 
-            content = root.get("content")
-            if content is None and isinstance((data or {}).get("data"), list):
-                content = (data or {}).get("data")
+            # 데이터 추출 (배열 형태)
+            content = data.get("data")
+            if not isinstance(content, list):
+                # 하위 구조(content) 확인 (일부 버전 대응)
+                if isinstance(content, dict):
+                    content = content.get("content")
+            
             if not isinstance(content, list) or not content:
                 break
 
@@ -1013,7 +977,9 @@ def sync_coupang_orders_raw(
             for row in content:
                 if not isinstance(row, dict):
                     continue
-                order_id = row.get("orderSheetId") or row.get("orderId") or row.get("shipmentBoxId") or row.get("id")
+                
+                # orderId 식별 (shipmentBoxId 가 필수로 존재하는 경우가 많음)
+                order_id = row.get("orderId") or row.get("shipmentBoxId") or row.get("orderSheetId") or row.get("id")
                 if order_id is None:
                     continue
 
@@ -1037,13 +1003,54 @@ def sync_coupang_orders_raw(
 
             session.commit()
 
-            next_token = None
-            if isinstance(data, dict):
-                next_token = data.get("nextToken") or root.get("nextToken")
+            # nextToken 추출
+            next_token = data.get("nextToken")
+            if not next_token and isinstance(data.get("data"), dict):
+                next_token = data["data"].get("nextToken")
+            
             if not next_token:
                 break
 
     return total_processed
+
+
+def sync_coupang_returns_raw(
+    session: Session,
+    account_id: uuid.UUID,
+    created_at_from: str,
+    created_at_to: str,
+    status: str | None = None,
+) -> int:
+    """
+    쿠팡 반품/취소 요청 목록을 조회하여 수집합니다.
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account or account.market_code != "COUPANG":
+        return 0
+
+    if not account.is_active:
+        return 0
+
+    try:
+        client = _get_client_for_account(account)
+    except Exception as e:
+        logger.error(f"Failed to initialize client for {account.name}: {e}")
+        return 0
+
+    # 반품 요청 조회 (v2/v4 기반)
+    code, data = client.get_return_requests(
+        created_at_from=created_at_from,
+        created_at_to=created_at_to,
+        status=status,
+    )
+    
+    _log_fetch(session, account, "get_return_requests", {"from": created_at_from, "to": created_at_to}, code, data)
+
+    if code != 200:
+        logger.error(f"Failed to fetch return requests: {code} {data}")
+        return 0
+
+    return 1
 
 
 def _log_fetch(session: Session, account: MarketAccount, endpoint: str, payload: dict, code: int, data: dict):

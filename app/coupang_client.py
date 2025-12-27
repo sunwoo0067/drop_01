@@ -605,46 +605,242 @@ class CoupangClient:
         created_at_to: str, 
         status: str | None = None,
         next_token: str | None = None,
-        max_per_page: int = 20,
-        search_type: str = "timeFrame",
+        max_per_page: int = 50,
+        search_type: str | None = None,
     ) -> tuple[int, dict[str, Any]]:
-        """발주서 목록 조회"""
+        """
+        발주서 목록 조회
+        
+        Args:
+            created_at_from: 검색 시작일시 (Daily: yyyy-MM-dd, Minute: yyyy-MM-ddTHH:mm)
+            created_at_to: 검색 종료일시 (Daily: yyyy-MM-dd, Minute: yyyy-MM-ddTHH:mm)
+            status: 발주서 상태 (ACCEPT, INSTRUCT, DEPARTURE, DELIVERING, FINAL_DELIVERY, NONE_TRACKING)
+            next_token: 다음 페이지 조회를 위한 토큰
+            max_per_page: 페이지당 건수 (기본 50, 최대 50)
+            search_type: 'timeFrame'이면 분 단위 전체 조회, 그 외(None 등)는 일 단위 페이징 조회
+        """
         if not status:
-            # 쿠팡 ordersheets(timeFrame) API는 status가 필수인 경우가 많습니다.
             raise ValueError("status is required for get_order_sheets (e.g. ACCEPT, INSTRUCT)")
 
-        # 쿠팡 ordersheets(timeFrame)는 ISO-8601(+09:00) 형태를 요구하는 경우가 많습니다.
-        # 예: 2025-07-29T00:00+09:00 ~ 2025-07-29T23:59+09:00 (초 단위 없이 분까지만)
-        def _normalize(value: str, is_to: bool) -> str:
-            s = (value or "").strip()
-            if "T" in s:
-                return s
-            # yyyy-MM-dd → yyyy-MM-ddT00:00+09:00 / yyyy-MM-ddT23:59+09:00
-            return f"{s}T23:59+09:00" if is_to else f"{s}T00:00+09:00"
+        def _normalize(value: str, is_to: bool, search_mode: str | None) -> str:
+            val = (value or "").strip()
+            # 이미 타임존이 포함되어 있으면 그대로 사용
+            if "+" in val or "%2B" in val:
+                return val
+            
+            if search_mode == "timeFrame" or "T" in val:
+                # 분 단위 조회 전문 (ISO-8601)
+                if "T" not in val:
+                    val = f"{val}T23:59" if is_to else f"{val}T00:00"
+                return f"{val}+09:00"
+            else:
+                # 일 단위 조회 전문 (yyyy-MM-dd)
+                return f"{val}+09:00"
 
         params: dict[str, Any] = {
-            "createdAtFrom": _normalize(created_at_from, is_to=False),
-            "createdAtTo": _normalize(created_at_to, is_to=True),
-            "searchType": search_type,
+            "createdAtFrom": _normalize(created_at_from, False, search_type),
+            "createdAtTo": _normalize(created_at_to, True, search_type),
             "status": status,
             "maxPerPage": max_per_page,
         }
+        if search_type:
+            params["searchType"] = search_type
+            
         if next_token:
             params["nextToken"] = next_token
             
-        # timeFrame(분단위) 목록 조회는 v5로 제공되는 경우가 많지만,
-        # 환경에 따라 v4로 동작하는 경우도 있어 5xx 시 fallback 합니다.
         path_v5 = f"/v2/providers/openapi/apis/api/v5/vendors/{self._vendor_id}/ordersheets"
         code, data = self.get(path_v5, params)
+        
+        # 5xx 에러 시 하위 버전(v4) fallback (필요 시)
         if code >= 500:
             path_v4 = f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/ordersheets"
             return self.get(path_v4, params)
+        
         return code, data
 
+    def get_order_sheets_by_shipment_box_id(self, shipment_box_id: int | str) -> tuple[int, dict[str, Any]]:
+        """
+        발주서 단건 조회 (shipmentBoxId 기준) - v5
+        
+        Args:
+            shipment_box_id: 배송번호(묶음배송번호)
+        """
+        path = f"/v2/providers/openapi/apis/api/v5/vendors/{self._vendor_id}/ordersheets/{shipment_box_id}"
+        return self.get(path)
+
+    def get_order_sheets_by_order_id(self, order_id: int | str) -> tuple[int, dict[str, Any]]:
+        """
+        발주서 단건 조회 (orderId 기준) - v5
+        
+        Args:
+            order_id: 주문번호
+        """
+        path = f"/v2/providers/openapi/apis/api/v5/vendors/{self._vendor_id}/{order_id}/ordersheets"
+        return self.get(path)
+
     def get_order_detail(self, order_sheet_id: str) -> tuple[int, dict[str, Any]]:
-        """발주서(주문) 단건 조회 (orderSheetId 기준)"""
-        # 공식 문서에서 보편적으로 사용되는 단건 조회 패턴.
+        """
+        발주서(주문) 단건 조회 (Legacy - v4)
+        최신 연동은 get_order_sheets_by_shipment_box_id(v5) 사용 권장
+        """
         return self.get(f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/ordersheets/{order_sheet_id}")
+
+    def get_order_history(self, shipment_box_id: int | str) -> tuple[int, dict[str, Any]]:
+        """
+        배송상태 변경 히스토리 조회 - v5
+        
+        Args:
+            shipment_box_id: 묶음배송번호
+        """
+        path = f"/v2/providers/openapi/apis/api/v5/vendors/{self._vendor_id}/ordersheets/{shipment_box_id}/history"
+        return self.get(path)
+
+    def acknowledge_orders(self, shipment_box_ids: list[int | str]) -> tuple[int, dict[str, Any]]:
+        """
+        상품준비중 처리 (결제완료 -> 상품준비중) - v4
+        
+        Args:
+            shipment_box_ids: 상품준비중 상태로 변경할 묶음배송번호 목록 (최대 50개)
+        """
+        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/ordersheets/acknowledgement"
+        payload = {
+            "vendorId": self._vendor_id,
+            "shipmentBoxIds": shipment_box_ids
+        }
+        return self.put(path, payload)
+
+    def upload_invoices(self, invoice_list: list[dict[str, Any]]) -> tuple[int, dict[str, Any]]:
+        """
+        송장업로드 처리 - v4
+        
+        Args:
+            invoice_list: [{
+                "shipmentBoxId": int,
+                "orderId": int,
+                "vendorItemId": int,
+                "deliveryCompanyCode": str,
+                "invoiceNumber": str,
+                "splitShipping": bool,
+                "preSplitShipped": bool,
+                "estimatedShippingDate": str
+            }]
+        """
+        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/orders/invoices"
+        payload = {
+            "vendorId": self._vendor_id,
+            "orderSheetInvoiceApplyDtos": invoice_list
+        }
+        return self.post(path, payload)
+
+    def update_invoices(self, invoice_list: list[dict[str, Any]]) -> tuple[int, dict[str, Any]]:
+        """
+        송장업데이트 처리 - v4 (수정)
+        
+        Args:
+            invoice_list: [{
+                "shipmentBoxId": int,
+                "orderId": int,
+                "vendorItemId": int,
+                "deliveryCompanyCode": str,
+                "invoiceNumber": str,
+                "splitShipping": bool,
+                "preSplitShipped": bool,
+                "estimatedShippingDate": str
+            }]
+        """
+        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/orders/updateInvoices"
+        payload = {
+            "vendorId": self._vendor_id,
+            "orderSheetInvoiceApplyDtos": invoice_list
+        }
+        return self.post(path, payload)
+
+    def complete_stop_shipment(self, receipt_id: int | str, cancel_count: int) -> tuple[int, dict[str, Any]]:
+        """
+        출고중지완료 처리 - v4
+        고객 취소 요청에 대해 아직 발송하지 않았을 때 사용.
+        
+        Args:
+            receipt_id: 반품 접수 ID
+            cancel_count: 출고중지할 수량
+        """
+        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/returnRequests/{receipt_id}/stoppedShipment"
+        payload = {
+            "vendorId": self._vendor_id,
+            "receiptId": int(receipt_id),
+            "cancel_count": cancel_count
+        }
+        return self.put(path, payload)
+
+    def ship_anyway(self, receipt_id: int | str, delivery_company_code: str, invoice_number: str) -> tuple[int, dict[str, Any]]:
+        """
+        이미출고 처리 - v4
+        고객 취소 요청에도 불구하고 이미 상품을 발송했을 때 사용.
+        
+        Args:
+            receipt_id: 반품 접수 ID
+            delivery_company_code: 택배사 코드
+            invoice_number: 송장번호
+        """
+        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/returnRequests/{receipt_id}/completedShipment"
+        payload = {
+            "vendorId": self._vendor_id,
+            "receiptId": int(receipt_id),
+            "deliveryCompanyCode": delivery_company_code,
+            "invoiceNumber": invoice_number
+        }
+        return self.put(path, payload)
+
+    def cancel_order(
+        self, 
+        order_id: int | str, 
+        vendor_item_ids: list[int], 
+        receipt_counts: list[int], 
+        user_id: str,
+        big_cancel_code: str = "CANERR",
+        middle_cancel_code: str = "CCTTER"
+    ) -> tuple[int, dict[str, Any]]:
+        """
+        주문 상품 취소 처리 - v5
+        결제완료/상품준비중 상태의 상품을 판매자가 직접 취소(품절 등)할 때 사용.
+        판매자 점수 하락에 유의 필요.
+        
+        Args:
+            order_id: 주문 번호
+            vendor_item_ids: 취소할 옵션 ID 목록
+            receipt_counts: 취소할 수량 목록 (vendor_item_ids와 1:1 매칭)
+            user_id: 쿠팡 Wing 로그인 ID
+            big_cancel_code: 대분류 사유 (기본 CANERR)
+            middle_cancel_code: 중분류 사유 (기본 CCTTER - 재고문제)
+        """
+        path = f"/v2/providers/openapi/apis/api/v5/vendors/{self._vendor_id}/orders/{order_id}/cancel"
+        payload = {
+            "orderId": int(order_id),
+            "vendorItemIds": vendor_item_ids,
+            "receiptCounts": receipt_counts,
+            "bigCancelCode": big_cancel_code,
+            "middleCancelCode": middle_cancel_code,
+            "userId": user_id,
+            "vendorId": self._vendor_id
+        }
+        return self.post(path, payload)
+
+    def complete_long_term_undelivery(self, shipment_box_id: int | str, invoice_number: str) -> tuple[int, dict[str, Any]]:
+        """
+        장기미배송 배송완료 처리 - v4
+        송장 등록 후 1개월 경과했으나 배송 추적이 안 되는 건을 강제 배송완료 처리.
+        
+        Args:
+            shipment_box_id: 묶음배송번호
+            invoice_number: 송장번호
+        """
+        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/completeLongTermUndelivery"
+        payload = {
+            "shipmentBoxId": int(shipment_box_id),
+            "invoiceNumber": invoice_number
+        }
+        return self.post(path, payload)
 
     def stop_delivery(self, invoice_no: str) -> tuple[int, dict[str, Any]]:
         """배송 중지 요청 (송장 번호 기준) - '출고 중지' 개념과 매핑됨"""
@@ -852,25 +1048,6 @@ class CoupangClient:
         }
         return self.put(f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/exchangeRequests/{receipt_id}/invoice", payload)
 
-    def cancel_order(
-        self,
-        order_id: str,
-        vendor_item_ids: list[int],
-        receipt_counts: list[int],
-        user_id: str,
-        big_cancel_code: str = "CANERR",
-        middle_cancel_code: str = "CCPNER",
-    ) -> tuple[int, dict[str, Any]]:
-        payload = {
-            "orderId": int(order_id),
-            "vendorItemIds": vendor_item_ids,
-            "receiptCounts": receipt_counts,
-            "bigCancelCode": big_cancel_code,
-            "middleCancelCode": middle_cancel_code,
-            "vendorId": self._vendor_id,
-            "userId": user_id,
-        }
-        return self.post(f"/v2/providers/openapi/apis/api/v5/vendors/{self._vendor_id}/orders/{order_id}/cancel", payload)
 
     # --------------------------------------------------------------------------
     # 8. 쿠폰/캐시백 API (Coupon API)
