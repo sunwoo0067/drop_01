@@ -108,7 +108,13 @@ class SmartStoreSync:
             logger.error(f"Error syncing SmartStore products: {e}", exc_info=True)
             return 0
 
-    def register_product(self, market_code: str, account_id: uuid.UUID, product_id: uuid.UUID) -> Dict[str, Any]:
+    def register_product(
+        self,
+        market_code: str,
+        account_id: uuid.UUID,
+        product_id: uuid.UUID,
+        payload_override: dict | None = None,
+    ) -> Dict[str, Any]:
         """
         네이버에 상품을 등록합니다.
         """
@@ -137,15 +143,21 @@ class SmartStoreSync:
             if sale_price <= 0:
                 return {"status": "error", "message": "SmartStore salePrice가 0입니다. 판매가를 설정해 주세요."}
 
-            payload = {
-                "name": name,
-                "detailContent": product.description or f"{name}의 상세 설명입니다.",
-                "salePrice": sale_price,
-                "categoryNo": category_no,
-                "displaySalesStatus": "SALE",
-                "channelType": "ONLINE",
-                "detailUrl": f"https://yourstore.com/products/{product.id}",
-            }
+            if payload_override is not None:
+                if not isinstance(payload_override, dict):
+                    return {"status": "error", "message": "payload는 object 형식이어야 합니다."}
+                payload = payload_override
+                payload.setdefault("name", name)
+            else:
+                payload = {
+                    "name": name,
+                    "detailContent": product.description or f"{name}의 상세 설명입니다.",
+                    "salePrice": sale_price,
+                    "categoryNo": category_no,
+                    "displaySalesStatus": "SALE",
+                    "channelType": "ONLINE",
+                    "detailUrl": f"https://yourstore.com/products/{product.id}",
+                }
 
             try:
                 # 네이버 상품 등록
@@ -205,12 +217,22 @@ def sync_smartstore_products(db: Session, account_id: uuid.UUID) -> int:
     return sync_service.sync_products("SMARTSTORE", account_id)
 
 
-def register_smartstore_product(db: Session, account_id: uuid.UUID, product_id: uuid.UUID) -> Dict[str, Any]:
+def register_smartstore_product(
+    db: Session,
+    account_id: uuid.UUID,
+    product_id: uuid.UUID,
+    payload_override: dict | None = None,
+) -> Dict[str, Any]:
     """
     네이버 상품 등록 함수 (호환용)
     """
     sync_service = SmartStoreSync(db)
-    return sync_service.register_product("SMARTSTORE", account_id, product_id)
+    return sync_service.register_product(
+        "SMARTSTORE",
+        account_id,
+        product_id,
+        payload_override=payload_override,
+    )
 
 
 def delete_smartstore_listing(db: Session, account_id: uuid.UUID, market_item_id: str) -> Tuple[bool, str | None]:

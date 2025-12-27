@@ -14,9 +14,14 @@ from app.db import get_session
 from app.models import Product, MarketListing, MarketAccount, MarketProductRaw
 from app.schemas.product import MarketListingResponse
 from app.smartstore_sync import SmartStoreSync
+from pydantic import BaseModel
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+class SmartStoreRegisterIn(BaseModel):
+    payload: dict | None = None
 
 
 @router.post("/smartstore/register/{product_id}", status_code=202)
@@ -24,6 +29,7 @@ async def register_smartstore_product(
     product_id: uuid.UUID,
     background_tasks: BackgroundTasks,
     account_id: uuid.UUID = Query(alias="accountId"),
+    body: SmartStoreRegisterIn | None = None,
     session: Session = Depends(get_session)
 ):
     """
@@ -42,7 +48,13 @@ async def register_smartstore_product(
             raise HTTPException(status_code=400, detail="스마트스토어 API 정보가 설정되지 않았습니다.")
 
         sync_service = SmartStoreSync(session)
-        result = sync_service.register_product("SMARTSTORE", account.id, product_id)
+        payload_override = body.payload if body else None
+        result = sync_service.register_product(
+            "SMARTSTORE",
+            account.id,
+            product_id,
+            payload_override=payload_override,
+        )
 
         return result
 
