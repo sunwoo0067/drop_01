@@ -72,7 +72,7 @@ def _build_smartstore_payload(
     images_list = []
     for url in (image_urls or []):
         if url:
-            images_list.append({"imageUrl": str(url)})
+            images_list.append({"url": str(url)})
         if len(images_list) >= 10:
             break
     images = None
@@ -388,11 +388,13 @@ class SmartStoreSync:
 
             try:
                 # 네이버 상품 등록
+                origin_payload = payload.get("originProduct") or {}
                 logger.info(
-                    "SmartStore create payload keys(productId=%s, keys=%s, originKeys=%s)",
+                    "SmartStore create payload keys(productId=%s, keys=%s, originKeys=%s, images=%s)",
                     product.id,
                     list(payload.keys()),
-                    list((payload.get("originProduct") or {}).keys()),
+                    list(origin_payload.keys()),
+                    origin_payload.get("images"),
                 )
                 status_code, response_data = self.client.create_product(payload)
 
