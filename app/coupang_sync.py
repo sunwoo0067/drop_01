@@ -1101,6 +1101,83 @@ def sync_coupang_returns_raw(
     return total_processed
 
 
+def sync_coupang_exchanges_raw(
+    session: Session,
+    account_id: uuid.UUID,
+    created_at_from: str,
+    created_at_to: str,
+    status: str | None = None,
+) -> int:
+    """
+    쿠팡 교환 요청 목록을 조회하여 수집합니다.
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account or account.market_code != "COUPANG":
+        return 0
+
+    if not account.is_active:
+        return 0
+
+    try:
+        client = _get_client_for_account(account)
+    except Exception as e:
+        logger.error(f"Failed to initialize client for {account.name}: {e}")
+        return 0
+
+    # 교환 요청 조회 (v4 기반)
+    code, data = client.get_exchange_requests(
+        created_at_from=created_at_from,
+        created_at_to=created_at_to,
+        status=status,
+    )
+    
+    _log_fetch(session, account, "get_exchange_requests", {
+        "from": created_at_from, 
+        "to": created_at_to
+    }, code, data)
+
+    if code != 200:
+        logger.error(f"Failed to fetch exchange requests: {code} {data}")
+        return 0
+
+    content = data.get("data")
+    if not isinstance(content, list) or not content:
+        return 0
+
+    total_processed = 0
+    now = datetime.now(timezone.utc)
+    for row in content:
+        if not isinstance(row, dict):
+            continue
+        
+        # 교환은 exchangeId가 고유 식별자
+        exchange_id = row.get("exchangeId")
+        if exchange_id is None:
+            continue
+
+        store_id = f"EXC-{exchange_id}"
+        
+        row_to_store = dict(row)
+        row_to_store["_fetchType"] = "EXCHANGE_REQUEST"
+
+        stmt = insert(MarketOrderRaw).values(
+            market_code="COUPANG",
+            account_id=account.id,
+            order_id=str(store_id),
+            raw=row_to_store,
+            fetched_at=now,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["market_code", "account_id", "order_id"],
+            set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at},
+        )
+        session.execute(stmt)
+        total_processed += 1
+
+    session.commit()
+    return total_processed
+
+
 def _log_fetch(session: Session, account: MarketAccount, endpoint: str, payload: dict, code: int, data: dict):
     """
     API 통신 결과를 SupplierRawFetchLog 테이블에 기록합니다.
