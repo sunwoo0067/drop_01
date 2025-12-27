@@ -392,12 +392,15 @@ class SmartStoreSync:
             try:
                 # 네이버 상품 등록
                 origin_payload = payload.get("originProduct") or {}
+                detail_attribute = origin_payload.get("detailAttribute") or {}
                 logger.info(
-                    "SmartStore create payload keys(productId=%s, keys=%s, originKeys=%s, images=%s)",
+                    "SmartStore create payload keys(productId=%s, keys=%s, originKeys=%s, images=%s, originArea=%s, certificationInfos=%s)",
                     product.id,
                     list(payload.keys()),
                     list(origin_payload.keys()),
                     origin_payload.get("images"),
+                    origin_payload.get("originArea"),
+                    detail_attribute.get("productCertificationInfos"),
                 )
                 status_code, response_data = self.client.create_product(payload)
 
