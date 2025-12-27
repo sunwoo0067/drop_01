@@ -16,6 +16,8 @@ _CATEGORY_KEYS = (
     "naver_category_no",
     "smartstoreCategoryNo",
     "smartstore_category_no",
+    "smartstoreCategoryCode",
+    "smartstore_category_code",
     "categoryNo",
     "category_no",
     "categoryId",
