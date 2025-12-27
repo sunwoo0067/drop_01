@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 
 from app.coupang_client import CoupangClient
+from app.models import (
     SupplierOrder,
     Order,
     OrderStatusHistory,
@@ -22,6 +23,8 @@ from app.coupang_client import CoupangClient
     MarketSettlementRaw,
     MarketReturnRaw,
     MarketExchangeRaw,
+    Product,
+    MarketAccount,
 )
 from app.ownerclan_client import OwnerClanClient
 from app.ownerclan_sync import get_primary_ownerclan_account
@@ -2701,37 +2704,75 @@ def _map_product_to_coupang_payload(
     return_phone = _normalize_phone((return_center_detail.get("companyContactNumber") if return_center_detail else None) or "070-4581-8906")
     return_name = (return_center_detail.get("shippingPlaceName") if return_center_detail else None) or "기본 반품지"
 
-    # DB의 selling_price는 이미 (원가+마진+배송비)/(1-수수료)가 계산된 최종 소비자가임 (100원 단위 올림)
-    total_price = int(product.selling_price or 0)
+    # 아이템 (옵션) 목록 구성
+    items_payload = []
     
-    # 100원 단위 올림 재확인 (혹시 모를 구버전 데이터 대비)
-    if total_price < 3000:
-        total_price = 3000
-    total_price = ((total_price + 99) // 100) * 100
-
-    item_payload = {
-        "itemName": name_to_use[:150], # 최대 150자
-        "originalPrice": total_price, # 무료배송 정책: 배송비를 상품가에 포함
-        "salePrice": total_price,
-        "maximumBuyCount": 9999,
-        "maximumBuyForPerson": 0,
-        "maximumBuyForPersonPeriod": 1,
-        "outboundShippingTimeDay": 3,
-        "taxType": "TAX",
-        "adultOnly": "EVERYONE",
-        "parallelImported": "NOT_PARALLEL_IMPORTED",
-        "overseasPurchased": "NOT_OVERSEAS_PURCHASED",
-        "pccNeeded": False,
-        "unitCount": 1,
-        "images": images,
-        "attributes": item_attributes,  # 필수 attributes 처리됨
-        "certifications": item_certifications,  # 인증정보 처리됨
-        "contents": (
-            contents_blocks + [{"contentsType": "HTML", "contentDetails": [{"content": description_html, "detailType": "TEXT"}]}]
-        ) if contents_blocks else [{"contentsType": "HTML", "contentDetails": [{"content": description_html, "detailType": "TEXT"}]}],
-        "notices": notices,
-        "offerCondition": offer_condition,  # allowedOfferConditions 검증됨
-    }
+    # DB에 옵션이 있으면 사용, 없으면 단일 아이템으로 처리
+    options = product.options if product.options else []
+    
+    if not options:
+        # Fallback: 옵션 정보가 없는 경우 기존 로직대로 단일 아이템 생성
+        total_price = int(product.selling_price or 0)
+        if total_price < 3000: total_price = 3000
+        total_price = ((total_price + 99) // 100) * 100
+        
+        items_payload.append({
+            "itemName": name_to_use[:150],
+            "originalPrice": total_price,
+            "salePrice": total_price,
+            "maximumBuyCount": 9999,
+            "maximumBuyForPerson": 0,
+            "maximumBuyForPersonPeriod": 1,
+            "outboundShippingTimeDay": 3,
+            "taxType": "TAX",
+            "adultOnly": "EVERYONE",
+            "parallelImported": "NOT_PARALLEL_IMPORTED",
+            "overseasPurchased": "NOT_OVERSEAS_PURCHASED",
+            "pccNeeded": False,
+            "unitCount": 1,
+            "images": images,
+            "attributes": item_attributes,
+            "certifications": item_certifications,
+            "contents": (
+                contents_blocks + [{"contentsType": "HTML", "contentDetails": [{"content": description_html, "detailType": "TEXT"}]}]
+            ) if contents_blocks else [{"contentsType": "HTML", "contentDetails": [{"content": description_html, "detailType": "TEXT"}]}],
+            "notices": notices,
+            "offerCondition": offer_condition,
+        })
+    else:
+        for opt in options:
+            # 옵션별 가격 계산
+            opt_price = int(opt.selling_price or 0)
+            if opt_price < 3000: opt_price = 3000
+            opt_price = ((opt_price + 99) // 100) * 100
+            
+            # 옵션명을 상품명과 조합 (쿠팡 권장: [상품명] [옵션값])
+            full_item_name = f"{name_to_use} {opt.option_value}" if opt.option_value != "단품" else name_to_use
+            
+            items_payload.append({
+                "itemName": full_item_name[:150],
+                "originalPrice": opt_price,
+                "salePrice": opt_price,
+                "maximumBuyCount": 9999,
+                "maximumBuyForPerson": 0,
+                "maximumBuyForPersonPeriod": 1,
+                "outboundShippingTimeDay": 3,
+                "taxType": "TAX",
+                "adultOnly": "EVERYONE",
+                "parallelImported": "NOT_PARALLEL_IMPORTED",
+                "overseasPurchased": "NOT_OVERSEAS_PURCHASED",
+                "pccNeeded": False,
+                "unitCount": 1,
+                "images": images,
+                "attributes": item_attributes, # TODO: 카테고리에 맞는 상세 옵션 속성 매핑 필요 시 보완
+                "certifications": item_certifications,
+                "contents": (
+                    contents_blocks + [{"contentsType": "HTML", "contentDetails": [{"content": description_html, "detailType": "TEXT"}]}]
+                ) if contents_blocks else [{"contentsType": "HTML", "contentDetails": [{"content": description_html, "detailType": "TEXT"}]}],
+                "notices": notices,
+                "offerCondition": offer_condition,
+                "sellerItemCode": opt.external_option_key or str(opt.id)
+            })
 
     now = datetime.now(timezone.utc)
     sale_started_at = now.strftime("%Y-%m-%dT%H:%M:%S")
@@ -2739,19 +2780,17 @@ def _map_product_to_coupang_payload(
 
     payload = {
         "displayCategoryCode": predicted_category_code, 
-        # 예측된 카테고리 코드를 사용.
-        # 필수 속성(attributes)은 카테고리 메타정보에서 자동 매핑됨.
         "sellerProductName": name_to_use[:100],
         "vendorId": str(account.credentials.get("vendor_id") or "").strip(),
         "saleStartedAt": sale_started_at,
         "saleEndedAt": sale_ended_at,
         "displayProductName": name_to_use[:100],
         "brand": product.brand or "Detailed Page",
-        "generalProductName": name_to_use, # 보통 노출명과 동일
-        "productOrigin": "수입산", # 위탁판매 기본
-        "deliveryMethod": "SEQUENCIAL", # 일반 배송
+        "generalProductName": name_to_use,
+        "productOrigin": "수입산",
+        "deliveryMethod": "SEQUENCIAL",
         "deliveryCompanyCode": delivery_company_code,
-        "deliveryChargeType": "FREE", # 일단 무료배송으로 시작
+        "deliveryChargeType": "FREE",
         "deliveryCharge": 0,
         "freeShipOverAmount": 0,
         "unionDeliveryType": "NOT_UNION_DELIVERY",
@@ -2762,15 +2801,14 @@ def _map_product_to_coupang_payload(
         "returnZipCode": return_zip,
         "returnAddress": return_addr,
         "returnAddressDetail": return_addr_detail,
-        "returnCharge": 5000, # 기본 반품비
+        "returnCharge": 5000,
         "deliveryChargeOnReturn": 5000,
         "outboundShippingPlaceCode": outbound_center_code,
-        "vendorUserId": account.credentials.get("vendor_user_id", "user"), # Wing ID
-        "requested": True, # 자동 승인 요청
-        "items": [item_payload]
+        "vendorUserId": account.credentials.get("vendor_user_id", "user"),
+        "requested": True,
+        "items": items_payload
     }
     
-    # 필수 구비서류가 있는 경우 payload에 추가
     if required_documents:
         payload["requiredDocuments"] = required_documents
     

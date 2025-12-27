@@ -4,7 +4,7 @@ import uuid
 
 from sqlalchemy import BigInteger, DateTime, Integer, Text, UniqueConstraint, ForeignKey, Float
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 
@@ -417,6 +417,31 @@ class Product(DropshipBase):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    options: Mapped[list["ProductOption"]] = relationship("ProductOption", back_populates="product", cascade="all, delete-orphan")
+
+
+class ProductOption(DropshipBase):
+    __tablename__ = "product_options"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("products.id"), nullable=False)
+    
+    option_name: Mapped[str] = mapped_column(Text, nullable=False)  # 예: 색상/사이즈
+    option_value: Mapped[str] = mapped_column(Text, nullable=False) # 예: Red/XL
+    
+    cost_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    selling_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    stock_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    
+    external_option_key: Mapped[str | None] = mapped_column(Text, nullable=True) # 공급처 옵션 키
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    product: Mapped["Product"] = relationship("Product", back_populates="options")
 
 
 class MarketListing(MarketBase):

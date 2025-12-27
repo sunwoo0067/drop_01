@@ -5,7 +5,7 @@ from typing import List, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import SourcingCandidate, BenchmarkProduct, SupplierItemRaw, Product, SupplierSyncJob
+from app.models import SourcingCandidate, BenchmarkProduct, SupplierItemRaw, Product, SupplierSyncJob, ProductOption
 from app.services.ai.agents.sourcing_agent import SourcingAgent
 from app.embedding_service import EmbeddingService
 from app.normalization import clean_product_name
@@ -358,9 +358,48 @@ class SourcingService:
             processed_image_urls=[candidate.thumbnail_url] if candidate.thumbnail_url else []
         )
         self.db.add(product)
+        self.db.flush() # ID 확보
+        
+        # 1.1 Parse and save options
+        raw_data = raw_entry.raw if isinstance(raw_entry.raw, dict) else {}
+        options_data = raw_data.get("options") or []
+        
+        if options_data:
+            for opt in options_data:
+                # 오너클랜 옵션 구조: {'optionAttributes': [{'name': '색상', 'value': '블랙'}], 'price': 10000, 'quantity': 50, 'key': '...'}
+                attrs = opt.get("optionAttributes") or []
+                opt_name = "/".join([a.get("name", "") for a in attrs if a.get("name")]) or "기본"
+                opt_value = "/".join([a.get("value", "") for a in attrs if a.get("value")]) or "-"
+                
+                # 가산가 적용 확인 (price가 옵션 단독가인지, 차액인지 확인 필요. 오너클랜은 보통 개별 단가)
+                opt_price = self._to_int(opt.get("price")) or product.cost_price
+                
+                new_opt = ProductOption(
+                    product_id=product.id,
+                    option_name=opt_name,
+                    option_value=opt_value,
+                    cost_price=opt_price,
+                    selling_price=int(opt_price * 1.3), # 동일 마진 적용
+                    stock_quantity=self._to_int(opt.get("quantity")) or 0,
+                    external_option_key=opt.get("key")
+                )
+                self.db.add(new_opt)
+        else:
+            # 옵션이 없는 경우 기본 옵션 하나 생성
+            default_opt = ProductOption(
+                product_id=product.id,
+                option_name="기본",
+                option_value="단품",
+                cost_price=product.cost_price,
+                selling_price=product.selling_price,
+                stock_quantity=999, # 기본값
+                external_option_key="DEFAULT"
+            )
+            self.db.add(default_opt)
+
         self.db.commit()
         
-        logger.info(f"Promoted candidate to Product: {product.name} (ID: {product.id})")
+        logger.info(f"Promoted candidate to Product with {len(product.options) if product.options else 0} options: {product.name} (ID: {product.id})")
         
         # 2. Trigger Image Processing (Placeholder for background task)
         # In a real app, this would be a Celery task or BackgroundTask

@@ -66,6 +66,7 @@ def _build_smartstore_payload(
     stock_quantity: int,
     detail_attribute: dict | None = None,
     image_urls: list[str] | None = None,
+    options: list | None = None,
 ) -> dict:
     images_list = []
     for url in (image_urls or []):
@@ -79,6 +80,8 @@ def _build_smartstore_payload(
             "representativeImage": images_list[0],
             "optionalImages": images_list[1:],
         }
+
+    # 기본 상품 정보 구성
     origin_product = {
         "statusType": "SALE",
         "categoryNo": category_no,
@@ -88,10 +91,65 @@ def _build_smartstore_payload(
         "salePrice": sale_price,
         "stockQuantity": stock_quantity,
     }
+
+    # 옵션 정보가 있는 경우 처리
+    if options:
+        # 1. 옵션 그룹명 추출 (예: "색상/사이즈" -> ["색상", "사이즈"])
+        # 모든 옵션이 동일한 명칭 구조를 가진다고 가정
+        first_opt_name = options[0].option_name if hasattr(options[0], "option_name") else "옵션"
+        group_names = [gn.strip() for gn in first_opt_name.split("/") if gn.strip()]
+        
+        # 2. 조합형 옵션 생성
+        combinations = []
+        min_opt_price = sale_price # 원가 기준 최소가 계산용
+        total_stock = 0
+        
+        for idx, opt in enumerate(options):
+            opt_val = opt.option_value if hasattr(opt, "option_value") else "단품"
+            opt_vals = [v.strip() for v in opt_val.split("/") if v.strip()]
+            
+            # 그룹 개수와 값 개수 맞춤
+            while len(opt_vals) < len(group_names):
+                opt_vals.append("-")
+            opt_vals = opt_vals[:len(group_names)]
+            
+            opt_selling_price = int(opt.selling_price or 0)
+            if opt_selling_price > 0 and opt_selling_price < min_opt_price:
+                min_opt_price = opt_selling_price
+                
+            combinations.append({
+                "optionName1": opt_vals[0],
+                "optionName2": opt_vals[1] if len(opt_vals) > 1 else None,
+                "optionName3": opt_vals[2] if len(opt_vals) > 2 else None,
+                "optionName4": opt_vals[3] if len(opt_vals) > 3 else None,
+                "stockQuantity": int(opt.stock_quantity or 0),
+                "price": opt_selling_price - sale_price, # 기준가(salePrice)와의 차액
+                "sellerManagerCode": opt.external_option_key or str(getattr(opt, "id", idx)),
+                "usable": True
+            })
+            total_stock += int(opt.stock_quantity or 0)
+
+        # 기준가를 최소가로 조정할 경우 차액(price) 재계산 필요
+        # 단, 여기서는 단순화를 위해 최초 입력된 sale_price를 기준가로 사용
+        
+        origin_product["optionInfo"] = {
+            "optionCombinationSortType": "CREATE_DATE_DESC",
+            "optionCombinationGroupNames": {
+                "optionGroupName1": group_names[0],
+                "optionGroupName2": group_names[1] if len(group_names) > 1 else None,
+                "optionGroupName3": group_names[2] if len(group_names) > 2 else None,
+                "optionGroupName4": group_names[3] if len(group_names) > 3 else None,
+            },
+            "optionCombinations": combinations
+        }
+        # 조합형 옵션 사용 시 원상품 재고는 0으로 설정 (네이버 정책)
+        origin_product["stockQuantity"] = 0
+
     if images:
         origin_product["images"] = images
     if detail_attribute:
         origin_product["detailAttribute"] = detail_attribute
+        
     smartstore_channel_product = {
         "channelProductDisplayStatusType": "ON",
         "channelProductSaleStatusType": "ON",
@@ -100,6 +158,7 @@ def _build_smartstore_payload(
         "channelProductSalePrice": sale_price,
         "naverShoppingRegistration": False,
     }
+    
     return {
         "originProduct": origin_product,
         "smartstoreChannelProduct": smartstore_channel_product,
@@ -484,9 +543,19 @@ class SmartStoreSync:
             if not product:
                 return {"status": "error", "message": f"Product not found: {product_id}"}
 
+            # 옵션 정보 조회
+            options = product.options if product.options else []
+            
             # 네이버 API 등록 요청 준비
             name = product.processed_name or product.name or f"상품 {product.id}"
             sale_price = int(product.selling_price or 0)
+            
+            # 옵션이 있는 경우 기준가(salePrice)를 옵션 최소가로 조정 (네이버 권장/필수)
+            if options:
+                opt_prices = [int(opt.selling_price) for opt in options if opt.selling_price]
+                if opt_prices:
+                    sale_price = min(opt_prices)
+            
             stock_quantity = int(getattr(product, "stock_quantity", 0) or 0)
             if stock_quantity <= 0:
                 stock_quantity = 9999
@@ -571,6 +640,7 @@ class SmartStoreSync:
                         certification_infos=certification_infos,
                     ),
                     image_urls=image_urls,
+                    options=options,
                 )
 
             try:
