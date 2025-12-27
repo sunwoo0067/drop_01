@@ -130,7 +130,6 @@ class SmartStoreSync:
 
             # 네이버 API 등록 요청 준비
             payload = {
-                "no": product.id,
                 "name": product.name or f"상품 {product.id}",
                 "detailContent": product.description or f"{product.name}의 상세 설명입니다.",
                 "salePrice": product.selling_price or 0,
@@ -144,13 +143,20 @@ class SmartStoreSync:
                 # 네이버 상품 등록
                 status_code, response_data = self.client.create_product(payload)
 
-                if status_code != 200:
+                if status_code not in (200, 201):
                     logger.error(f"SmartStore registration failed: {response_data.get('message', 'Unknown error')}")
                     return {"status": "error", "message": response_data.get('message', 'Registration failed')}
 
                 # 성공 시 Product 상태 업데이트
                 product.smartstore_status = "REGISTERED"
-                product.external_product_id = payload["no"]
+                external_id = (
+                    response_data.get("originProductNo")
+                    or response_data.get("productNo")
+                    or response_data.get("data")
+                    or product.external_product_id
+                )
+                if external_id:
+                    product.external_product_id = str(external_id)
                 product.smartstore_raw_data = response_data
                 tmp_db.commit()
 

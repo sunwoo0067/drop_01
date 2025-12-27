@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 from sqlalchemy import or_
 import uuid
+import logging
 
 from app.db import get_session
 from app.models import Product, MarketListing, MarketAccount, MarketProductRaw
@@ -15,20 +16,22 @@ from app.schemas.product import MarketListingResponse
 from app.smartstore_sync import SmartStoreSync
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post("/smartstore/register/{product_id}", status_code=202)
 async def register_smartstore_product(
     product_id: uuid.UUID,
     background_tasks: BackgroundTasks,
+    account_id: uuid.UUID = Query(alias="accountId"),
     session: Session = Depends(get_session)
 ):
     """
     네이버에 상품을 등록합니다.
     """
-    account = session.get(MarketAccount, product_id)
+    account = session.get(MarketAccount, account_id)
     if not account:
-        raise HTTPException(status_code=404, detail=f"마켓 계정을 찾을 수 없습니다: {product_id}")
+        raise HTTPException(status_code=404, detail=f"마켓 계정을 찾을 수 없습니다: {account_id}")
 
     try:
         creds = account.credentials or {}
@@ -50,20 +53,21 @@ async def register_smartstore_product(
 
 @router.get("/smartstore/products", status_code=200)
 def get_smartstore_products(
-    session: Session = Depends(get_session),
     account_id: uuid.UUID,
+    session: Session = Depends(get_session),
     limit: int = Query(default=50, ge=1, le=200),
 ):
     """
     네이버에 등록된 상품 목록을 조회합니다.
     """
-    # 계정 조회
-    from app.smartstore_sync import SmartStoreSync
-    sync_service = SmartStoreSync(session)
-    
-    account = session.get(MarketAccount, account_id)
-    if not account:
-        raise HTTPException(status_code=404, detail=f"마켓 계정을 찾을 수 없습니다: {account_id}")
+    try:
+        # 계정 조회
+        from app.smartstore_sync import SmartStoreSync
+        sync_service = SmartStoreSync(session)
+        
+        account = session.get(MarketAccount, account_id)
+        if not account:
+            raise HTTPException(status_code=404, detail=f"마켓 계정을 찾을 수 없습니다: {account_id}")
 
         # 네이버 상품 목록 조회
         creds = account.credentials or {}
