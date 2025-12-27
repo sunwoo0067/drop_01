@@ -880,21 +880,148 @@ class CoupangClient:
     # 4. 반품/교환 API (Return/Exchange API)
     # --------------------------------------------------------------------------
 
-    def get_return_requests(self, created_at_from: str, created_at_to: str, status: str | None = None) -> tuple[int, dict[str, Any]]:
-        """반품 요청 목록 조회"""
+    def get_return_requests(
+        self,
+        created_at_from: str,
+        created_at_to: str,
+        status: str | None = None,
+        search_type: str = "timeFrame",
+        cancel_type: str = "RETURN",
+        next_token: str | None = None,
+        max_per_page: int = 50,
+        order_id: int | str | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        """
+        반품 / 취소 요청 목록 조회 - v6
+        
+        Args:
+            created_at_from: 검색 시작일 (searchType=timeFrame일 경우 yyyy-MM-ddTHH:mm)
+            created_at_to: 검색 종료일 (searchType=timeFrame일 경우 yyyy-MM-ddTHH:mm)
+            status: 반품상태 (RU: 출고중지요청, UC: 반품접수, CC: 반품완료, PR: 쿠팡확인요청)
+            search_type: "timeFrame" (분단위) 또는 None (일단위)
+            cancel_type: "RETURN" (반품) 또는 "CANCEL" (취소)
+            next_token: 다음 페이지 토큰
+            max_per_page: 페이지당 건수 (기본 50)
+            order_id: 주문번호 (status 제외 시 필수)
+        """
         params: dict[str, Any] = {
             "createdAtFrom": created_at_from,
             "createdAtTo": created_at_to,
-            "vendorId": self._vendor_id
+            "searchType": search_type,
+            "cancelType": cancel_type,
+            "maxPerPage": max_per_page
         }
         if status:
             params["status"] = status
-        return self.get(f"/v2/providers/openapi/apis/api/v1/vendors/{self._vendor_id}/return-requests", params)
+        if next_token:
+            params["nextToken"] = next_token
+        if order_id:
+            params["orderId"] = order_id
+            
+        return self.get(f"/v2/providers/openapi/apis/api/v6/vendors/{self._vendor_id}/returnRequests", params)
 
-    def approve_return(self, receipt_id: str) -> tuple[int, dict[str, Any]]:
-        """반품 승인 (물품 수령 확인 후)"""
-        # PUT /v2/providers/openapi/apis/api/v1/vendors/{vendorId}/return-requests/{receiptId}/approval
-        return self.put(f"/v2/providers/openapi/apis/api/v1/vendors/{self._vendor_id}/return-requests/{receipt_id}/approval")
+    def get_return_request(self, receipt_id: int | str) -> tuple[int, dict[str, Any]]:
+        """
+        반품요청 단건 조회 - v6
+        
+        Args:
+            receipt_id: 반품접수번호
+        """
+        return self.get(f"/v2/providers/openapi/apis/api/v6/vendors/{self._vendor_id}/returnRequests/{receipt_id}")
+
+    def confirm_return_receipt(self, receipt_id: int | str) -> tuple[int, dict[str, Any]]:
+        """
+        반품상품 입고 확인처리 - v4
+        
+        Args:
+            receipt_id: 취소(반품)접수번호
+        """
+        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/returnRequests/{receipt_id}/receiveConfirmation"
+        payload = {
+            "vendorId": self._vendor_id,
+            "receiptId": int(receipt_id)
+        }
+        return self.put(path, payload)
+
+    def approve_return_request(self, receipt_id: int | str, cancel_count: int) -> tuple[int, dict[str, Any]]:
+        """
+        반품요청 승인 처리 - v4
+        
+        Args:
+            receipt_id: 반품접수번호
+            cancel_count: 반품접수 수량
+        """
+        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/returnRequests/{receipt_id}/approval"
+        payload = {
+            "vendorId": self._vendor_id,
+            "receiptId": int(receipt_id),
+            "cancelCount": cancel_count
+        }
+        return self.put(path, payload)
+
+    def get_return_withdraw_requests(
+        self,
+        date_from: str,
+        date_to: str,
+        page_index: int = 1,
+        size_per_page: int = 10
+    ) -> tuple[int, dict[str, Any]]:
+        """
+        반품철회 이력 기간별 조회 - v4
+        
+        Args:
+            date_from: 조회 시작일 (yyyy-MM-dd)
+            date_to: 조회 종료일 (yyyy-MM-dd)
+            page_index: 페이지 인덱스 (기본 1)
+            size_per_page: 페이지당 건수 (기본 10, 최대 100)
+        """
+        params = {
+            "dateFrom": date_from,
+            "dateTo": date_to,
+            "pageIndex": page_index,
+            "sizePerPage": size_per_page
+        }
+        return self.get(f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/returnWithdrawRequests", params)
+
+    def get_return_withdraw_list(self, cancel_ids: list[int]) -> tuple[int, dict[str, Any]]:
+        """
+        반품철회 이력 접수번호로 조회 - v4
+        
+        Args:
+            cancel_ids: 취소(반품)접수번호 목록 (최대 50개)
+        """
+        payload = {"cancelIds": cancel_ids}
+        return self.post(f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/returnWithdrawList", payload)
+
+    def create_manual_return_invoice(
+        self,
+        receipt_id: int | str,
+        return_exchange_delivery_type: str,
+        delivery_company_code: str,
+        invoice_number: str,
+        reg_number: str | None = None
+    ) -> tuple[int, dict[str, Any]]:
+        """
+        회수 송장 수동 등록 - v4
+        
+        Args:
+            receipt_id: 반품 또는 교환 접수 ID
+            return_exchange_delivery_type: RETURN or EXCHANGE
+            delivery_company_code: 택배사 코드
+            invoice_number: 운송장번호
+            reg_number: 택배사 회수번호 (선택)
+        """
+        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self._vendor_id}/return-exchange-invoices/manual"
+        payload = {
+            "receiptId": int(receipt_id),
+            "returnExchangeDeliveryType": return_exchange_delivery_type,
+            "deliveryCompanyCode": delivery_company_code,
+            "invoiceNumber": invoice_number
+        }
+        if reg_number:
+            payload["regNumber"] = reg_number
+            
+        return self.post(path, payload)
 
     # --------------------------------------------------------------------------
     # 5. CS API

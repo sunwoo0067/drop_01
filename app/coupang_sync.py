@@ -1020,6 +1020,8 @@ def sync_coupang_returns_raw(
     created_at_from: str,
     created_at_to: str,
     status: str | None = None,
+    cancel_type: str = "RETURN",
+    search_type: str = "timeFrame",
 ) -> int:
     """
     쿠팡 반품/취소 요청 목록을 조회하여 수집합니다.
@@ -1037,20 +1039,66 @@ def sync_coupang_returns_raw(
         logger.error(f"Failed to initialize client for {account.name}: {e}")
         return 0
 
-    # 반품 요청 조회 (v2/v4 기반)
+    # 반품 요청 조회 (v6 기반)
     code, data = client.get_return_requests(
         created_at_from=created_at_from,
         created_at_to=created_at_to,
         status=status,
+        search_type=search_type,
+        cancel_type=cancel_type,
     )
     
-    _log_fetch(session, account, "get_return_requests", {"from": created_at_from, "to": created_at_to}, code, data)
+    _log_fetch(session, account, "get_return_requests", {
+        "from": created_at_from, 
+        "to": created_at_to,
+        "cancelType": cancel_type,
+        "searchType": search_type
+    }, code, data)
 
     if code != 200:
         logger.error(f"Failed to fetch return requests: {code} {data}")
         return 0
 
-    return 1
+    content = data.get("data")
+    if not isinstance(content, list) or not content:
+        return 0
+
+    total_processed = 0
+    now = datetime.now(timezone.utc)
+    for row in content:
+        if not isinstance(row, dict):
+            continue
+        
+        # 반품/취소는 receiptId가 고유 식별자
+        receipt_id = row.get("receiptId")
+        if receipt_id is None:
+            continue
+
+        # MarketOrderRaw에 저장 (prefix 'R-' 또는 'C-'를 붙여서 주문과 구분할 수도 있지만, 
+        # 일단은 원본 그대로 저장하되 raw 데이터에 정보를 남김)
+        # order_id 필드에 receiptId 저장
+        store_id = f"RET-{receipt_id}" if cancel_type == "RETURN" else f"CAN-{receipt_id}"
+        
+        row_to_store = dict(row)
+        row_to_store["_cancelType"] = cancel_type
+        row_to_store["_fetchType"] = "RETURN_REQUEST"
+
+        stmt = insert(MarketOrderRaw).values(
+            market_code="COUPANG",
+            account_id=account.id,
+            order_id=str(store_id),
+            raw=row_to_store,
+            fetched_at=now,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["market_code", "account_id", "order_id"],
+            set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at},
+        )
+        session.execute(stmt)
+        total_processed += 1
+
+    session.commit()
+    return total_processed
 
 
 def _log_fetch(session: Session, account: MarketAccount, endpoint: str, payload: dict, code: int, data: dict):
