@@ -27,6 +27,11 @@ from app.models import (
     Product,
     ProductOption,
     MarketAccount,
+    SupplierItemRaw,
+    MarketOrderRaw,
+    MarketProductRaw,
+    SupplierRawFetchLog,
+    MarketListing,
 )
 from app.ownerclan_client import OwnerClanClient
 from app.ownerclan_sync import get_primary_ownerclan_account

@@ -33,7 +33,7 @@ def _coerce_category_no(value: object) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
-    if not text:
+    if text == "0" or not text:
         return None
     return text
 
@@ -41,19 +41,27 @@ def _coerce_category_no(value: object) -> str | None:
 def _extract_category_no_from_raw(raw: dict) -> str | None:
     if not isinstance(raw, dict):
         return None
+    
+    # 1. 탑색형 카테고리 정보 우선 (상세한 키들 먼저 확인)
     for key in _CATEGORY_KEYS:
         if raw.get(key):
             return _coerce_category_no(raw.get(key))
+            
+    # 2. 'category' 객체 내부 확인 (OwnerClan 등)
+    # 여기서 'key'를 확인하되, 최상위 'key'가 상품코드인 경우를 대비해 여기서만 확인
     category = raw.get("category")
     if isinstance(category, dict):
-        for key in _CATEGORY_KEYS:
+        for key in list(_CATEGORY_KEYS) + ["key"]:
             if category.get(key):
                 return _coerce_category_no(category.get(key))
+                
+    # 3. 'metadata' 객체 내부 확인
     metadata = raw.get("metadata")
     if isinstance(metadata, dict):
-        for key in _CATEGORY_KEYS:
+        for key in list(_CATEGORY_KEYS) + ["key"]:
             if metadata.get(key):
                 return _coerce_category_no(metadata.get(key))
+                
     return None
 
 
@@ -122,12 +130,12 @@ def _build_smartstore_payload(
                 "optionName2": opt_vals[1] if len(opt_vals) > 1 else None,
                 "optionName3": opt_vals[2] if len(opt_vals) > 2 else None,
                 "optionName4": opt_vals[3] if len(opt_vals) > 3 else None,
-                "stockQuantity": int(opt.stock_quantity or 0),
+                "stockQuantity": max(int(opt.stock_quantity or 0), 999), # 최소 수량 보장
                 "price": opt_selling_price - sale_price, # 기준가(salePrice)와의 차액
                 "sellerManagerCode": opt.external_option_key or str(getattr(opt, "id", idx)),
                 "usable": True
             })
-            total_stock += int(opt.stock_quantity or 0)
+            total_stock += max(int(opt.stock_quantity or 0), 999)
 
         # 기준가를 최소가로 조정할 경우 차액(price) 재계산 필요
         # 단, 여기서는 단순화를 위해 최초 입력된 sale_price를 기준가로 사용
@@ -142,8 +150,8 @@ def _build_smartstore_payload(
             },
             "optionCombinations": combinations
         }
-        # 조합형 옵션 사용 시 원상품 재고는 0으로 설정 (네이버 정책)
-        origin_product["stockQuantity"] = 0
+        # 조합형 옵션 사용 시 원상품 재고는 옵션 총합 또는 최소 1로 설정 (네이버 정책에 따라 0이 안 될 수도 있음)
+        origin_product["stockQuantity"] = max(total_stock, 1)
 
     if images:
         origin_product["images"] = images
@@ -965,29 +973,49 @@ class SmartStoreSync:
                 status_code, response_data = self.client.create_product(payload)
 
                 if status_code not in (200, 201):
+                    msg = response_data.get("message", "Registration failed")
+                    if "invalidInputs" in response_data:
+                        msg += f" (invalidInputs: {response_data['invalidInputs']})"
+                    
                     logger.error(
-                        "SmartStore registration failed (status=%s, message=%s, productId=%s)",
+                        "SmartStore registration failed (status=%s, message=%s, productId=%s, response=%s)",
                         status_code,
-                        response_data.get("message", "Unknown error"),
+                        msg,
                         product.id,
+                        response_data
                     )
                     return {
                         "status": "error",
-                        "message": response_data.get("message", "Registration failed"),
+                        "message": msg,
                         "details": response_data,
                     }
 
-                # 성공 시 Product 상태 업데이트
-                product.smartstore_status = "REGISTERED"
-                external_id = (
+                # 성공 시 MarketListing 생성 또는 업데이트
+                external_id = str(
                     response_data.get("originProductNo")
                     or response_data.get("productNo")
                     or response_data.get("data")
-                    or product.external_product_id
                 )
-                if external_id:
-                    product.external_product_id = str(external_id)
-                product.smartstore_raw_data = response_data
+                
+                # MarketListing 객체 생성/업데이트
+                listing = tmp_db.query(MarketListing).filter(
+                    MarketListing.market_account_id == account_id,
+                    MarketListing.product_id == product_id
+                ).first()
+                
+                if not listing:
+                    listing = MarketListing(
+                        product_id=product_id,
+                        market_account_id=account_id,
+                        market_item_id=external_id,
+                        status="ACTIVE",
+                        store_url=f"https://smartstore.naver.com/{account.name}/products/{external_id}"
+                    )
+                    tmp_db.add(listing)
+                else:
+                    listing.market_item_id = external_id
+                    listing.status = "ACTIVE"
+                
                 tmp_db.commit()
 
                 logger.info(f"Successfully registered product to SmartStore: {product.name}")

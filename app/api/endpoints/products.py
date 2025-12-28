@@ -1163,3 +1163,4 @@ def augment_images_from_detail_url(
         "source": "raw_image_urls",
         "candidateImages": len(image_urls),
     }
+

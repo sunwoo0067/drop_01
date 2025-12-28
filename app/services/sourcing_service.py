@@ -350,6 +350,13 @@ class SourcingService:
         logger.info(f"Fetching full details for {candidate.supplier_item_id} from OwnerClan...")
         status, detail_data = client.get_product(candidate.supplier_item_id)
         item_full_data = detail_data.get("data") if isinstance(detail_data, dict) else detail_data
+        
+        if status == 404:
+            logger.error(f"Product {candidate.supplier_item_id} not found on supplier. Rejecting candidate.")
+            candidate.status = "REJECTED"
+            self.db.commit()
+            return
+
         if status != 200 or not item_full_data:
             logger.warning(f"Failed to fetch full details for {candidate.supplier_item_id}. Using candidate cache.")
             item_full_data = {}

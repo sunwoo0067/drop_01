@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import api from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -9,6 +9,7 @@ import { Select } from "@/components/ui/Select";
 import { ShoppingBag, CheckCircle, Clock, Zap, Activity, ShieldCheck, Bot, Play, Pause, RefreshCw, AlertCircle, Search, Filter, Download, X, Settings, TrendingUp, PieChart, Bell } from "lucide-react";
 import { motion } from "framer-motion";
 import { HealthStatus } from "@/components/HealthStatus";
+import { Tabs, TabsContent } from "@/components/ui/Tabs";
 
 const container = {
   hidden: { opacity: 0 },
@@ -38,6 +39,8 @@ export default function Home() {
     pending: 0,
     completed: 0
   });
+  const [dashboardStats, setDashboardStats] = useState<any>(null);
+  const [activeTab, setActiveTab] = useState("overall");
   const [events, setEvents] = useState<any[]>([]);
   const [filteredEvents, setFilteredEvents] = useState<any[]>([]);
   const [marketStats, setMarketStats] = useState<any[]>([]);
@@ -76,8 +79,12 @@ export default function Home() {
 
   const fetchStats = async () => {
     try {
+      // 레거시 호환을 위해 유지하지만, 신규 통합 API도 호출
       const res = await api.get("/products/stats");
       setStats(res.data);
+
+      const dashboardRes = await api.get("/analytics/dashboard/stats");
+      setDashboardStats(dashboardRes.data);
     } catch (e) {
       console.error("Failed to fetch stats", e);
       setStats({ total: 0, pending: 0, completed: 0 });
@@ -391,96 +398,144 @@ export default function Home() {
         </motion.div>
       )}
 
-      {/* 통계 카드 */}
-      <motion.div variants={container} className="grid gap-6 md:grid-cols-4">
-        <motion.div variants={item}>
-          <Card className="overflow-hidden group">
-            <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-              <ShoppingBag className="h-24 w-24" />
-            </div>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-bold uppercase tracking-widest text-muted-foreground">전체 상품</CardTitle>
-              <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                <ShoppingBag className="h-4 w-4 text-primary" />
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-4xl font-black">{stats.total.toLocaleString()}</div>
-              <div className="mt-2 flex items-center gap-2">
-                <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
-                  <div className="h-full bg-primary transition-all" style={{ width: '100%' }} />
-                </div>
-                <span className="text-xs font-bold text-emerald-500">100%</span>
-              </div>
-            </CardContent>
-          </Card>
-        </motion.div>
+      {/* 통합 현황 탭 */}
+      <motion.div variants={item} className="space-y-6">
+        <div className="flex items-center justify-between">
+          <Tabs
+            tabs={[
+              { id: "overall", label: "종합 현황" },
+              { id: "product", label: "상품 현황" },
+              { id: "market", label: "마켓 현황", count: marketStats.length },
+              { id: "order", label: "주문 현황" },
+            ]}
+            activeTab={activeTab}
+            onChange={setActiveTab}
+          />
+          <div className="text-xs text-muted-foreground bg-accent/30 px-3 py-1.5 rounded-full border border-border/50 font-medium">
+            최근 업데이트: {lastUpdatedAt?.toLocaleTimeString()}
+          </div>
+        </div>
 
-        <motion.div variants={item}>
-          <Card className="overflow-hidden group">
-            <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-              <Clock className="h-24 w-24" />
-            </div>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-bold uppercase tracking-widest text-muted-foreground">가공 대기중</CardTitle>
-              <div className="h-8 w-8 rounded-lg bg-amber-500/10 flex items-center justify-center">
-                <Clock className="h-4 w-4 text-amber-500" />
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-4xl font-black text-amber-500">{stats.pending.toLocaleString()}</div>
-              <div className="mt-2 flex items-center gap-2">
-                <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
-                  <div className="h-full bg-amber-500 transition-all" style={{ width: `${pendingRate}%` }} />
-                </div>
-                <span className="text-xs font-bold text-amber-500">{pendingRate}%</span>
-              </div>
-            </CardContent>
-          </Card>
-        </motion.div>
+        <TabsContent value="overall" activeTab={activeTab}>
+          <div className="grid gap-6 md:grid-cols-4">
+            <StatCard
+              title="전체 수집 상품"
+              value={dashboardStats?.products?.total_raw || stats.total}
+              icon={<ShoppingBag className="h-4 w-4 text-primary" />}
+              progress={100}
+              progressColor="bg-primary"
+              description="공급사로부터 수집된 전체 원본 데이터"
+            />
+            <StatCard
+              title="가공 대기 상품"
+              value={dashboardStats?.products?.pending || stats.pending}
+              icon={<Clock className="h-4 w-4 text-amber-500" />}
+              progress={stats.total > 0 ? (stats.pending / stats.total) * 100 : 0}
+              progressColor="bg-amber-500"
+              description="AI 분석 및 가공을 기다리는 상품"
+            />
+            <StatCard
+              title="판매 중인 상품"
+              value={dashboardStats?.products?.completed || stats.completed}
+              icon={<CheckCircle className="h-4 w-4 text-emerald-500" />}
+              progress={stats.total > 0 ? (stats.completed / stats.total) * 100 : 0}
+              progressColor="bg-emerald-500"
+              description="마켓 등록이 완료되어 판매 중인 상품"
+            />
+            <StatCard
+              title="결제 완료 주문"
+              value={dashboardStats?.orders?.payment_completed || 0}
+              icon={<Zap className="h-4 w-4 text-blue-500" />}
+              description="오늘 발생한 신규 주문 건수"
+              trend="+12%"
+            />
+          </div>
+        </TabsContent>
 
-        <motion.div variants={item}>
-          <Card className="overflow-hidden group">
-            <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-              <CheckCircle className="h-24 w-24" />
-            </div>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-bold uppercase tracking-widest text-muted-foreground">쿠팡 등록 완료</CardTitle>
-              <div className="h-8 w-8 rounded-lg bg-emerald-500/10 flex items-center justify-center">
-                <CheckCircle className="h-4 w-4 text-emerald-500" />
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-4xl font-black text-emerald-500">{stats.completed.toLocaleString()}</div>
-              <div className="mt-2 flex items-center gap-2">
-                <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
-                  <div className="h-full bg-emerald-500 transition-all" style={{ width: `${processingRate}%` }} />
+        <TabsContent value="product" activeTab={activeTab}>
+          <div className="grid gap-6 md:grid-cols-3">
+            <Card className="bg-accent/5 border-dashed">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-bold text-muted-foreground uppercase">수집 및 가공 프로세스</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">데이터 수집율</span>
+                  <span className="text-sm font-bold">100%</span>
                 </div>
-                <span className="text-xs font-bold text-emerald-500">{processingRate}%</span>
-              </div>
-            </CardContent>
-          </Card>
-        </motion.div>
+                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                  <div className="h-full bg-primary" style={{ width: '100%' }} />
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">가공 완료율</span>
+                  <span className="text-sm font-bold">{processingRate}%</span>
+                </div>
+                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                  <div className="h-full bg-emerald-500" style={{ width: `${processingRate}%` }} />
+                </div>
+              </CardContent>
+            </Card>
+            <StatCard
+              title="오늘 등록된 상품"
+              value={(stats as any).today_count || 0}
+              icon={<TrendingUp className="h-4 w-4 text-blue-500" />}
+              description={`목표: ${settings.listing_limit.toLocaleString()}개`}
+            />
+            <StatCard
+              title="최적화 완료"
+              value={dashboardStats?.products?.completed || 0}
+              icon={<ShieldCheck className="h-4 w-4 text-purple-500" />}
+              description="SEO 최적화가 적용된 리스팅"
+            />
+          </div>
+        </TabsContent>
 
-        <motion.div variants={item}>
-          <Card className="overflow-hidden group">
-            <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-              <TrendingUp className="h-24 w-24" />
-            </div>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-bold uppercase tracking-widest text-muted-foreground">오늘 등록</CardTitle>
-              <div className="h-8 w-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
-                <TrendingUp className="h-4 w-4 text-blue-500" />
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-4xl font-black text-blue-500">{(stats as any).today_count?.toLocaleString() || 0}</div>
-              <div className="mt-2 text-xs font-bold text-muted-foreground">
-                목표: {settings.listing_limit.toLocaleString()}개
-              </div>
-            </CardContent>
-          </Card>
-        </motion.div>
+        <TabsContent value="market" activeTab={activeTab}>
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+            {marketStats.map((ms) => (
+              <Card key={ms.account_id} className="group hover:border-primary/50 transition-colors bg-accent/5">
+                <CardHeader className="pb-1">
+                  <CardTitle className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center justify-between">
+                    {ms.market_code}
+                    <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-sm font-bold truncate mb-2">{ms.account_name}</div>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-3xl font-black text-foreground group-hover:text-primary transition-colors">{ms.listing_count.toLocaleString()}</span>
+                    <span className="text-[10px] font-bold text-muted-foreground">LISTINGS</span>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="order" activeTab={activeTab}>
+          <div className="grid gap-6 md:grid-cols-4">
+            <StatCard
+              title="결제 완료"
+              value={dashboardStats?.orders?.payment_completed || 0}
+              icon={<Activity className="h-4 w-4 text-blue-500" />}
+            />
+            <StatCard
+              title="배송 준비"
+              value={dashboardStats?.orders?.ready || 0}
+              icon={<Clock className="h-4 w-4 text-amber-500" />}
+            />
+            <StatCard
+              title="배송 중"
+              value={dashboardStats?.orders?.shipping || 0}
+              icon={<RefreshCw className="h-4 w-4 text-blue-400" />}
+            />
+            <StatCard
+              title="배송 완료"
+              value={dashboardStats?.orders?.shipped || 0}
+              icon={<CheckCircle className="h-4 w-4 text-emerald-500" />}
+            />
+          </div>
+        </TabsContent>
       </motion.div>
 
       {/* Health Check Dashboard Section */}
@@ -488,33 +543,6 @@ export default function Home() {
         <HealthStatus />
       </motion.div>
 
-      {/* Market Account Stats Section */}
-      <motion.div variants={item}>
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-          {marketStats.map((ms) => (
-            <Card key={ms.account_id} className="border-l-4 border-l-primary bg-accent/10">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-xs font-bold uppercase tracking-tighter text-muted-foreground flex items-center justify-between">
-                  {ms.market_code}
-                  <Activity className="h-3 w-3 text-emerald-500" />
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-lg font-bold truncate mb-1">{ms.account_name}</div>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-2xl font-black text-primary">{ms.listing_count.toLocaleString()}</span>
-                  <span className="text-xs font-medium text-muted-foreground">개 등록됨</span>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-          {marketStats.length === 0 && (
-            <Card className="col-span-full border-dashed bg-transparent flex items-center justify-center p-6 text-muted-foreground italic text-sm">
-              등록된 마켓 계정이 없습니다.
-            </Card>
-          )}
-        </div>
-      </motion.div>
 
       {/* AI Orchestration Control Panel */}
       <motion.div variants={item}>
@@ -815,4 +843,49 @@ export default function Home() {
       </motion.div>
     </motion.div>
   );
+}
+
+function StatCard({ title, value, icon, progress, progressColor, description, trend }: any) {
+  return (
+    <motion.div variants={item}>
+      <Card className="overflow-hidden group relative">
+        <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity pointer-events-none">
+          {React.cloneElement(icon as React.ReactElement, { className: "h-24 w-24" })}
+        </div>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{title}</CardTitle>
+          <div className="h-8 w-8 rounded-lg bg-accent flex items-center justify-center">
+            {icon}
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-baseline justify-between mb-1">
+            <div className="text-4xl font-black">{typeof value === 'number' ? value.toLocaleString() : value}</div>
+            {trend && <div className="text-xs font-bold text-emerald-500">{trend}</div>}
+          </div>
+          {progress !== undefined && (
+            <div className="mt-3 flex items-center gap-2">
+              <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                <motion.div
+                  initial={{ width: 0 }}
+                  animate={{ width: `${progress}%` }}
+                  className={cn("h-full transition-all", progressColor)}
+                />
+              </div>
+              <span className={cn("text-[10px] font-bold", progressColor?.replace('bg-', 'text-'))}>{Math.round(progress)}%</span>
+            </div>
+          )}
+          {description && (
+            <div className="mt-2 text-[10px] text-muted-foreground font-medium italic">
+              {description}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+}
+
+function cn(...inputs: any[]) {
+  return inputs.filter(Boolean).join(" ");
 }

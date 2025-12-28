@@ -16,7 +16,10 @@ from sqlalchemy.orm import Session
 from app.db import get_session
 from app.services.sales_analytics_service import SalesAnalyticsService
 from app.services.market_service import MarketService
-from app.models import SalesAnalytics, Product, Order, OrderItem, MarketListing
+from app.models import (
+    SalesAnalytics, Product, Order, OrderItem, MarketListing,
+    SupplierItemRaw, SourcingCandidate, MarketAccount
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -141,6 +144,12 @@ class UpdatePriceIn(BaseModel):
     account_id: uuid.UUID = Field(..., description="마켓 계정 ID")
     market_item_id: str = Field(..., description="마켓 상품 고유 ID")
     price: int = Field(..., description="수정할 가격")
+
+class DashboardStatsOut(BaseModel):
+    """대시보드 통합 통계 모델"""
+    products: dict
+    orders: dict
+    markets: list[dict]
 
 class UpdatePriceOut(BaseModel):
     """가격 수정 결과 모델"""
@@ -579,6 +588,73 @@ async def trigger_bulk_analytics(
         "status": "started",
         "message": f"{len(products)}개 제품의 판매 분석을 시작했습니다",
         "product_count": len(products)
+    }
+
+
+@router.get("/dashboard/stats", response_model=DashboardStatsOut)
+def get_dashboard_stats(
+    session: Session = Depends(get_session),
+    supplier_code: str = Query(default="ownerclan", alias="supplierCode"),
+):
+    """
+    대시보드에 필요한 통합 통계 데이터를 반환합니다.
+    (상품 현황, 주문 현황, 마켓별 등록 현황)
+    """
+    # 1. 상품 현황
+    total_raw = session.scalar(
+        select(func.count(SupplierItemRaw.id)).where(SupplierItemRaw.supplier_code == supplier_code)
+    ) or 0
+    
+    pending_processing = session.scalar(
+        select(func.count(SourcingCandidate.id))
+        .where(SourcingCandidate.supplier_code == supplier_code)
+        .where(SourcingCandidate.status == "PENDING")
+    ) or 0
+    
+    completed_processing = session.scalar(
+        select(func.count(Product.id)).where(Product.processing_status == "COMPLETED")
+    ) or 0
+
+    # 2. 주문 현황
+    order_status_counts = session.execute(
+        select(Order.status, func.count(Order.id)).group_by(Order.status)
+    ).all()
+    orders_map = {status: count for status, count in order_status_counts}
+
+    # 3. 마켓 현황 (계정별 등록 상품 수)
+    accounts = session.execute(
+        select(MarketAccount).where(MarketAccount.is_active == True)
+    ).scalars().all()
+    
+    listing_stats = session.execute(
+        select(MarketListing.market_account_id, func.count(MarketListing.id))
+        .group_by(MarketListing.market_account_id)
+    ).all()
+    listing_stats_map = {row[0]: row[1] for row in listing_stats}
+
+    market_results = []
+    for acc in accounts:
+        market_results.append({
+            "market_code": acc.market_code,
+            "account_name": acc.name,
+            "account_id": str(acc.id),
+            "listing_count": listing_stats_map.get(acc.id, 0)
+        })
+
+    return {
+        "products": {
+            "total_raw": total_raw,
+            "pending": pending_processing,
+            "completed": completed_processing
+        },
+        "orders": {
+            "payment_completed": orders_map.get("PAYMENT_COMPLETED", 0),
+            "ready": orders_map.get("READY", 0),
+            "shipping": orders_map.get("SHIPPING", 0),
+            "shipped": orders_map.get("SHIPPED", 0),
+            "cancelled": orders_map.get("CANCELLED", 0)
+        },
+        "markets": market_results
     }
 
 
