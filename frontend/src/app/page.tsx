@@ -280,68 +280,32 @@ export default function Home() {
       className="space-y-10 py-6"
     >
       {/* Header */}
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-1">
         <motion.div variants={item} className="flex items-center justify-between">
-          <h1 className="text-4xl font-black tracking-tight bg-gradient-to-r from-foreground to-foreground/60 bg-clip-text text-transparent">
-            대시보드
-          </h1>
           <div className="flex items-center gap-3">
-            {/* 알림 버튼 */}
-            <div className="relative">
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={() => setShowNotifications(!showNotifications)}
-                className="relative"
-              >
-                <Bell className="h-4 w-4" />
-                {notifications.length > 0 && (
-                  <span className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-500 text-[10px] font-bold flex items-center justify-center text-white">
-                    {notifications.length}
-                  </span>
-                )}
-              </Button>
-              {showNotifications && (
-                <div className="absolute right-0 top-12 w-80 bg-background border border-border rounded-lg shadow-xl z-50">
-                  <div className="p-3 border-b border-border flex items-center justify-between">
-                    <span className="text-sm font-bold">알림</span>
-                    <Button variant="ghost" size="sm" onClick={clearNotifications} className="text-xs">
-                      모두 지우기
-                    </Button>
-                  </div>
-                  <div className="max-h-64 overflow-y-auto">
-                    {notifications.length > 0 ? (
-                      notifications.map((notif, i) => (
-                        <div key={i} className={`p-3 border-b border-border/50 ${notif.type === "error" ? "bg-red-50" : "bg-background"}`}>
-                          <div className="flex items-start gap-2">
-                            {notif.type === "error" ? <AlertCircle className="h-4 w-4 text-red-500 shrink-0" /> : <Activity className="h-4 w-4 text-primary shrink-0" />}
-                            <div className="flex-1">
-                              <div className="text-xs font-bold">{notif.title}</div>
-                              <div className="text-[10px] text-muted-foreground">{notif.message}</div>
-                              <div className="text-[10px] text-muted-foreground mt-1">{new Date(notif.time).toLocaleTimeString()}</div>
-                            </div>
-                          </div>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="p-4 text-center text-xs text-muted-foreground">알림이 없습니다.</div>
-                    )}
-                  </div>
-                </div>
-              )}
+            <div className="h-10 w-10 rounded-2xl bg-primary flex items-center justify-center shadow-lg shadow-primary/20">
+              <Activity className="h-6 w-6 text-white" />
             </div>
-            {/* 설정 버튼 */}
+            <h1 className="text-3xl font-bold tracking-tight">대시보드</h1>
+          </div>
+          <div className="flex gap-2">
             <Button
               variant="outline"
-              size="icon"
+              size="sm"
+              className="rounded-xl border-border/50 bg-background/50 backdrop-blur-sm"
               onClick={() => setShowSettings(!showSettings)}
             >
-              <Settings className="h-4 w-4" />
+              <Settings className="h-4 w-4 mr-2" />
+              설정
+            </Button>
+            <Button size="sm" className="rounded-xl shadow-lg shadow-primary/20">
+              <Zap className="h-4 w-4 mr-2" />
+              수동 실행
             </Button>
           </div>
         </motion.div>
-        <motion.p variants={item} className="text-muted-foreground font-medium">
-          드랍쉬핑 자동화 시스템의 현재 가동 상태 및 통계입니다.
+        <motion.p variants={item} className="text-sm text-muted-foreground ml-[52px]">
+          자동화 시스템의 실시간 가동 현황 및 핵심 지표입니다.
         </motion.p>
       </div>
 

@@ -24,7 +24,7 @@ interface TabsProps {
 
 export function Tabs({ tabs, activeTab, onChange, className }: TabsProps) {
     return (
-        <div className={cn("flex space-x-1 bg-slate-900/50 p-1 rounded-xl backdrop-blur-sm border border-slate-800", className)}>
+        <div className={cn("flex space-x-1 bg-muted/30 p-1 rounded-xl border border-border/50 backdrop-blur-md", className)}>
             {tabs.map((tab) => {
                 const isActive = activeTab === tab.id;
                 return (
@@ -32,25 +32,25 @@ export function Tabs({ tabs, activeTab, onChange, className }: TabsProps) {
                         key={tab.id}
                         onClick={() => onChange(tab.id)}
                         className={cn(
-                            "relative px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none",
-                            isActive ? "text-white" : "text-slate-400 hover:text-slate-200"
+                            "relative px-5 py-2.5 text-sm font-medium transition-all focus-visible:outline-none rounded-lg",
+                            isActive ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                         )}
                     >
                         {isActive && (
                             <motion.div
                                 layoutId="active-tab"
-                                className="absolute inset-0 bg-slate-800 rounded-lg shadow-lg"
-                                transition={{ type: "spring", duration: 0.5 }}
+                                className="absolute inset-0 bg-primary shadow-sm rounded-lg"
+                                transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
                             />
                         )}
-                        <span className="relative z-10 flex items-center">
+                        <span className="relative z-10 flex items-center gap-2">
                             {tab.label}
                             {tab.count !== undefined && (
                                 <span className={cn(
-                                    "ml-2 px-1.5 py-0.5 text-[10px] rounded-full",
-                                    isActive ? "bg-blue-500 text-white" : "bg-slate-700 text-slate-300"
+                                    "px-1.5 py-0.5 text-[11px] font-bold rounded-md min-w-[1.25rem] text-center",
+                                    isActive ? "bg-white/20 text-white" : "bg-muted text-muted-foreground"
                                 )}>
-                                    {tab.count}
+                                    {tab.count.toLocaleString()}
                                 </span>
                             )}
                         </span>
