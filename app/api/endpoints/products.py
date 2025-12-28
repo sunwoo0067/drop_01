@@ -154,6 +154,29 @@ def list_products(
     products = session.scalars(stmt).all()
     return _build_product_responses(session, products)
 
+@router.get("/image-validation-report", status_code=200, response_model=ImageValidationReportOut)
+def get_image_validation_report():
+    log_path = Path("api.log")
+    if not log_path.exists():
+        return ImageValidationReportOut(counts={})
+
+    lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    counts = parse_validation_failures_from_logs(lines)
+    return ImageValidationReportOut(counts=counts)
+
+
+@router.get("/image-validation-failures", status_code=200, response_model=list[ImageValidationFailureOut])
+def get_image_validation_failures(limit: int = Query(default=100, ge=1, le=500)):
+    log_path = Path("api.log")
+    if not log_path.exists():
+        return []
+
+    lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    failures = parse_validation_failures(lines)
+    return failures[:limit]
+
+
+
 @router.get("/{product_id}", response_model=ProductResponse)
 def get_product(product_id: uuid.UUID, session: Session = Depends(get_session)):
     """단일 상품 정보를 조회합니다."""
@@ -266,28 +289,6 @@ def get_product_html_warnings(
         tags = find_forbidden_tags(product.description)
         results.append(ProductHtmlWarningOut(productId=product.id, tags=tags))
     return results
-
-
-@router.get("/image-validation-report", status_code=200, response_model=ImageValidationReportOut)
-def get_image_validation_report():
-    log_path = Path("api.log")
-    if not log_path.exists():
-        return ImageValidationReportOut(counts={})
-
-    lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
-    counts = parse_validation_failures_from_logs(lines)
-    return ImageValidationReportOut(counts=counts)
-
-
-@router.get("/image-validation-failures", status_code=200, response_model=list[ImageValidationFailureOut])
-def get_image_validation_failures(limit: int = Query(default=100, ge=1, le=500)):
-    log_path = Path("api.log")
-    if not log_path.exists():
-        return []
-
-    lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
-    failures = parse_validation_failures(lines)
-    return failures[:limit]
 
 
 def _refresh_ownerclan_raw_if_needed(session: Session, product: Product) -> bool:

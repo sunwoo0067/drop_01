@@ -36,6 +36,9 @@ def list_benchmarks(
     order_by: str | None = Query(default=None, alias="orderBy"),
     min_price: float | None = Query(default=None, alias="minPrice"),
     max_price: float | None = Query(default=None, alias="maxPrice"),
+    min_review_count: int | None = Query(default=None, alias="minReviewCount"),
+    min_rating: float | None = Query(default=None, alias="minRating"),
+    min_quality_score: float | None = Query(default=None, alias="minQualityScore"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> dict:
@@ -65,6 +68,12 @@ def list_benchmarks(
         filters.append(BenchmarkProduct.price >= min_price)
     if max_price is not None:
         filters.append(BenchmarkProduct.price <= max_price)
+    if min_review_count is not None:
+        filters.append(BenchmarkProduct.review_count >= min_review_count)
+    if min_rating is not None:
+        filters.append(BenchmarkProduct.rating >= min_rating)
+    if min_quality_score is not None:
+        filters.append(BenchmarkProduct.quality_score >= min_quality_score)
 
     for condition in filters:
         stmt = stmt.where(condition)

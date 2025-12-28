@@ -51,7 +51,7 @@ async def trigger_daily_cycle(
 
 
 @router.get("/events")
-async def get_orchestration_events(
+def get_orchestration_events(
     limit: int = Query(default=50, ge=1, le=100),
 ):
     """
@@ -68,7 +68,7 @@ async def get_orchestration_events(
 
 
 @router.get("/agents/status")
-async def get_agents_status():
+def get_agents_status():
     """
     AI 에이전트들의 현재 상태를 가져옵니다.
     """

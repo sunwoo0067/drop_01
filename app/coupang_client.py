@@ -83,11 +83,13 @@ class CoupangClient:
         secret_key: str,
         vendor_id: str,
         base_url: str = "https://api-gateway.coupang.com",
+        timeout: httpx.Timeout | None = None,
     ) -> None:
         self._access_key = access_key
         self._secret_key = secret_key
         self._vendor_id = vendor_id
         self._base_url = base_url.rstrip("/")
+        self._timeout = timeout or httpx.Timeout(60.0, connect=10.0)
 
     def _build_authorization(self, method: str, path: str, query: str = "") -> str:
         """
@@ -143,10 +145,8 @@ class CoupangClient:
             "X-Requested-By": self._vendor_id,
         }
 
-        timeout = httpx.Timeout(60.0, connect=10.0)
-
         def _do_request(h: dict[str, str]) -> httpx.Response:
-            with httpx.Client(timeout=timeout) as client:
+            with httpx.Client(timeout=self._timeout) as client:
                 if method == "GET":
                     return client.get(url, headers=h)
                 if method == "POST":
