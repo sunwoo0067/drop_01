@@ -64,6 +64,7 @@
 
   /* Shimmer animation for loading states */
   --animate-shimmer: shimmer 2s infinite linear;
+  --animate-spin-slow: spin 3s linear infinite;
 
   @keyframes shimmer {
     from {

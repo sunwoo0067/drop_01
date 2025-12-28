@@ -17,7 +17,7 @@ from app.db import get_session
 from app.services.sales_analytics_service import SalesAnalyticsService
 from app.services.market_service import MarketService
 from app.models import (
-    SalesAnalytics, Product, Order, OrderItem, MarketListing,
+    SalesAnalytics, Product, ProductOption, Order, OrderItem, MarketListing,
     SupplierItemRaw, SourcingCandidate, MarketAccount
 )
 
@@ -600,19 +600,39 @@ def get_dashboard_stats(
     대시보드에 필요한 통합 통계 데이터를 반환합니다.
     (상품 현황, 주문 현황, 마켓별 등록 현황)
     """
-    # 1. 상품 현황
-    total_raw = session.scalar(
-        select(func.count(SupplierItemRaw.id)).where(SupplierItemRaw.supplier_code == supplier_code)
-    ) or 0
+    # supplier_code가 "all"이거나 비어있으면 전체 통계
+    is_all = not supplier_code or supplier_code.lower() == "all"
+    # 1. 상품 현황 (상세 단계별)
+    # 1-1. 소싱 단계 (SourcingCandidate)
+    raw_query = select(func.count(SupplierItemRaw.id))
+    if not is_all:
+        raw_query = raw_query.where(SupplierItemRaw.supplier_code == supplier_code)
+    total_raw = session.scalar(raw_query) or 0
     
-    pending_processing = session.scalar(
-        select(func.count(SourcingCandidate.id))
-        .where(SourcingCandidate.supplier_code == supplier_code)
-        .where(SourcingCandidate.status == "PENDING")
-    ) or 0
+    s_query = select(SourcingCandidate.status, func.count(SourcingCandidate.id))
+    if not is_all:
+        s_query = s_query.where(SourcingCandidate.supplier_code == supplier_code)
     
-    completed_processing = session.scalar(
-        select(func.count(Product.id)).where(Product.processing_status == "COMPLETED")
+    sourcing_stats = session.execute(s_query.group_by(SourcingCandidate.status)).all()
+    sourcing_map = {status: count for status, count in sourcing_stats}
+
+    # 1-2. 가공 단계 (Product Processing Status)
+    # Product는 SourcingCandidate에서 APPROVED된 것들을 기반으로 생성됨
+    product_stats = session.execute(
+        select(Product.processing_status, func.count(Product.id)).group_by(Product.processing_status)
+    ).all()
+    product_map = {status: count for status, count in product_stats}
+
+    # 라이프사이클 단계별 (STEP_1, STEP_2, STEP_3)
+    lifecycle_stats = session.execute(
+        select(Product.lifecycle_stage, func.count(Product.id)).group_by(Product.lifecycle_stage)
+    ).all()
+    lifecycle_map = {stage: count for stage, count in lifecycle_stats}
+
+    # 1-3. 합계 수량 (Stock Quantity sum)
+    # ProductOption에서 전체 재고 합계
+    total_stock = session.scalar(
+        select(func.sum(ProductOption.stock_quantity))
     ) or 0
 
     # 2. 주문 현황
@@ -621,31 +641,57 @@ def get_dashboard_stats(
     ).all()
     orders_map = {status: count for status, count in order_status_counts}
 
-    # 3. 마켓 현황 (계정별 등록 상품 수)
+    # 3. 마켓 현황 (계정별 등록 상품 수 및 리스팅 상태)
     accounts = session.execute(
         select(MarketAccount).where(MarketAccount.is_active == True)
     ).scalars().all()
     
     listing_stats = session.execute(
-        select(MarketListing.market_account_id, func.count(MarketListing.id))
-        .group_by(MarketListing.market_account_id)
+        select(MarketListing.market_account_id, MarketListing.status, func.count(MarketListing.id))
+        .group_by(MarketListing.market_account_id, MarketListing.status)
     ).all()
-    listing_stats_map = {row[0]: row[1] for row in listing_stats}
+    
+    listing_stats_map = {}
+    for acc_id, status, count in listing_stats:
+        if acc_id not in listing_stats_map:
+            listing_stats_map[acc_id] = {"total": 0, "active": 0, "failed": 0}
+        listing_stats_map[acc_id]["total"] += count
+        if status == "ACTIVE":
+            listing_stats_map[acc_id]["active"] += count
+        elif status in ["REJECTED", "FAILED"]:
+            listing_stats_map[acc_id]["failed"] += count
 
     market_results = []
     for acc in accounts:
+        stats_data = listing_stats_map.get(acc.id, {"total": 0, "active": 0, "failed": 0})
         market_results.append({
             "market_code": acc.market_code,
             "account_name": acc.name,
             "account_id": str(acc.id),
-            "listing_count": listing_stats_map.get(acc.id, 0)
+            "listing_count": stats_data["total"],
+            "active_count": stats_data["active"],
+            "failed_count": stats_data["failed"]
         })
 
     return {
         "products": {
             "total_raw": total_raw,
-            "pending": pending_processing,
-            "completed": completed_processing
+            "sourcing_pending": sourcing_map.get("PENDING", 0),
+            "sourcing_approved": sourcing_map.get("APPROVED", 0),
+            "refinement_pending": product_map.get("PENDING", 0),
+            "refinement_processing": product_map.get("PROCESSING", 0),
+            "refinement_approval_pending": product_map.get("PENDING_APPROVAL", 0),
+            "refinement_failed": product_map.get("FAILED", 0),
+            "refinement_completed": product_map.get("COMPLETED", 0),
+            "total_stock": int(total_stock),
+            "lifecycle_stages": {
+                "step_1": lifecycle_map.get("STEP_1", 0),
+                "step_2": lifecycle_map.get("STEP_2", 0),
+                "step_3": lifecycle_map.get("STEP_3", 0)
+            },
+            # 레거시 호환
+            "pending": sourcing_map.get("PENDING", 0), 
+            "completed": product_map.get("COMPLETED", 0)
         },
         "orders": {
             "payment_completed": orders_map.get("PAYMENT_COMPLETED", 0),

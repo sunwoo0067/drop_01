@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
-import { ShoppingBag, CheckCircle, Clock, Zap, Activity, ShieldCheck, Bot, Play, Pause, RefreshCw, AlertCircle, Search, Filter, Download, X, Settings, TrendingUp, PieChart, Bell } from "lucide-react";
+import { ShoppingBag, CheckCircle, Clock, Zap, Activity, ShieldCheck, Bot, Play, Pause, RefreshCw, AlertCircle, Search, Filter, Download, X, Settings, TrendingUp, PieChart, Bell, Layers, AlertTriangle } from "lucide-react";
 import { motion } from "framer-motion";
 import { HealthStatus } from "@/components/HealthStatus";
 import { Tabs, TabsContent } from "@/components/ui/Tabs";
@@ -269,8 +269,11 @@ export default function Home() {
   };
 
   // 진행률 계산
-  const processingRate = stats.total > 0 ? ((stats.completed / stats.total) * 100).toFixed(1) : 0;
+  const p = dashboardStats?.products || {};
+  const sourcingRate = p.total_raw > 0 ? ((p.sourcing_approved / p.total_raw) * 100).toFixed(1) : 0;
+  const processingRate = p.sourcing_approved > 0 ? ((p.refinement_completed / p.sourcing_approved) * 100).toFixed(1) : 0;
   const pendingRate = stats.total > 0 ? ((stats.pending / stats.total) * 100).toFixed(1) : 0;
+  const totalCompleted = p.refinement_completed || stats.completed || 0;
 
   return (
     <motion.div
@@ -368,7 +371,7 @@ export default function Home() {
           <Tabs
             tabs={[
               { id: "overall", label: "종합 현황" },
-              { id: "product", label: "상품 현황" },
+              { id: "product", label: "상품 현황", count: totalCompleted },
               { id: "market", label: "마켓 현황", count: marketStats.length },
               { id: "order", label: "주문 현황" },
             ]}
@@ -417,40 +420,160 @@ export default function Home() {
         </TabsContent>
 
         <TabsContent value="product" activeTab={activeTab}>
-          <div className="grid gap-6 md:grid-cols-3">
-            <Card className="bg-accent/5 border-dashed">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-bold text-muted-foreground uppercase">수집 및 가공 프로세스</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">데이터 수집율</span>
-                  <span className="text-sm font-bold">100%</span>
+          <div className="space-y-10">
+            {/* 상단 핵심 지표 요약 */}
+            <div className="grid gap-6 md:grid-cols-4">
+              <Card className="bg-primary/5 border-primary/20">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-[10px] font-black text-primary uppercase tracking-tighter">데이터 처리 총량 (Items)</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-black text-primary">{p.total_raw?.toLocaleString()}개</div>
+                  <div className="text-[10px] text-muted-foreground mt-1 font-bold">전체 수집 원본 데이터 명세</div>
+                </CardContent>
+              </Card>
+              <Card className="bg-emerald-500/5 border-emerald-500/20">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-[10px] font-black text-emerald-500 uppercase tracking-tighter">최종 가공 완료 (Products)</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-black text-emerald-500">{p.refinement_completed?.toLocaleString()}건</div>
+                  <div className="text-[10px] text-muted-foreground mt-1 font-bold">마켓 등록 즉시 가능 수량</div>
+                </CardContent>
+              </Card>
+              <Card className="bg-amber-500/5 border-amber-500/20">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-[10px] font-black text-amber-500 uppercase tracking-tighter">합계 재고 수량 (Stock)</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-black text-amber-500">{p.total_stock?.toLocaleString()}개</div>
+                  <div className="text-[10px] text-muted-foreground mt-1 font-bold">DB 내 모든 리스팅의 가용 재고 총합</div>
+                </CardContent>
+              </Card>
+              <Card className="bg-indigo-500/5 border-indigo-500/20">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-[10px] font-black text-indigo-500 uppercase tracking-tighter">스케일 도달 (Step 3)</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-black text-indigo-500">{p.lifecycle_stages?.step_3?.toLocaleString()}건</div>
+                  <div className="text-[10px] text-muted-foreground mt-1 font-bold">검증이 완료된 고효율 주력 상품</div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* 상세 파이프라인 그래프 형태 */}
+            <div className="space-y-6">
+              <div className="flex items-center justify-between px-1">
+                <div className="flex items-center gap-2">
+                  <Zap className="h-4 w-4 text-primary" />
+                  <h3 className="text-sm font-bold text-foreground uppercase tracking-widest">Pipeline Analysis</h3>
                 </div>
-                <div className="h-2 bg-muted rounded-full overflow-hidden">
-                  <div className="h-full bg-primary" style={{ width: '100%' }} />
+                <div className="flex gap-4">
+                  <div className="flex items-center gap-1.5">
+                    <div className="h-2 w-2 rounded-full bg-primary" />
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase">Sourcing</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="h-2 w-2 rounded-full bg-indigo-500" />
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase">Refinement</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="h-2 w-2 rounded-full bg-emerald-500" />
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase">Listing</span>
+                  </div>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">가공 완료율</span>
-                  <span className="text-sm font-bold">{processingRate}%</span>
+              </div>
+
+              <div className="grid gap-8 grid-cols-1">
+                {/* 1단계: 소싱 */}
+                <div className="bg-accent/5 p-6 rounded-2xl border border-border/50">
+                  <div className="flex items-center gap-2 mb-6">
+                    <div className="bg-primary text-white text-[10px] font-black px-2 py-0.5 rounded">STAGE 01</div>
+                    <h4 className="text-xs font-black text-muted-foreground uppercase tracking-wider">Candidate Discovery</h4>
+                  </div>
+                  <div className="grid md:grid-cols-3 gap-6">
+                    <StatCard
+                      title="전체 수집 (RAW)"
+                      value={p.total_raw || 0}
+                      icon={<Download className="h-4 w-4 text-slate-400" />}
+                    />
+                    <StatCard
+                      title="소싱 대기 (PENDING)"
+                      value={p.sourcing_pending || 0}
+                      icon={<Clock className="h-4 w-4 text-amber-500" />}
+                      progress={p.total_raw > 0 ? (p.sourcing_pending / p.total_raw) * 100 : 0}
+                      progressColor="bg-amber-500"
+                    />
+                    <StatCard
+                      title="소싱 승인 (APPROVED)"
+                      value={p.sourcing_approved || 0}
+                      icon={<CheckCircle className="h-4 w-4 text-emerald-500" />}
+                      progress={p.total_raw > 0 ? (p.sourcing_approved / p.total_raw) * 100 : 0}
+                      progressColor="bg-emerald-500"
+                    />
+                  </div>
                 </div>
-                <div className="h-2 bg-muted rounded-full overflow-hidden">
-                  <div className="h-full bg-emerald-500" style={{ width: `${processingRate}%` }} />
+
+                {/* 2단계: 가공 */}
+                <div className="bg-accent/5 p-6 rounded-2xl border border-border/50">
+                  <div className="flex items-center gap-2 mb-6">
+                    <div className="bg-indigo-500 text-white text-[10px] font-black px-2 py-0.5 rounded">STAGE 02</div>
+                    <h4 className="text-xs font-black text-muted-foreground uppercase tracking-wider">AI Optimization & Refinement</h4>
+                  </div>
+                  <div className="grid md:grid-cols-4 gap-6">
+                    <StatCard
+                      title="가공 대기"
+                      value={p.refinement_pending || 0}
+                      icon={<Layers className="h-4 w-4 text-indigo-400" />}
+                    />
+                    <StatCard
+                      title="가공 중"
+                      value={p.refinement_processing || 0}
+                      icon={<RefreshCw className="h-4 w-4 text-blue-500 animate-spin-slow" />}
+                    />
+                    <StatCard
+                      title="승인 대기"
+                      value={p.refinement_approval_pending || 0}
+                      icon={<ShieldCheck className="h-4 w-4 text-purple-500" />}
+                    />
+                    <StatCard
+                      title="가공 실패"
+                      value={p.refinement_failed || 0}
+                      icon={<AlertTriangle className="h-4 w-4 text-red-500" />}
+                      description="데이터 정합성 부족 건"
+                    />
+                  </div>
                 </div>
-              </CardContent>
-            </Card>
-            <StatCard
-              title="오늘 등록된 상품"
-              value={(stats as any).today_count || 0}
-              icon={<TrendingUp className="h-4 w-4 text-blue-500" />}
-              description={`목표: ${settings.listing_limit.toLocaleString()}개`}
-            />
-            <StatCard
-              title="최적화 완료"
-              value={dashboardStats?.products?.completed || 0}
-              icon={<ShieldCheck className="h-4 w-4 text-purple-500" />}
-              description="SEO 최적화가 적용된 리스팅"
-            />
+
+                {/* 3단계: 리스팅 */}
+                <div className="bg-accent/5 p-6 rounded-2xl border border-border/50">
+                  <div className="flex items-center gap-2 mb-6">
+                    <div className="bg-emerald-500 text-white text-[10px] font-black px-2 py-0.5 rounded">STAGE 03</div>
+                    <h4 className="text-xs font-black text-muted-foreground uppercase tracking-wider">Final Products & Listing Flow</h4>
+                  </div>
+                  <div className="grid md:grid-cols-3 gap-6">
+                    <StatCard
+                      title="가공 완료"
+                      value={p.refinement_completed || 0}
+                      icon={<Zap className="h-4 w-4 text-amber-400" />}
+                      description="최적화 완료 상품 수"
+                    />
+                    <StatCard
+                      title="탐색 단계 (Step 1)"
+                      value={p.lifecycle_stages?.step_1 || 0}
+                      icon={<Activity className="h-4 w-4 text-blue-400" />}
+                      description="신규 등록 및 반응 확인 중"
+                    />
+                    <StatCard
+                      title="성과 발생 상품"
+                      value={(p.lifecycle_stages?.step_2 || 0) + (p.lifecycle_stages?.step_3 || 0)}
+                      icon={<TrendingUp className="h-4 w-4 text-emerald-500" />}
+                      description="검증 또는 스케일 도달 상품"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </TabsContent>
 
@@ -824,7 +947,7 @@ function StatCard({ title, value, icon, progress, progressColor, description, tr
         </CardHeader>
         <CardContent>
           <div className="flex items-baseline justify-between mb-1">
-            <div className="text-4xl font-black">{typeof value === 'number' ? value.toLocaleString() : value}</div>
+            <div className="text-3xl font-black">{typeof value === 'number' ? value.toLocaleString() : value}</div>
             {trend && <div className="text-xs font-bold text-emerald-500">{trend}</div>}
           </div>
           {progress !== undefined && (
