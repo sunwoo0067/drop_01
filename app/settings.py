@@ -95,6 +95,10 @@ class Settings(BaseSettings):
     openai_api_keys: list[str] = [] # List of keys for rotation
     openai_model: str = "gpt-4o-mini"
 
+    # Stable Diffusion (Automatic1111 / Forge / etc)
+    sd_api_url: str = "http://localhost:7860"
+    sd_model_name: str = "v1-5-pruned-emaonly.safetensors"
+
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
 

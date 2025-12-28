@@ -37,6 +37,13 @@ class AIProvider(ABC):
         """
         pass
 
+    @abstractmethod
+    async def generate_image(self, prompt: str, negative_prompt: str = "", width: int = 1024, height: int = 1024, model: Optional[str] = None) -> bytes:
+        """
+        Generates an image from a prompt.
+        """
+        pass
+
     async def analyze_visual_layout(self, image_data: bytes, prompt: str = "Analyze visual layout.", model: Optional[str] = None) -> str:
         """
         Analyzes the visual layout and spatial information of an image.

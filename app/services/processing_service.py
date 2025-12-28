@@ -142,6 +142,7 @@ class ProcessingService:
 
             # 벤치마크 상품 정보 가져오기 시도
             benchmark_data = None
+            benchmark = None
             if product.supplier_item_id:
                 candidate = self.db.scalars(
                     select(SourcingCandidate).where(SourcingCandidate.supplier_item_id == str(product.supplier_item_id))
@@ -169,7 +170,11 @@ class ProcessingService:
             # 에이전트 실행
             try:
                 result = await self.processing_agent.run(str(product_id), input_data, benchmark_data=benchmark_data)
-                output = result.get("final_output", {})
+                # Handle dictionary or object response
+                if hasattr(result, "get"):
+                    output = result.get("final_output", {})
+                else:
+                    output = getattr(result, "final_output", {})
                 
                 if output.get("processed_name"):
                     product.processed_name = output.get("processed_name")
@@ -270,6 +275,7 @@ class ProcessingService:
                     image_data = resp.content
                 features = await ai_service.extract_visual_features(image_data)
                 benchmark_data = None
+                benchmark = None
                 if product.benchmark_product_id:
                     benchmark = self.db.get(BenchmarkProduct, product.benchmark_product_id)
                     if benchmark:
@@ -279,6 +285,37 @@ class ProcessingService:
                         }
                 prompts = await ai_service.generate_premium_image_prompt(features, benchmark_data)
                 logger.info(f"Generated Premium Prompts for {product.name}: {prompts}")
+                
+                positive_prompt = prompts.get("positive_prompt")
+                negative_prompt = prompts.get("negative_prompt", "")
+                
+                if positive_prompt:
+                    logger.info(f"Generating premium image for product {product.id}...")
+                    image_bytes = await ai_service.generate_image(
+                        prompt=positive_prompt,
+                        negative_prompt=negative_prompt,
+                        provider="sd"
+                    )
+                    
+                    if image_bytes:
+                        # 이미지 업로드
+                        from app.services.storage_service import storage_service
+                        new_image_url = storage_service.upload_image(
+                            image_bytes,
+                            path_prefix=f"premium_assets/{product.id}"
+                        )
+                        
+                        if new_image_url:
+                            logger.info(f"Premium image uploaded: {new_image_url}")
+                            # 대표 이미지 목록 앞에 추가
+                            current_images = product.processed_image_urls or []
+                            product.processed_image_urls = [new_image_url] + current_images
+                            
+                            # 상세페이지 상단에 프리미엄 헤더 이미지로 삽입
+                            if product.description:
+                                premium_html = f'<div style="text-align:center; margin-bottom:20px;"><img src="{new_image_url}" style="max-width:100%; border-radius:8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);"></div>'
+                                product.description = premium_html + product.description
+
                 product.processing_status = "PENDING_APPROVAL"
                 self.db.commit()
                 return True

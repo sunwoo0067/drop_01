@@ -17,6 +17,7 @@ from app.coupang_client import CoupangClient
 from app.models import (
     SupplierOrder,
     Order,
+    OrderItem,
     OrderStatusHistory,
     MarketInquiryRaw,
     MarketRevenueRaw,
@@ -24,6 +25,7 @@ from app.models import (
     MarketReturnRaw,
     MarketExchangeRaw,
     Product,
+    ProductOption,
     MarketAccount,
 )
 from app.ownerclan_client import OwnerClanClient
@@ -252,23 +254,30 @@ def sync_coupang_products(session: Session, account_id: uuid.UUID, deep: bool = 
             if not isinstance(p, dict):
                 continue
             seller_product_id = str(p.get("sellerProductId"))
+            status_name = str(p.get("statusName") or "")
+            
             if deep:
                 detail_code, detail_data = client.get_product(seller_product_id)
                 _log_fetch(session, account, f"get_product/{seller_product_id}", {}, detail_code, detail_data)
                 detail_obj = detail_data.get("data") if isinstance(detail_data, dict) else None
                 if detail_code == 200 and isinstance(detail_obj, dict):
                     p = detail_obj
+                    status_name = str(p.get("statusName") or "")
+
+            # MarketProductRaw 저장 (기존 로직 유지)
             existing_row = session.execute(
                 select(MarketProductRaw)
                 .where(MarketProductRaw.market_code == "COUPANG")
                 .where(MarketProductRaw.account_id == account.id)
                 .where(MarketProductRaw.market_item_id == seller_product_id)
             ).scalars().first()
+            
             if existing_row and isinstance(existing_row.raw, dict):
                 existing_status = (existing_row.raw.get("status") or "").strip().upper()
                 existing_name = str(existing_row.raw.get("statusName") or "")
                 if existing_status == "SUSPENDED" or "판매중지" in existing_name:
                     p = {**p, "status": "SUSPENDED", "statusName": "판매중지"}
+
             stmt = insert(MarketProductRaw).values(
                 market_code="COUPANG",
                 account_id=account.id,
@@ -281,6 +290,38 @@ def sync_coupang_products(session: Session, account_id: uuid.UUID, deep: bool = 
                 set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at},
             )
             session.execute(stmt)
+
+            # MarketListing 상태 연동 및 반려 사유 기록
+            listing = session.execute(
+                select(MarketListing)
+                .where(MarketListing.market_account_id == account.id)
+                .where(MarketListing.market_item_id == seller_product_id)
+            ).scalars().first()
+            
+            if listing:
+                # 상태 정규화
+                normalized_status = None
+                s_upper = status_name.upper()
+                if "반려" in status_name or s_upper == "DENIED":
+                    normalized_status = "DENIED"
+                elif "승인완료" in status_name or s_upper == "APPROVED":
+                    normalized_status = "ACTIVE"
+                elif "심사중" in status_name or s_upper == "IN_REVIEW":
+                    normalized_status = "IN_REVIEW"
+                elif "승인대기" in status_name or s_upper == "APPROVING":
+                    normalized_status = "APPROVING"
+                
+                if normalized_status:
+                    listing.coupang_status = status_name # 원본 상태명 저장
+                    if normalized_status == "ACTIVE":
+                        listing.status = "ACTIVE"
+                    elif normalized_status == "DENIED":
+                        listing.status = "DENIED"
+                    
+                # 승인 반려 시 상세 사유 동기화 (deep이 아니더라도 반려 시에는 상세 조회 수행)
+                if "반려" in status_name or s_upper == "DENIED":
+                    # 이미 사유가 기록되어 있고 상태가 같다면 중복 조회 방지 (선택 사항)
+                    sync_market_listing_status(session, listing.id)
 
         session.commit()
         total_processed += len(products)
@@ -1713,6 +1754,66 @@ def stop_product_sales(session: Session, account_id: uuid.UUID, seller_product_i
         logger.error(f"쿠팡 판매중지 중 예외 발생: {e}")
         return False, {"message": str(e)}
 
+def update_coupang_price(session: Session, account_id: uuid.UUID, market_item_id: str, price: int) -> Tuple[bool, str | None]:
+    """
+    쿠팡 상품 가격을 수정합니다.
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account:
+        return False, "MarketAccount not found"
+    
+    client = _get_client_for_account(account)
+    
+    # 1. 상품 상세 정보 조회하여 vendorItemId 목록 획득
+    code, data = client.get_product(market_item_id)
+    if code != 200:
+        return False, f"상품 조회 실패: {data.get('message', 'Unknown error')}"
+        
+    items = data.get("data", {}).get("items", [])
+    if not items:
+        return False, "상품 아이템(옵션)을 찾을 수 없습니다"
+        
+    success_count = 0
+    errors = []
+    
+    # 2. 모든 아이템(옵션)에 대해 가격 업데이트 수행
+    for item in items:
+        vendor_item_id = str(item.get("vendorItemId"))
+        # 쿠팡은 10원 단위 절사 권장
+        target_price = ((price + 9) // 10) * 10
+        
+        # originalPrice 먼저 업데이트 (salePrice보다 작으면 오류 날 수 있음)
+        client.update_original_price(vendor_item_id, target_price)
+        
+        # salePrice 업데이트
+        u_code, u_data = client.update_price(vendor_item_id, target_price, force=True)
+        if u_code == 200:
+            success_count += 1
+        else:
+            msg = u_data.get("message", "Unknown error")
+            errors.append(f"{vendor_item_id}: {msg}")
+            
+    if success_count == 0:
+        return False, f"가격 수정 실패: {', '.join(errors)}"
+        
+    # 3. DB 업데이트 (MarketListing 및 Product)
+    listing = session.execute(
+        select(MarketListing)
+        .where(MarketListing.market_account_id == account_id)
+        .where(MarketListing.market_item_id == market_item_id)
+    ).scalars().first()
+    
+    if listing:
+        product = session.get(Product, listing.product_id)
+        if product:
+            product.selling_price = price
+            session.commit()
+            
+    if success_count < len(items):
+        return True, f"일부 옵션 수정 완료 ({success_count}/{len(items)}). 오류: {', '.join(errors)}"
+        
+    return True, "가격 수정 완료"
+
 
 def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_id: uuid.UUID) -> tuple[bool, str | None]:
     """
@@ -2236,24 +2337,66 @@ def fulfill_coupang_orders_via_ownerclan(
         session.flush()
 
         if existing_order:
-            existing_order.supplier_order_id = supplier_order.id
-            existing_order.order_number = existing_order.order_number or order_number
-            existing_order.recipient_name = existing_order.recipient_name or recipient_name
-            existing_order.recipient_phone = existing_order.recipient_phone or recipient_phone
-            existing_order.address = existing_order.address or recipient_address
+            order = existing_order
+            order.supplier_order_id = supplier_order.id
+            order.order_number = order.order_number or order_number
+            order.recipient_name = order.recipient_name or recipient_name
+            order.recipient_phone = order.recipient_phone or recipient_phone
+            order.address = order.address or recipient_address
         else:
-            session.add(
-                Order(
-                    market_order_id=row.id,
-                    supplier_order_id=supplier_order.id,
-                    order_number=order_number,
-                    status="PAYMENT_COMPLETED",
-                    recipient_name=recipient_name,
-                    recipient_phone=recipient_phone,
-                    address=recipient_address,
-                    total_amount=0,
-                )
+            order = Order(
+                market_order_id=row.id,
+                supplier_order_id=supplier_order.id,
+                order_number=order_number,
+                status="PAYMENT_COMPLETED",
+                recipient_name=recipient_name,
+                recipient_phone=recipient_phone,
+                address=recipient_address,
+                total_amount=0,
             )
+            session.add(order)
+            session.flush()
+
+        # OrderItem 생성 및 옵션 매칭
+        # 기존 OrderItem 삭제 (중복 방지)
+        session.query(OrderItem).filter(OrderItem.order_id == order.id).delete()
+        
+        total_order_amount = 0
+        for item in order_items:
+            if not isinstance(item, dict): continue
+            
+            # 쿠팡 sellerItemId(sellerItemCode)를 이용해 ProductOption 식별
+            # 쿠팡 API orderItems 내의 sellerItemId 필드 확인
+            seller_item_code = str(item.get("sellerItemId") or item.get("externalVendorSkuCode") or "")
+            
+            # 매칭 시도 1: sellerItemCode 직접 매칭
+            # 매칭 시도 2: option.id (UUID string) 매칭
+            opt = None
+            if seller_item_code:
+                opt = session.query(ProductOption).filter(
+                    ProductOption.product_id == product.id,
+                    (ProductOption.external_option_key == seller_item_code) | (ProductOption.id == uuid.UUID(seller_item_code) if len(seller_item_code) == 36 else False)
+                ).first()
+            
+            qty = int(item.get("shippingCount") or item.get("quantity") or 1)
+            unit_price = int(item.get("orderPrice") or item.get("unit_price") or 0)
+            item_total_price = unit_price * qty
+            total_order_amount += item_total_price
+            
+            order_item = OrderItem(
+                order_id=order.id,
+                product_id=product.id,
+                market_listing_id=listing.id,
+                product_option_id=opt.id if opt else None,
+                external_item_id=str(item.get("orderItemId") or ""),
+                product_name=str(item.get("sellerProductName") or product.name),
+                quantity=qty,
+                unit_price=unit_price,
+                total_price=item_total_price
+            )
+            session.add(order_item)
+            
+        order.total_amount = total_order_amount
 
         session.add(
             SupplierRawFetchLog(

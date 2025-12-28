@@ -115,6 +115,12 @@ class OllamaProvider(AIProvider):
         response = await self._chat(messages, target_model)
         return response.get("message", {}).get("content", "")
 
+    async def generate_image(self, prompt: str, negative_prompt: str = "", width: int = 1024, height: int = 1024, model: Optional[str] = None) -> bytes:
+        # Ollama does not natively support image generation (Text-to-Image) in the same way.
+        # Future expansion might involve ComfyUI/A1111 integration but for now it's a placeholder.
+        logger.warning("Ollama Image generation not natively supported.")
+        return b""
+
     async def describe_image(self, image_data: bytes, prompt: str = "이 이미지를 상세히 설명해주세요.", model: Optional[str] = None) -> str:
         encoded_image = base64.b64encode(image_data).decode("utf-8")
         target_model = model or self.vision_model_name

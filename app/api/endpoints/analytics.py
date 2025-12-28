@@ -15,7 +15,8 @@ from sqlalchemy.orm import Session
 
 from app.db import get_session
 from app.services.sales_analytics_service import SalesAnalyticsService
-from app.models import SalesAnalytics, Product, Order, OrderItem
+from app.services.market_service import MarketService
+from app.models import SalesAnalytics, Product, Order, OrderItem, MarketListing
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -30,6 +31,18 @@ class AnalyzeProductSalesIn(BaseModel):
     product_id: uuid.UUID = Field(..., description="분석할 제품 ID")
     period_type: str = Field(default="weekly", description="분석 기간 유형 (daily, weekly, monthly)")
     period_count: int = Field(default=4, ge=1, le=12, description="분석할 기간 수")
+
+
+class OptionPerformanceOut(BaseModel):
+    """옵션별 성과 모델"""
+    option_id: str
+    option_name: str
+    option_value: str
+    total_quantity: int
+    total_revenue: int
+    total_cost: int
+    total_profit: int
+    avg_margin_rate: float
 
 
 class SalesAnalyticsOut(BaseModel):
@@ -55,6 +68,7 @@ class SalesAnalyticsOut(BaseModel):
     insights: Optional[List[str]]
     recommendations: Optional[List[str]]
     created_at: str
+    option_performance: Optional[List[OptionPerformanceOut]] = None
 
 
 class ProductPerformanceOut(BaseModel):
@@ -101,6 +115,39 @@ class SalesTrendOut(BaseModel):
     data_points: List[SalesTrendDataPoint]
 
 
+class StrategicReportOut(BaseModel):
+    """AI 전략 보고서 응답 모델"""
+    market_position: str
+    swot_analysis: dict
+    pricing_strategy: str
+    action_plan: List[str]
+    expected_impact: str
+
+
+class OptimalPriceOut(BaseModel):
+    """최적 가격 제안 응답 모델"""
+    optimal_price: int
+    strategy: str
+    reason: str
+    expected_margin_rate: float
+    impact: str
+    market_code: Optional[str] = None
+    account_id: Optional[str] = None
+    market_item_id: Optional[str] = None
+
+class UpdatePriceIn(BaseModel):
+    """가격 수정 요청 모델"""
+    market_code: str = Field(..., description="마켓 코드 (COUPANG, SMARTSTORE)")
+    account_id: uuid.UUID = Field(..., description="마켓 계정 ID")
+    market_item_id: str = Field(..., description="마켓 상품 고유 ID")
+    price: int = Field(..., description="수정할 가격")
+
+class UpdatePriceOut(BaseModel):
+    """가격 수정 결과 모델"""
+    success: bool
+    message: Optional[str] = None
+
+
 # ============================================================================
 # API Endpoints
 # ============================================================================
@@ -125,7 +172,7 @@ async def analyze_product_sales(
             period_count=payload.period_count
         )
         
-        return _analytics_to_response(analytics)
+        return _analytics_to_response(analytics, session)
         
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -153,7 +200,7 @@ async def analyze_product_by_id(
             period_count=period_count
         )
         
-        return _analytics_to_response(analytics)
+        return _analytics_to_response(analytics, session)
         
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -186,7 +233,7 @@ async def get_product_analytics(
     if not analytics:
         raise HTTPException(status_code=404, detail="판매 분석 결과를 찾을 수 없습니다")
     
-    return _analytics_to_response(analytics)
+    return _analytics_to_response(analytics, session)
 
 
 @router.get("/top-performing", response_model=List[ProductPerformanceOut])
@@ -229,6 +276,40 @@ async def get_low_performing_products(
     ]
 
 
+@router.get("/product/{product_id}/options", response_model=List[OptionPerformanceOut])
+async def get_product_option_performance(
+    product_id: uuid.UUID,
+    period_type: str = Query(default="weekly", description="분석 기간 유형"),
+    period_count: int = Query(default=4, ge=1, le=12, description="분석할 기간 수"),
+    session: Session = Depends(get_session)
+):
+    """
+    특정 제품의 옵션별 판매 성과를 조회합니다.
+    """
+    service = SalesAnalyticsService(session)
+    
+    # 분석 기간 계산
+    period_end = datetime.now(timezone.utc)
+    if period_type == "daily":
+        period_start = period_end - timedelta(days=period_count)
+    elif period_type == "weekly":
+        period_start = period_end - timedelta(weeks=period_count)
+    elif period_type == "monthly":
+        period_start = period_end - timedelta(days=period_count * 30)
+    else:
+        period_start = period_end - timedelta(weeks=period_count)
+        
+    performance = service.get_option_performance(
+        product_id=product_id,
+        period_start=period_start,
+        period_end=period_end
+    )
+    
+    return [
+        OptionPerformanceOut(**p)
+        for p in performance
+    ]
+
 @router.get("/product/{product_id}/history")
 async def get_product_analytics_history(
     product_id: uuid.UUID,
@@ -261,7 +342,7 @@ async def get_product_analytics_history(
         "product_name": product.name,
         "period_type": period_type,
         "history": [
-            _analytics_to_response(a)
+            _analytics_to_response(a, session)
             for a in analytics_history
         ]
     }
@@ -288,7 +369,10 @@ async def get_sales_summary(
     else:
         period_start = period_end - timedelta(weeks=1)
     
-    # 전체 매출 집계
+    # 상위 성과 제품 분석 (이익 계산용)
+    service = SalesAnalyticsService(session)
+    
+    # 전체 주문 아이템 조회
     order_items = (
         session.execute(
             select(OrderItem)
@@ -301,15 +385,26 @@ async def get_sales_summary(
     )
     
     total_orders = len(set(oi.order_id for oi in order_items))
-    total_quantity = sum(oi.quantity for oi in order_items)
     total_revenue = sum(oi.total_price for oi in order_items)
     
-    # 이익률 계산
+    # 옵션 정보 수동 조회 (교차 DB 대응)
+    option_ids = [oi.product_option_id for oi in order_items if oi.product_option_id]
+    options_map = {}
+    if option_ids:
+        from app.models import ProductOption
+        options = session.execute(
+            select(ProductOption).where(ProductOption.id.in_(option_ids))
+        ).scalars().all()
+        options_map = {opt.id: opt for opt in options}
+    
+    # 정밀 이익 계산
     total_profit = 0
     for oi in order_items:
         product = session.get(Product, oi.product_id)
         if product:
-            total_profit += (oi.total_price - product.cost_price * oi.quantity)
+            opt = options_map.get(oi.product_option_id)
+            cost_per_unit = opt.cost_price if opt else product.cost_price
+            total_profit += (oi.total_price - cost_per_unit * oi.quantity)
     
     avg_margin_rate = (total_profit / total_revenue) if total_revenue > 0 else 0.0
     
@@ -383,15 +478,26 @@ async def get_sales_trend(
         )
         
         total_orders = len(set(oi.order_id for oi in order_items))
-        total_quantity = sum(oi.quantity for oi in order_items)
         total_revenue = sum(oi.total_price for oi in order_items)
         
-        # 이익 계산
+        # 옵션 정보 수동 조회 (교차 DB 대응)
+        option_ids = [oi.product_option_id for oi in order_items if oi.product_option_id]
+        options_map = {}
+        if option_ids:
+            from app.models import ProductOption
+            options = session.execute(
+                select(ProductOption).where(ProductOption.id.in_(option_ids))
+            ).scalars().all()
+            options_map = {opt.id: opt for opt in options}
+            
+        # 정밀 이익 계산
         total_profit = 0
         for oi in order_items:
             product = session.get(Product, oi.product_id)
             if product:
-                total_profit += (oi.total_price - product.cost_price * oi.quantity)
+                opt = options_map.get(oi.product_option_id)
+                cost_per_unit = opt.cost_price if opt else product.cost_price
+                total_profit += (oi.total_price - cost_per_unit * oi.quantity)
         
         # 예측 데이터 조회 (해당 기간의 최신 분석)
         predicted_orders = None
@@ -480,9 +586,68 @@ async def trigger_bulk_analytics(
 # Helper Functions
 # ============================================================================
 
-def _analytics_to_response(analytics: SalesAnalytics) -> SalesAnalyticsOut:
+@router.get("/strategic-report/{product_id}", response_model=StrategicReportOut)
+async def get_strategic_report(
+    product_id: uuid.UUID,
+    session: Session = Depends(get_session)
+):
+    """
+    제품의 AI 전략 보고서를 생성하거나 조회합니다.
+    """
+    service = SalesAnalyticsService(session)
+    try:
+        report = await service.generate_strategic_insight(product_id)
+        return report
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error generating strategic report: {e}")
+        raise HTTPException(status_code=500, detail="전략 보고서 생성 중 오류가 발생했습니다")
+
+
+@router.get("/optimal-price/{product_id}", response_model=OptimalPriceOut)
+async def get_optimal_price_prediction(
+    product_id: uuid.UUID,
+    session: Session = Depends(get_session)
+):
+    """
+    AI 기반 최적 가격 제안을 조회합니다.
+    """
+    from app.services.sourcing_recommendation_service import SourcingRecommendationService
+    service = SourcingRecommendationService(session)
+    try:
+        prediction = await service.predict_optimal_price(product_id)
+        return prediction
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error predicting optimal price: {e}")
+        raise HTTPException(status_code=500, detail="최적 가격 예측 중 오류가 발생했습니다")
+
+
+@router.post("/update-price", response_model=UpdatePriceOut)
+async def update_market_price(
+    data: UpdatePriceIn,
+    db: Session = Depends(get_session)
+):
+    """
+    마켓 상품의 판매가를 실시간으로 수정합니다.
+    """
+    service = MarketService(db)
+    
+    success, message = service.update_price(
+        market_code=data.market_code,
+        account_id=data.account_id,
+        market_item_id=data.market_item_id,
+        price=data.price
+    )
+    
+    return UpdatePriceOut(success=success, message=message)
+
+
+def _analytics_to_response(analytics: SalesAnalytics, session: Optional[Session] = None) -> SalesAnalyticsOut:
     """SalesAnalytics 모델을 응답 모델로 변환"""
-    return SalesAnalyticsOut(
+    response = SalesAnalyticsOut(
         id=str(analytics.id),
         product_id=str(analytics.product_id),
         period_type=analytics.period_type,
@@ -505,6 +670,18 @@ def _analytics_to_response(analytics: SalesAnalytics) -> SalesAnalyticsOut:
         recommendations=analytics.recommendations or [],
         created_at=analytics.created_at.isoformat() if analytics.created_at else None
     )
+    
+    # 옵션 성과 추가 (세션이 제공된 경우에만)
+    if session:
+        service = SalesAnalyticsService(session)
+        performance = service.get_option_performance(
+            product_id=analytics.product_id,
+            period_start=analytics.period_start,
+            period_end=analytics.period_end
+        )
+        response.option_performance = [OptionPerformanceOut(**p) for p in performance]
+        
+    return response
 
 
 async def _execute_bulk_analytics(

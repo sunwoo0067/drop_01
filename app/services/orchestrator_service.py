@@ -268,9 +268,22 @@ class OrchestratorService:
             winning_products = self.processing_service.get_winning_products_for_processing(limit=5)
             
             for wp in winning_products:
-                logger.info(f"Winner identified: {wp.name} (Sales: Identified). Ready for manual premium optimization.")
+                logger.info(f"Auto-triggering premium content processing for winner: {wp.name}")
+                # 프리미엄 가공 실행 (AI 이미지 생성 등)
+                await self.processing_service.process_winning_product(wp.id)
 
-            self._record_event("PREMIUM", "SUCCESS", f"최적화 대상 {len(winning_products)}건 선별 완료 (수동 승인 대기)")
+            self._record_event("PREMIUM", "SUCCESS", f"최적화 대상 {len(winning_products)}건 자동 가공 및 승인 대기 처리 완료")
+
+            # 6. [Analysis] 기존 상품 재주문 자동 스캔 및 추천 생성
+            if not dry_run:
+                self._record_event("REORDER_ANALYSIS", "START", "판매 중인 상품의 재주문 필요 여부를 스캔합니다.")
+                from app.services.sourcing_recommendation_service import SourcingRecommendationService
+                rec_service = SourcingRecommendationService(self.db)
+                # 최근 판매 상품 위주 30건 스캔
+                reorder_recs = await rec_service.generate_bulk_recommendations(limit=30, recommendation_type="REORDER")
+                self._record_event("REORDER_ANALYSIS", "SUCCESS", f"재주문 분석 완료 ({len(reorder_recs)}건의 추천 생성/갱신)")
+            else:
+                self._record_event("REORDER_ANALYSIS", "SUCCESS", "Dry-run 모드이므로 재주문 분석을 건너뜁니다.")
 
             logger.info("Daily AI Orchestration Cycle Completed.")
             

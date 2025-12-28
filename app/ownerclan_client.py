@@ -52,7 +52,10 @@ class OwnerClanClient:
         
         resp.raise_for_status()
         data = resp.json()
-        return data.get("status", 500), data.get("data", {})
+        status_code = data.get("status", 500)
+        if status_code != 200:
+            logger.warning(f"Proxy request failed: {method} {url} -> status={status_code}, data={data}")
+        return status_code, data.get("data", {})
 
 
     def with_token(self, access_token: str) -> "OwnerClanClient":
@@ -161,6 +164,7 @@ class OwnerClanClient:
         if self._access_token:
             headers["Authorization"] = f"Bearer {self._access_token}"
 
+        payload = {"query": query}
         if variables is not None:
             payload["variables"] = variables
 
@@ -307,7 +311,59 @@ class OwnerClanClient:
 
     def get_product(self, item_code: str) -> tuple[int, dict[str, Any]]:
         """3.1 단일 상품 정보 조회"""
-        return self.get(f"/v1/item/{item_code}")
+        # 1. Try REST API first
+        status, data = self.get(f"/v1/item/{item_code}")
+        if status == 200:
+            return status, data
+            
+        # 2. Fallback to GraphQL
+        logger.info(f"OwnerClan REST get_product failed for {item_code}. Falling back to GraphQL.")
+        query = """
+        query ($key: ID!) {
+          item(key: $key) {
+            key
+            id
+            name
+            price
+            fixedPrice
+            images
+            content
+            options {
+              key
+              price
+              quantity
+              optionAttributes {
+                name
+                value
+              }
+            }
+          }
+        }
+        """
+        variables = {"key": item_code}
+        gql_status, gql_data = self.graphql(query, variables=variables)
+        
+        if gql_status != 200:
+            return gql_status, gql_data
+            
+        item_node = gql_data.get("data", {}).get("item")
+        if not item_node:
+            return 404, {"message": "Product not found in both REST and GraphQL"}
+            
+        # Convert GraphQL response to a format compatible with our needs
+        # We wrap it in a 'data' key to match what some callers expect
+        compatible_data = {
+            "data": {
+                "item_code": item_node.get("key"),
+                "name": item_node.get("name"),
+                "supply_price": item_node.get("price"),
+                "price": item_node.get("fixedPrice"),
+                "images": item_node.get("images") or [],
+                "detail_html": item_node.get("content"),
+                "options": item_node.get("options") or []
+            }
+        }
+        return 200, compatible_data
 
     def get_products(
         self,

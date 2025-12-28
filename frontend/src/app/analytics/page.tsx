@@ -1,11 +1,15 @@
 "use client";
 
-import { motion } from "framer-motion";
-import { BarChart3, RefreshCw } from "lucide-react";
+import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { BarChart3, RefreshCw, X } from "lucide-react";
 import SalesSummaryCards from "@/components/analytics/SalesSummaryCards";
 import ProductPerformanceTable from "@/components/analytics/ProductPerformanceTable";
+import ProductOptionPerformanceTable from "@/components/analytics/ProductOptionPerformanceTable";
 import SalesTrendChart from "@/components/analytics/SalesTrendChart";
 import SourcingRecommendationDashboard from "@/components/analytics/SourcingRecommendationDashboard";
+import StrategicReportModal from "@/components/analytics/StrategicReportModal";
+import ChannelExpansionDashboard from "@/components/analytics/ChannelExpansionDashboard";
 import { Button } from "@/components/ui/Button";
 
 const container = {
@@ -24,6 +28,9 @@ const item = {
 };
 
 export default function AnalyticsPage() {
+    const [selectedProduct, setSelectedProduct] = useState<{ id: string, name: string } | null>(null);
+    const [analysisProduct, setAnalysisProduct] = useState<{ id: string, name: string } | null>(null);
+
     return (
         <motion.div
             variants={container}
@@ -59,8 +66,52 @@ export default function AnalyticsPage() {
 
             {/* Product Performance Tables */}
             <motion.div variants={item} className="grid gap-6 md:grid-cols-2">
-                <ProductPerformanceTable type="top" limit={10} />
-                <ProductPerformanceTable type="low" limit={10} />
+                <ProductPerformanceTable
+                    type="top"
+                    limit={10}
+                    onProductClick={(id, name) => setSelectedProduct({ id, name })}
+                    onAIAnalysisClick={(id, name) => setAnalysisProduct({ id, name })}
+                />
+                <ProductPerformanceTable
+                    type="low"
+                    limit={10}
+                    onProductClick={(id, name) => setSelectedProduct({ id, name })}
+                    onAIAnalysisClick={(id, name) => setAnalysisProduct({ id, name })}
+                />
+            </motion.div>
+
+            {/* Option Performance Details (Conditional) */}
+            <AnimatePresence>
+                {selectedProduct && (
+                    <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        variants={item}
+                    >
+                        <ProductOptionPerformanceTable
+                            productId={selectedProduct.id}
+                            productName={selectedProduct.name}
+                            onClose={() => setSelectedProduct(null)}
+                        />
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* Strategic Analysis Modal (Conditional) */}
+            <AnimatePresence>
+                {analysisProduct && (
+                    <StrategicReportModal
+                        productId={analysisProduct.id}
+                        productName={analysisProduct.name}
+                        onClose={() => setAnalysisProduct(null)}
+                    />
+                )}
+            </AnimatePresence>
+
+            {/* Channel Expansion Dashboard */}
+            <motion.div variants={item}>
+                <ChannelExpansionDashboard />
             </motion.div>
 
             {/* Sourcing Recommendation Dashboard */}

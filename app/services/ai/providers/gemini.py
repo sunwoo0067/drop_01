@@ -131,6 +131,12 @@ class GeminiProvider(AIProvider):
         # Standard Gemini models handle reasoning well within normal chat.
         return await self.generate_text(prompt, model=model)
 
+    async def generate_image(self, prompt: str, negative_prompt: str = "", width: int = 1024, height: int = 1024, model: Optional[str] = None) -> bytes:
+        # Gemini image generation (Imagen) generally requires a separate model/API call.
+        # Placeholder for now.
+        logger.warning("Gemini Image generation not yet implemented in this provider.")
+        return b""
+
     async def analyze_visual_layout(self, image_data: bytes, prompt: str = "Analyze the visual layout and identify key elements with their positions.", model: Optional[str] = None) -> str:
         prompt += " Please provide spatial coordinates or describe the layout in detail."
         return await self._generate_with_image(image_data, prompt, model)

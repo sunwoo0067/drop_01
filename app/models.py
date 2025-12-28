@@ -1,3 +1,4 @@
+from typing import Any
 from pgvector.sqlalchemy import Vector
 from datetime import datetime
 import uuid
@@ -18,6 +19,21 @@ class DropshipBase(DeclarativeBase):
 class MarketBase(DeclarativeBase):
     pass
 
+
+
+class MarketFeePolicy(MarketBase):
+    __tablename__ = "market_fee_policies"
+    __table_args__ = (
+        UniqueConstraint("market_code", "category_id", name="uq_market_fee_policies_market_category"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_code: Mapped[str] = mapped_column(Text, nullable=False) # COUPANG, SMARTSTORE
+    category_id: Mapped[str | None] = mapped_column(Text, nullable=True) # Optional category-specific fee
+    fee_rate: Mapped[float] = mapped_column(Float, nullable=False) # 0.12 (12%)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class Embedding(DropshipBase):
@@ -520,6 +536,7 @@ class OrderItem(MarketBase):
     order_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("orders.id"), nullable=False)
     product_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     market_listing_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("market_listings.id"), nullable=True)
+    product_option_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
     external_item_id: Mapped[str | None] = mapped_column(Text, nullable=True)  # e.g. Coupang orderItemId
     product_name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -726,6 +743,10 @@ class SourcingRecommendation(DropshipBase):
     current_supply_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     recommended_selling_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     expected_margin: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    
+    # 옵션별 성과 및 추천 상세 (JSONB)
+    # [ { "option_id": str, "option_name": str, "option_value": str, "recommended_quantity": int, "score": float, ... } ]
+    option_recommendations: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
     
     # 재고/주문 정보
     current_stock: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

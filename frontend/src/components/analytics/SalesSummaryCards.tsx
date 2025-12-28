@@ -93,8 +93,8 @@ export default function SalesSummaryCards() {
                 <button
                     onClick={() => setPeriodType("weekly")}
                     className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all ${periodType === "weekly"
-                            ? "bg-primary text-primary-foreground"
-                            : "bg-muted text-muted-foreground hover:bg-accent"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground hover:bg-accent"
                         }`}
                 >
                     주간
@@ -102,8 +102,8 @@ export default function SalesSummaryCards() {
                 <button
                     onClick={() => setPeriodType("monthly")}
                     className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all ${periodType === "monthly"
-                            ? "bg-primary text-primary-foreground"
-                            : "bg-muted text-muted-foreground hover:bg-accent"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground hover:bg-accent"
                         }`}
                 >
                     월간
@@ -175,7 +175,7 @@ export default function SalesSummaryCards() {
                         </div>
                         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                             <CardTitle className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
-                                총 이익
+                                정밀 순이익
                             </CardTitle>
                             <div className="h-8 w-8 rounded-lg bg-emerald-500/10 flex items-center justify-center">
                                 <TrendingUp className="h-4 w-4 text-emerald-500" />
@@ -185,38 +185,40 @@ export default function SalesSummaryCards() {
                             <div className="text-4xl font-black text-emerald-500">
                                 {formatCurrency(summary.total_profit)}
                             </div>
-                            <div className="mt-2 text-xs font-bold text-muted-foreground">
-                                순이익
+                            <div className="mt-2 text-[10px] font-bold text-muted-foreground flex flex-col gap-1">
+                                <div className="flex justify-between">
+                                    <span>마켓 수수료:</span>
+                                    <span className="text-red-400">-{formatCurrency(summary.actual_fees || 0)}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span>예상 부가세:</span>
+                                    <span className="text-amber-400">-{formatCurrency(summary.actual_vat || 0)}</span>
+                                </div>
                             </div>
                         </CardContent>
                     </Card>
                 </motion.div>
 
-                {/* Average Margin Rate */}
+                {/* Net Settlement */}
                 <motion.div variants={item}>
-                    <Card className="overflow-hidden group">
+                    <Card className="overflow-hidden group bg-gradient-to-br from-primary/5 to-transparent border-primary/20">
                         <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                             <Activity className="h-24 w-24" />
                         </div>
                         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                            <CardTitle className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
-                                평균 이익률
+                            <CardTitle className="text-sm font-bold uppercase tracking-widest text-primary">
+                                정산 예정액
                             </CardTitle>
-                            <div className="h-8 w-8 rounded-lg bg-amber-500/10 flex items-center justify-center">
-                                <Activity className="h-4 w-4 text-amber-500" />
+                            <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                                <Activity className="h-4 w-4 text-primary" />
                             </div>
                         </CardHeader>
                         <CardContent>
-                            <div className="text-4xl font-black text-amber-500">
-                                {formatPercent(summary.avg_margin_rate)}
+                            <div className="text-4xl font-black text-primary">
+                                {formatCurrency(summary.net_settlement || 0)}
                             </div>
-                            <div className="mt-2 flex items-center gap-2">
-                                <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
-                                    <div
-                                        className="h-full bg-amber-500 transition-all"
-                                        style={{ width: `${Math.min(summary.avg_margin_rate * 100, 100)}%` }}
-                                    />
-                                </div>
+                            <div className="mt-2 text-xs font-bold text-muted-foreground">
+                                평균 이익률: {formatPercent(summary.avg_margin_rate)}
                             </div>
                         </CardContent>
                     </Card>

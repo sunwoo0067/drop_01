@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_session
 from app.services.sourcing_recommendation_service import SourcingRecommendationService
-from app.models import SourcingRecommendation
+from app.models import SourcingRecommendation, Product
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -55,6 +55,7 @@ class RecommendationOut(BaseModel):
     reasoning: Optional[str]
     risk_factors: Optional[List[str]]
     opportunity_factors: Optional[List[str]]
+    option_recommendations: Optional[List[dict]] = None
     status: str
     confidence_level: float
     created_at: str
@@ -74,6 +75,18 @@ class RecommendationSummaryOut(BaseModel):
     rejected: int
     acceptance_rate: float
     avg_overall_score: float
+
+class ScalingRecommendationOut(BaseModel):
+    """다채널 확장 추천 모델"""
+    product_id: str
+    product_name: str
+    current_orders: int
+    source_market: str
+    target_market: str
+    expected_impact: str
+    difficulty_score: str
+    potential_revenue: int
+    reason: str
 
 
 # ============================================================================
@@ -214,33 +227,47 @@ async def get_reorder_alerts(
     
     # 재고 일수가 7일 이하인 추천 조회
     recommendations = (
-        session.execute(
-            select(SourcingRecommendation)
-            .where(SourcingRecommendation.status == "PENDING")
-            .where(SourcingRecommendation.stock_days_left.isnot(None))
-            .where(SourcingRecommendation.stock_days_left <= 7)
-            .order_by(SourcingRecommendation.stock_days_left.asc())
-        )
-        .scalars()
+        session.query(SourcingRecommendation)
+        .filter(SourcingRecommendation.status == "PENDING")
+        .filter(SourcingRecommendation.stock_days_left.isnot(None))
+        .filter(SourcingRecommendation.stock_days_left <= 7)
+        .order_by(SourcingRecommendation.stock_days_left.asc())
         .all()
     )
     
+    alerts = []
+    for r in recommendations:
+        product = session.get(Product, r.product_id) if r.product_id else None
+        
+        # 옵션 중 재고가 매우 적은 것들 카운트
+        critical_options_count = 0
+        if r.option_recommendations:
+            critical_options_count = sum(1 for opt in r.option_recommendations if opt.get('recommended_quantity', 0) > 0)
+
+        alerts.append({
+            "recommendation_id": str(r.id),
+            "product_name": product.name if product else "Unknown",
+            "stock_days_left": r.stock_days_left,
+            "recommended_quantity": r.recommended_quantity,
+            "overall_score": r.overall_score,
+            "critical_options_count": critical_options_count
+        })
+        
     return {
-        "alert_count": len(recommendations),
-        "alerts": [
-            {
-                "recommendation_id": str(r.id),
-                "product_name": session.get(
-                    session.query(r.__class__).filter_by(id=r.product_id).first().__class__,
-                    r.product_id
-                ).name if r.product_id else "Unknown",
-                "stock_days_left": r.stock_days_left,
-                "recommended_quantity": r.recommended_quantity,
-                "overall_score": r.overall_score
-            }
-            for r in recommendations
-        ]
+        "alert_count": len(alerts),
+        "alerts": alerts
     }
+
+@router.get("/scaling", response_model=List[ScalingRecommendationOut])
+async def get_scaling_recommendations(
+    limit: int = Query(default=10, ge=1, le=50),
+    session: Session = Depends(get_session)
+):
+    """
+    다채널 확장을 위한 우대 상품 추천 목록을 조회합니다.
+    """
+    service = SourcingRecommendationService(session)
+    return await service.get_scaling_recommendations(limit=limit)
 
 
 @router.get("/{recommendation_id}", response_model=RecommendationOut)
@@ -422,6 +449,7 @@ def _recommendation_to_response(
         reasoning=recommendation.reasoning,
         risk_factors=recommendation.risk_factors or [],
         opportunity_factors=recommendation.opportunity_factors or [],
+        option_recommendations=recommendation.option_recommendations,
         status=recommendation.status,
         confidence_level=recommendation.confidence_level,
         created_at=recommendation.created_at.isoformat() if recommendation.created_at else None

@@ -74,11 +74,16 @@ class SourcingService:
         """
         logger.info(f"Executing keyword sourcing for: {keyword}")
         from app.ownerclan_client import OwnerClanClient
-        # Use ownerclan client to search
+        from app.models import SupplierAccount
+        acc = self.db.execute(
+            select(SupplierAccount).where(SupplierAccount.supplier_code == "ownerclan").where(SupplierAccount.is_active == True)
+        ).scalars().first()
+        
         client = OwnerClanClient(
             auth_url=settings.ownerclan_auth_url,
             api_base_url=settings.ownerclan_api_base_url,
-            graphql_url=settings.ownerclan_graphql_url
+            graphql_url=settings.ownerclan_graphql_url,
+            access_token=acc.access_token if acc else None
         )
         status, data = client.get_products(keyword=keyword, limit=limit)
         if status != 200:
@@ -218,6 +223,7 @@ class SourcingService:
 
         embedding = None
         similarity_score = None
+        benchmark = None
         if benchmark_id:
             benchmark = (
                 self.db.execute(select(BenchmarkProduct).where(BenchmarkProduct.id == benchmark_id))
@@ -325,9 +331,30 @@ class SourcingService:
 
         # 1. Create Product
         from app.services.ai.service import AIService
+        from app.ownerclan_client import OwnerClanClient
         ai = AIService()
         
-        # Find raw record
+        # 1.1 공급처로부터 최신 상세 정보(옵션 포함) 다시 가져오기
+        from app.models import SupplierAccount
+        acc = self.db.execute(
+            select(SupplierAccount).where(SupplierAccount.supplier_code == "ownerclan").where(SupplierAccount.is_active == True)
+        ).scalars().first()
+        
+        client = OwnerClanClient(
+            auth_url=settings.ownerclan_auth_url,
+            api_base_url=settings.ownerclan_api_base_url,
+            graphql_url=settings.ownerclan_graphql_url,
+            access_token=acc.access_token if acc else None
+        )
+        
+        logger.info(f"Fetching full details for {candidate.supplier_item_id} from OwnerClan...")
+        status, detail_data = client.get_product(candidate.supplier_item_id)
+        item_full_data = detail_data.get("data") if isinstance(detail_data, dict) else detail_data
+        if status != 200 or not item_full_data:
+            logger.warning(f"Failed to fetch full details for {candidate.supplier_item_id}. Using candidate cache.")
+            item_full_data = {}
+        
+        # Find or update raw record
         raw_entry = self.db.execute(
             select(SupplierItemRaw)
             .where(SupplierItemRaw.supplier_code == candidate.supplier_code)
@@ -335,8 +362,17 @@ class SourcingService:
         ).scalar_one_or_none()
         
         if not raw_entry:
-            logger.error(f"Cannot approve candidate: SupplierItemRaw not found for {candidate.supplier_item_id}")
-            return
+            raw_entry = SupplierItemRaw(
+                supplier_code=candidate.supplier_code,
+                item_code=candidate.supplier_item_id,
+                raw=item_full_data if item_full_data else {"name": candidate.name, "price": candidate.supply_price}
+            )
+            self.db.add(raw_entry)
+            self.db.flush()
+        elif item_full_data:
+            # 최신 데이터로 업데이트 (옵션 정보 확보)
+            raw_entry.raw = item_full_data
+            self.db.flush()
 
         # Clean original name
         cleaned_name = clean_product_name(candidate.name)
@@ -355,24 +391,30 @@ class SourcingService:
             selling_price=int(candidate.supply_price * 1.3), # Default 30% margin
             status="DRAFT",
             processing_status="PENDING",
-            processed_image_urls=[candidate.thumbnail_url] if candidate.thumbnail_url else []
+            processed_image_urls=[candidate.thumbnail_url] if candidate.thumbnail_url else [],
+            description=item_full_data.get("detail_html") or item_full_data.get("content")
         )
         self.db.add(product)
         self.db.flush() # ID 확보
         
-        # 1.1 Parse and save options
-        raw_data = raw_entry.raw if isinstance(raw_entry.raw, dict) else {}
-        options_data = raw_data.get("options") or []
+        # 1.2 Parse and save options
+        # 오너클랜은 보통 'options' 또는 'option_list'에 정보를 담음
+        options_data = item_full_data.get("options") or item_full_data.get("option_list") or []
         
         if options_data:
             for opt in options_data:
                 # 오너클랜 옵션 구조: {'optionAttributes': [{'name': '색상', 'value': '블랙'}], 'price': 10000, 'quantity': 50, 'key': '...'}
-                attrs = opt.get("optionAttributes") or []
-                opt_name = "/".join([a.get("name", "") for a in attrs if a.get("name")]) or "기본"
-                opt_value = "/".join([a.get("value", "") for a in attrs if a.get("value")]) or "-"
+                attrs = opt.get("optionAttributes") or opt.get("option_attributes") or []
+                if not attrs and opt.get("name"):
+                     # 단순 텍스트 옵션 처리
+                     opt_name = "옵션"
+                     opt_value = opt.get("name")
+                else:
+                    opt_name = "/".join([str(a.get("name", "")) for a in attrs if a.get("name")]) or "옵션"
+                    opt_value = "/".join([str(a.get("value", "")) for a in attrs if a.get("value")]) or "기본"
                 
-                # 가산가 적용 확인 (price가 옵션 단독가인지, 차액인지 확인 필요. 오너클랜은 보통 개별 단가)
-                opt_price = self._to_int(opt.get("price")) or product.cost_price
+                # 가격 정보 (차액인지 절대값인지 주의, 오너클랜 API는 보통 개별 아이템 가격)
+                opt_price = self._to_int(opt.get("price") or opt.get("supply_price")) or product.cost_price
                 
                 new_opt = ProductOption(
                     product_id=product.id,
@@ -380,8 +422,8 @@ class SourcingService:
                     option_value=opt_value,
                     cost_price=opt_price,
                     selling_price=int(opt_price * 1.3), # 동일 마진 적용
-                    stock_quantity=self._to_int(opt.get("quantity")) or 0,
-                    external_option_key=opt.get("key")
+                    stock_quantity=self._to_int(opt.get("quantity") or opt.get("stock")) or 999,
+                    external_option_key=str(opt.get("key") or opt.get("option_code") or "")
                 )
                 self.db.add(new_opt)
         else:
@@ -398,7 +440,6 @@ class SourcingService:
             self.db.add(default_opt)
 
         self.db.commit()
-        
         logger.info(f"Promoted candidate to Product with {len(product.options) if product.options else 0} options: {product.name} (ID: {product.id})")
         
         # 2. Trigger Image Processing (Placeholder for background task)

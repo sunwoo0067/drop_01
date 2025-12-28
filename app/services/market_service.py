@@ -4,13 +4,18 @@ from typing import Any, Dict, Tuple
 from sqlalchemy.orm import Session
 
 from app.models import MarketAccount
-from app.coupang_sync import sync_coupang_products, delete_market_listing as delete_coupang_listing
-# smartstore_sync.py에 delete_market_listing이 아직 구현되지 않았을 수 있으므로 주의
+
 try:
     from app.smartstore_sync import (
         sync_smartstore_products, 
         register_smartstore_product,
-        delete_market_listing as delete_smartstore_listing
+        delete_market_listing as delete_smartstore_listing,
+        update_smartstore_price
+    )
+    from app.coupang_sync import (
+        sync_coupang_products, 
+        delete_market_listing as delete_coupang_listing,
+        update_coupang_price
     )
 except ImportError:
     sync_smartstore_products = None
@@ -69,3 +74,16 @@ class MarketService:
                 return result
         else:
             return {"status": "error", "message": f"Unsupported market: {market_code}"}
+
+    def update_price(self, market_code: str, account_id: uuid.UUID, market_item_id: str, price: int) -> Tuple[bool, str | None]:
+        """마켓별 상품 가격 수정 실행"""
+        if market_code == "COUPANG":
+            return update_coupang_price(self.db, account_id, market_item_id, price)
+        elif market_code == "SMARTSTORE":
+            if update_smartstore_price:
+                return update_smartstore_price(self.db, account_id, market_item_id, price)
+            else:
+                logger.warning("SmartStore price update function not implemented.")
+                return False, "Not implemented"
+        else:
+            return False, f"Unsupported market: {market_code}"

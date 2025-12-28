@@ -602,27 +602,45 @@ class SourcingAgent(BaseAgent, ValidationMixin):
     
     def find_cleanup_targets(self, outdated_keywords: List[str]) -> List[Dict[str, Any]]:
         """
-        비인기/오프시즌 키워드에 해당하는 상품들을 찾아 삭제 대상으로 반환합니다.
-        
-        Args:
-            outdated_keywords: 제외할 키워드 목록
-            
-        Returns:
-            삭제 대상 상품 정보 목록
+        비인기/오프시즌 상품들을 찾아 삭제 대상으로 반환합니다.
+        (시즌 종료 키워드 + 60일 이상 무실적 상품 복합 분석)
         """
         from app.models import Product, MarketListing, MarketAccount
-        from sqlalchemy import or_
+        from sqlalchemy import or_, and_, func
+        from datetime import datetime, timedelta
         
-        if not outdated_keywords:
-            return []
-            
-        logger.info(f"Finding cleanup targets for keywords: {outdated_keywords}")
+        logger.info(f"Finding cleanup targets (Keywords: {outdated_keywords})")
         
+        targets = []
         try:
-            # 상품명에 키워드가 포함된 상품 찾기
-            filters = [Product.name.ilike(f"%{kw}%") for kw in outdated_keywords]
-            
-            stmt = (
+            # 1. 시즌성 키워드 기반 필터링
+            if outdated_keywords:
+                kw_filters = [Product.name.ilike(f"%{kw}%") for kw in outdated_keywords]
+                stmt_kw = (
+                    select(
+                        MarketListing.market_item_id,
+                        MarketListing.market_account_id,
+                        MarketAccount.market_code,
+                        Product.name
+                    )
+                    .join(Product, MarketListing.product_id == Product.id)
+                    .join(MarketAccount, MarketListing.market_account_id == MarketAccount.id)
+                    .where(or_(*kw_filters))
+                    .where(MarketListing.status == "ACTIVE")
+                )
+                rows_kw = self.db.execute(stmt_kw).all()
+                for row in rows_kw:
+                    targets.append({
+                        "market_item_id": row.market_item_id,
+                        "market_account_id": str(row.market_account_id),
+                        "market_code": row.market_code,
+                        "reason": f"시즌 종료 키워드 포함: {row.name}"
+                    })
+
+            # 2. 실적 미비 상품 필터링 (등록 후 30일 경과 & 60일간 매출 0)
+            # (현 시스템 구조상 Product.total_revenue가 0인 것으로 단순화 가능)
+            cleanup_cutoff = datetime.now() - timedelta(days=30)
+            stmt_perf = (
                 select(
                     MarketListing.market_item_id,
                     MarketListing.market_account_id,
@@ -631,22 +649,24 @@ class SourcingAgent(BaseAgent, ValidationMixin):
                 )
                 .join(Product, MarketListing.product_id == Product.id)
                 .join(MarketAccount, MarketListing.market_account_id == MarketAccount.id)
-                .where(or_(*filters))
                 .where(MarketListing.status == "ACTIVE")
+                .where(MarketListing.linked_at <= cleanup_cutoff)
+                .where(Product.total_revenue == 0)
+                .limit(100) # 한 번에 너무 많이 지우지 않도록 제한
             )
+            rows_perf = self.db.execute(stmt_perf).all()
             
-            rows = self.db.execute(stmt).all()
-            
-            targets = []
-            for row in rows:
-                targets.append({
-                    "market_item_id": row.market_item_id,
-                    "market_account_id": str(row.market_account_id),
-                    "market_code": row.market_code,
-                    "reason": f"시즌 종료 키워드 포함: {row.name}"
-                })
+            seen_ids = {t["market_item_id"] for t in targets}
+            for row in rows_perf:
+                if row.market_item_id not in seen_ids:
+                    targets.append({
+                        "market_item_id": row.market_item_id,
+                        "market_account_id": str(row.market_account_id),
+                        "market_code": row.market_code,
+                        "reason": "장기 미판매 상품 (30일 경과 / 매출 0)"
+                    })
                 
-            logger.info(f"Found {len(targets)} cleanup targets.")
+            logger.info(f"Found {len(targets)} total cleanup targets.")
             return targets
         except Exception as e:
             logger.error(f"Failed to find cleanup targets: {e}")
