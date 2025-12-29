@@ -58,7 +58,7 @@ export default function BenchmarkFilters({ filters, setFilters, onSearch, isLoad
                         { value: "ELEVENST", label: "11번가" },
                     ]}
                     value={filters.marketCode}
-                    onChange={(e) => handleChange("marketCode", e.target.value)}
+                    onChange={(e: any) => handleChange("marketCode", e.target.value)}
                 />
 
                 <div className="grid grid-cols-2 gap-2">
@@ -130,7 +130,7 @@ export default function BenchmarkFilters({ filters, setFilters, onSearch, isLoad
                         { value: "quality", label: "품질 점수순" },
                     ]}
                     value={filters.orderBy}
-                    onChange={(e) => handleChange("orderBy", e.target.value)}
+                    onChange={(e: any) => handleChange("orderBy", e.target.value)}
                 />
             </div>
 

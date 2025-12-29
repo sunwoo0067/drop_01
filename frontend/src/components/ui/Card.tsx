@@ -1,19 +1,14 @@
 import { HTMLAttributes, forwardRef } from "react";
 import { cn } from "@/lib/utils";
-import { motion } from "framer-motion";
 
 const Card = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(({ className, ...props }, ref) => (
-    <motion.div
+    <div
         ref={ref}
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        whileHover={{ y: -5, transition: { duration: 0.2 } }}
         className={cn(
-            "rounded-2xl border bg-card/60 backdrop-blur-md text-card-foreground shadow-sm transition-all duration-300",
-            "border-glass-border hover:shadow-xl hover:shadow-primary/5 hover:border-primary/20",
+            "rounded-sm border border-border bg-card text-card-foreground shadow-sm",
             className
         )}
-        {...props as any}
+        {...props}
     />
 ));
 Card.displayName = "Card";
@@ -21,7 +16,7 @@ Card.displayName = "Card";
 const CardHeader = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(({ className, ...props }, ref) => (
     <div
         ref={ref}
-        className={cn("flex flex-col space-y-1.5 p-6", className)}
+        className={cn("flex flex-col space-y-1 p-3 border-b border-border bg-muted/30", className)}
         {...props}
     />
 ));
@@ -30,7 +25,7 @@ CardHeader.displayName = "CardHeader";
 const CardTitle = forwardRef<HTMLHeadingElement, HTMLAttributes<HTMLHeadingElement>>(({ className, ...props }, ref) => (
     <h3
         ref={ref}
-        className={cn("font-bold text-lg leading-none tracking-tight", className)}
+        className={cn("text-sm font-semibold leading-none tracking-tight text-foreground", className)}
         {...props}
     />
 ));
@@ -39,21 +34,21 @@ CardTitle.displayName = "CardTitle";
 const CardDescription = forwardRef<HTMLParagraphElement, HTMLAttributes<HTMLParagraphElement>>(({ className, ...props }, ref) => (
     <p
         ref={ref}
-        className={cn("text-sm text-muted-foreground/80", className)}
+        className={cn("text-xs text-muted-foreground", className)}
         {...props}
     />
 ));
 CardDescription.displayName = "CardDescription";
 
 const CardContent = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(({ className, ...props }, ref) => (
-    <div ref={ref} className={cn("p-6 pt-0", className)} {...props} />
+    <div ref={ref} className={cn("p-3", className)} {...props} />
 ));
 CardContent.displayName = "CardContent";
 
 const CardFooter = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(({ className, ...props }, ref) => (
     <div
         ref={ref}
-        className={cn("flex items-center p-6 pt-0", className)}
+        className={cn("flex items-center p-3 pt-0 border-t border-border", className)}
         {...props}
     />
 ));

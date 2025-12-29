@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import {
     Loader2,
     Search,
@@ -12,10 +13,9 @@ import {
     AlertCircle,
     RotateCw,
     ExternalLink,
-    ChevronRight,
     Sparkles
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/Card";
+import { Card, CardContent, CardFooter } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
@@ -182,10 +182,12 @@ export default function ProcessingPage() {
                             {/* Image Preview */}
                             <div className="aspect-[4/3] relative overflow-hidden bg-muted group-hover:cursor-pointer">
                                 {item.processed_image_urls && item.processed_image_urls.length > 0 ? (
-                                    <img
+                                    <Image
                                         src={item.processed_image_urls[0]}
-                                        alt={item.name}
-                                        className="object-cover w-full h-full transition-transform duration-700 group-hover:scale-110"
+                                        alt={item.name || "상품 이미지"}
+                                        fill
+                                        sizes="(min-width: 1024px) 25vw, (min-width: 768px) 33vw, 100vw"
+                                        className="object-cover transition-transform duration-700 group-hover:scale-110"
                                     />
                                 ) : (
                                     <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground/30 space-y-2">

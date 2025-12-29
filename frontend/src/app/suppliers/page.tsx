@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import api from "@/lib/api";
 import { Badge } from "@/components/ui/Badge";
@@ -216,7 +216,7 @@ export default function SuppliersPage() {
         }
     };
 
-    const fetchRawRows = async (targetOffset?: number) => {
+    const fetchRawRows = useCallback(async (targetOffset?: number) => {
         const offset = targetOffset ?? rawOffset;
         setRawLoading(true);
         try {
@@ -234,7 +234,7 @@ export default function SuppliersPage() {
         } finally {
             setRawLoading(false);
         }
-    };
+    }, [rawLimit, rawOffset, rawQuery, rawType]);
 
     const fetchRawDetail = async (id: string) => {
         setRawDetailLoading(true);
@@ -274,7 +274,7 @@ export default function SuppliersPage() {
 
     useEffect(() => {
         fetchRawRows();
-    }, [rawType, rawOffset]);
+    }, [fetchRawRows, rawOffset, rawType]);
 
     const triggerSync = async (type: "items" | "orders" | "qna" | "categories", extraParams?: Record<string, any>) => {
         if (!canTrigger) {

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
-import { Activity, Server, ShieldCheck, AlertCircle, RefreshCw } from "lucide-react";
+import { Server, ShieldCheck, AlertCircle, RefreshCw } from "lucide-react";
 
 interface AccountHealth {
     account_id: string;
@@ -48,33 +48,33 @@ export function HealthStatus() {
     }, []);
 
     return (
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            <Card className="border-primary/20 bg-accent/5">
+        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            <Card className="border border-border">
                 <CardHeader className="flex flex-row items-center justify-between pb-2">
-                    <CardTitle className="text-sm font-bold flex items-center gap-2">
-                        <Server className="h-4 w-4 text-primary" />
+                    <CardTitle className="text-xs font-semibold flex items-center gap-1.5">
+                        <Server className="h-3 w-3 text-primary" />
                         시스템 상태
                     </CardTitle>
-                    <button onClick={fetchHealth} disabled={isLoading} className="text-muted-foreground hover:text-primary transition-colors">
+                    <button onClick={fetchHealth} disabled={isLoading} className="text-muted-foreground hover:text-foreground transition-colors">
                         <RefreshCw className={`h-3 w-3 ${isLoading ? "animate-spin" : ""}`} />
                     </button>
                 </CardHeader>
                 <CardContent>
-                    <div className="space-y-3">
+                    <div className="space-y-2">
                         <div className="flex items-center justify-between">
-                            <span className="text-xs text-muted-foreground">서버 상태</span>
+                            <span className="text-[10px] text-muted-foreground">서버 상태</span>
                             <Badge variant={system?.status === "healthy" ? "success" : "destructive"}>
                                 {system?.status === "healthy" ? "정상" : "오류"}
                             </Badge>
                         </div>
                         <div className="flex items-center justify-between">
-                            <span className="text-xs text-muted-foreground">데이터베이스</span>
+                            <span className="text-[10px] text-muted-foreground">데이터베이스</span>
                             <Badge variant={system?.database === "ok" ? "success" : "destructive"}>
                                 {system?.database === "ok" ? "연결됨" : "오류"}
                             </Badge>
                         </div>
                         {system?.timestamp && (
-                            <div className="text-[10px] text-muted-foreground text-right italic">
+                            <div className="text-[9px] text-muted-foreground text-right italic">
                                 Last checked: {new Date(system.timestamp).toLocaleTimeString()}
                             </div>
                         )}

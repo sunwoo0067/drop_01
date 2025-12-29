@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import { Search, Filter, Plus } from "lucide-react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
@@ -135,10 +136,12 @@ export default function SourcingPage() {
                             <Card key={item.id} className="group overflow-hidden border-none shadow-md hover:shadow-xl transition-all duration-300 hover:-translate-y-1 bg-card/50 backdrop-blur-sm">
                                 <div className="aspect-[4/3] relative overflow-hidden bg-muted">
                                     {item.thumbnailUrl ? (
-                                        <img
+                                        <Image
                                             src={item.thumbnailUrl}
-                                            alt={item.name}
-                                            className="object-cover w-full h-full transition-transform duration-500 group-hover:scale-110"
+                                            alt={item.name || "상품 이미지"}
+                                            fill
+                                            sizes="(min-width: 1024px) 25vw, (min-width: 768px) 33vw, 100vw"
+                                            className="object-cover transition-transform duration-500 group-hover:scale-110"
                                         />
                                     ) : (
                                         <div className="w-full h-full flex items-center justify-center text-muted-foreground/30">

@@ -10,7 +10,6 @@ import type {
     SalesTrend,
     SourcingRecommendation,
     RecommendationSummary,
-    ReorderAlert,
     AnalyzeProductSalesRequest,
     GenerateRecommendationRequest,
     RecommendationActionRequest,
@@ -23,6 +22,7 @@ import type {
     UpdatePriceRequest,
     UpdatePriceResponse,
     ScalingRecommendation,
+    BulkAnalyticsResponse,
 } from './types/analytics';
 
 // ============================================================================

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
 import { MarketProduct } from "@/types";
@@ -8,6 +9,11 @@ import { Loader2, RefreshCw, RefreshCcw, AlertTriangle, Trash2, Ban } from "luci
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
+import { Table, TableColumn, exportToCSV } from "@/components/ui/Table";
+import { Input } from "@/components/ui/Input";
+import { Breadcrumb, BreadcrumbItem } from "@/components/ui/Breadcrumb";
+import { Drawer } from "@/components/ui/Drawer";
+import { Download } from "lucide-react";
 
 function normalizeCoupangStatus(status?: string | null): string | null {
     if (!status) return null;
@@ -48,6 +54,20 @@ export default function ProductListPage() {
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [isRegistering, setIsRegistering] = useState(false);
     const [bulkAction, setBulkAction] = useState<"update" | "stop" | "delete" | null>(null);
+    const [searchQuery, setSearchQuery] = useState("");
+    const [currentPage, setCurrentPage] = useState(1);
+    const [selectedProduct, setSelectedProduct] = useState<MarketProduct | null>(null);
+    const itemsPerPage = 50;
+
+    const filteredProducts = products.filter(product =>
+        (product.name || product.processedName)?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        product.marketItemId?.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+
+    const paginatedProducts = filteredProducts.slice(
+        (currentPage - 1) * itemsPerPage,
+        currentPage * itemsPerPage
+    );
 
     const fetchProducts = async () => {
         setLoading(true);
@@ -60,7 +80,7 @@ export default function ProductListPage() {
                 const rawRes = await api.get("/market/products/raw", { params: { limit: 200 } });
                 setProducts(Array.isArray(rawRes.data?.items) ? rawRes.data.items : []);
             }
-            setSelectedIds([]); // Reset selection on refresh
+            setSelectedIds([]);
         } catch (error) {
             console.error("Failed to fetch products", error);
         } finally {
@@ -229,7 +249,7 @@ export default function ProductListPage() {
 
     const toggleSelectAll = (checked: boolean) => {
         if (checked) {
-            setSelectedIds(products.map(p => p.marketItemId));
+            setSelectedIds(filteredProducts.map(p => p.marketItemId));
         } else {
             setSelectedIds([]);
         }
@@ -246,13 +266,13 @@ export default function ProductListPage() {
     const getStatusBadge = (product: MarketProduct) => {
         const listingStatus = String(product.status || "").toUpperCase();
         if (["ON_SALE", "ONSALE", "SALE", "SELLING"].includes(listingStatus)) {
-            return <Badge variant="success">판매중</Badge>;
+            return <Badge variant="success" weight="solid">판매중</Badge>;
         }
         if (["SUSPENDED", "STOPPED", "OUT_OF_STOCK"].includes(listingStatus)) {
-            return <Badge variant="warning">판매중지</Badge>;
+            return <Badge variant="warning" weight="solid">판매중지</Badge>;
         }
-        if (listingStatus === "ACTIVE") return <Badge variant="success">판매중</Badge>;
-        if (listingStatus === "SUSPENDED") return <Badge variant="warning">판매중지</Badge>;
+        if (listingStatus === "ACTIVE") return <Badge variant="success" weight="solid">판매중</Badge>;
+        if (listingStatus === "SUSPENDED") return <Badge variant="warning" weight="solid">판매중지</Badge>;
         return <Badge variant="secondary">{product.status}</Badge>;
     };
 
@@ -260,10 +280,10 @@ export default function ProductListPage() {
         const cpStatus = normalizeCoupangStatus(product.coupangStatus);
         if (!cpStatus) return null;
 
-        if (cpStatus === 'DENIED') return <Badge variant="destructive">반려</Badge>;
-        if (cpStatus === 'DELETED') return <Badge variant="destructive">삭제</Badge>;
-        if (cpStatus === 'IN_REVIEW') return <Badge variant="secondary" className="bg-blue-100 text-blue-700 border-none">심사중</Badge>;
-        if (cpStatus === 'APPROVING') return <Badge variant="secondary" className="bg-blue-100 text-blue-700 border-none">승인대기</Badge>;
+        if (cpStatus === 'DENIED') return <Badge variant="destructive" weight="solid">반려</Badge>;
+        if (cpStatus === 'DELETED') return <Badge variant="destructive" weight="solid">삭제</Badge>;
+        if (cpStatus === 'IN_REVIEW') return <Badge variant="info">심사중</Badge>;
+        if (cpStatus === 'APPROVING') return <Badge variant="info">승인대기</Badge>;
         if (cpStatus === 'SAVED') return <Badge variant="secondary">임시저장</Badge>;
         if (cpStatus === 'PARTIAL_APPROVED') return <Badge variant="success">부분승인</Badge>;
         if (cpStatus === 'APPROVED') return <Badge variant="success">승인</Badge>;
@@ -272,13 +292,145 @@ export default function ProductListPage() {
 
     const getActiveListing = (product: MarketProduct) => product.marketItemId ? product : undefined;
 
+    const columns: TableColumn<MarketProduct>[] = [
+        {
+            key: "select",
+            title: "",
+            width: "40px",
+            render: (_, row) => (
+                <input
+                    type="checkbox"
+                    className="h-3 w-3 rounded border-border"
+                    checked={selectedIds.includes(row.marketItemId)}
+                    onChange={(e) => toggleSelect(row.marketItemId, e.target.checked)}
+                />
+            ),
+        },
+        {
+            key: "image",
+            title: "이미지",
+            width: "60px",
+            render: (_, row) => (
+                row.processedImageUrls && row.processedImageUrls.length > 0 ? (
+                    <div className="h-8 w-8 rounded-sm border border-border overflow-hidden relative">
+                        <Image
+                            src={row.processedImageUrls[0]}
+                            alt={row.name || "상품 이미지"}
+                            fill
+                            sizes="32px"
+                            className="object-cover"
+                        />
+                    </div>
+                ) : (
+                    <div className="h-8 w-8 bg-muted rounded-sm border border-border flex items-center justify-center text-[9px] text-muted-foreground">No img</div>
+                )
+            ),
+        },
+        {
+            key: "name",
+            title: "상품명",
+            width: "30%",
+            render: (_, row) => (
+                <div>
+                    <div className="text-xs font-medium truncate">{row.processedName || row.name}</div>
+                    <div className="text-[10px] text-muted-foreground truncate">{row.marketItemId}</div>
+                </div>
+            ),
+        },
+        {
+            key: "sellingPrice",
+            title: "가격",
+            align: "right",
+            width: "10%",
+            render: (value) => (
+                <span className="text-xs font-medium">{value?.toLocaleString()} 원</span>
+            ),
+        },
+        {
+            key: "status",
+            title: "상태",
+            width: "15%",
+            render: (_, row) => (
+                <div className="flex flex-col gap-0.5">
+                    {getStatusBadge(row)}
+                    {getCoupangStatusBadge(row)}
+                    {getActiveListing(row) && (
+                        <span className="text-[9px] text-muted-foreground">Coupang Linked</span>
+                    )}
+                </div>
+            ),
+        },
+        {
+            key: "actions",
+            title: "작업",
+            align: "right",
+            width: "25%",
+            render: (_, row) => {
+                const activeListing = getActiveListing(row);
+                return (
+                    <div className="flex justify-end gap-1">
+                        {activeListing && (
+                            <>
+                                {row.productId && (
+                                    <>
+                                        <Button size="icon" variant="ghost" onClick={() => handleSyncStatus(row.productId!)} title="상태 동기화" className="h-6 w-6">
+                                            <RefreshCcw className="h-3 w-3" />
+                                        </Button>
+                                        <Button size="icon" variant="ghost" onClick={() => handleUpdateCoupang(row.productId!)} title="쿠팡 수정" className="h-6 w-6">
+                                            <RefreshCw className="h-3 w-3" />
+                                        </Button>
+                                    </>
+                                )}
+                                <Button size="icon" variant="ghost" onClick={() => handleStopSales(row.marketItemId)} title="판매중지" className="h-6 w-6">
+                                    <AlertTriangle className="h-3 w-3" />
+                                </Button>
+                                <Button size="icon" variant="ghost" onClick={() => handleDeleteCoupang(row.marketItemId)} title="삭제" className="h-6 w-6">
+                                    <Trash2 className="h-3 w-3" />
+                                </Button>
+                            </>
+                        )}
+                        {row.productId && (
+                            <Button size="xs" variant="outline" onClick={() => router.push(`/products/${row.productId}`)}>
+                                수정
+                            </Button>
+                        )}
+                    </div>
+                );
+            },
+        },
+    ];
+
+    const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
+
     return (
-        <div className="space-y-6">
-            <div className="flex justify-between items-center">
-                <h1 className="text-3xl font-bold tracking-tight">상품 목록</h1>
-                <div className="flex gap-2">
-                    <Button onClick={handleBulkRegister} disabled={loading || isRegistering} variant="primary">
-                        {isRegistering ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+        <div className="space-y-3">
+            {/* Breadcrumb */}
+            <Breadcrumb
+                items={[
+                    { label: "상품 관리" }
+                ]}
+            />
+
+            {/* Toolbar */}
+            <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-card">
+                <div className="flex items-center gap-2 flex-1">
+                    <Input
+                        type="text"
+                        placeholder="상품명 또는 ID 검색..."
+                        value={searchQuery}
+                        onChange={(e) => {
+                            setSearchQuery(e.target.value);
+                            setCurrentPage(1);
+                        }}
+                        className="text-xs h-7 max-w-xs"
+                    />
+                    <div className="text-[10px] text-muted-foreground bg-muted px-2 py-1 rounded-sm">
+                        총 {filteredProducts.length}개
+                    </div>
+                </div>
+                <div className="flex items-center gap-2">
+                    <Button onClick={handleBulkRegister} disabled={loading || isRegistering} size="sm" variant="primary">
+                        {isRegistering ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : null}
                         쿠팡 일괄 등록
                     </Button>
                     <Button
@@ -298,147 +450,165 @@ export default function ProductListPage() {
                         }}
                         disabled={loading}
                         variant="outline"
+                        size="sm"
                     >
-                        <RefreshCcw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                        <RefreshCcw className={`mr-1.5 h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
                         쿠팡 동기화
                     </Button>
-                    <Button onClick={handleBulkUpdate} disabled={loading || bulkAction !== null} variant="outline">
-                        {bulkAction === "update" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                    <Button onClick={handleBulkUpdate} disabled={loading || bulkAction !== null} variant="outline" size="sm">
+                        {bulkAction === "update" ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : <RefreshCw className="mr-1.5 h-3 w-3" />}
                         일괄 수정
                     </Button>
-                    <Button onClick={handleBulkStopSales} disabled={loading || bulkAction !== null} variant="outline">
-                        {bulkAction === "stop" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Ban className="mr-2 h-4 w-4" />}
+                    <Button onClick={handleBulkStopSales} disabled={loading || bulkAction !== null} variant="outline" size="sm">
+                        {bulkAction === "stop" ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : <Ban className="mr-1.5 h-3 w-3" />}
                         판매중지
                     </Button>
-                    <Button onClick={handleBulkDelete} disabled={loading || bulkAction !== null} variant="outline">
-                        {bulkAction === "delete" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                    <Button onClick={handleBulkDelete} disabled={loading || bulkAction !== null} variant="outline" size="sm">
+                        {bulkAction === "delete" ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : <Trash2 className="mr-1.5 h-3 w-3" />}
                         삭제
                     </Button>
-                    <Button onClick={fetchProducts} disabled={loading} variant="outline">
-                        <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                    <Button onClick={fetchProducts} disabled={loading} variant="outline" size="sm">
+                        <RefreshCw className={`mr-1.5 h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
                         새로고침
+                    </Button>
+                    <Button
+                        onClick={() => exportToCSV(filteredProducts, columns.filter(c => c.key !== 'select' && c.key !== 'image' && c.key !== 'actions'), 'MarketProducts')}
+                        disabled={loading || filteredProducts.length === 0}
+                        variant="outline"
+                        size="sm"
+                    >
+                        <Download className="mr-1.5 h-3 w-3" />
+                        CSV 다운로드
                     </Button>
                 </div>
             </div>
 
-            <Card>
-                <CardHeader>
-                    <CardTitle>등록 상품 관리</CardTitle>
-                </CardHeader>
-                <CardContent className="p-0">
-                    <div className="overflow-x-auto">
-                        <table className="w-full caption-bottom text-sm text-left">
-                            <thead className="[&_tr]:border-b">
-                                <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
-                                    <th className="h-12 px-4 align-middle font-medium text-muted-foreground w-[40px]">
-                                        <input
-                                            type="checkbox"
-                                            className="h-4 w-4 rounded border-gray-300"
-                                            checked={products.length > 0 && selectedIds.length === products.length}
-                                            onChange={(e) => toggleSelectAll(e.target.checked)}
-                                        />
-                                    </th>
-                                    <th className="h-12 px-4 align-middle font-medium text-muted-foreground w-[100px]">이미지</th>
-                                    <th className="h-12 px-4 align-middle font-medium text-muted-foreground">상품명</th>
-                                    <th className="h-12 px-4 align-middle font-medium text-muted-foreground">가격</th>
-                                    <th className="h-12 px-4 align-middle font-medium text-muted-foreground">상태</th>
-                                    <th className="h-12 px-4 align-middle font-medium text-muted-foreground text-right">작업</th>
-                                </tr>
-                            </thead>
-                            <tbody className="[&_tr:last-child]:border-0">
-                                {loading ? (
-                                    <tr>
-                                        <td colSpan={6} className="h-24 text-center">
-                                            <Loader2 className="mx-auto h-6 w-6 animate-spin text-muted-foreground" />
-                                        </td>
-                                    </tr>
-                                ) : products.length === 0 ? (
-                                    <tr>
-                                        <td colSpan={6} className="h-24 text-center text-muted-foreground">
-                                            등록된 상품이 없습니다.
-                                        </td>
-                                    </tr>
-                                ) : (
-                                    products.map((product) => (
-                                        <tr key={product.id} className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
-                                            <td className="p-4 align-middle">
-                                                <input
-                                                    type="checkbox"
-                                                    className="h-4 w-4 rounded border-gray-300"
-                                                    checked={selectedIds.includes(product.marketItemId)}
-                                                    onChange={(e) => toggleSelect(product.marketItemId, e.target.checked)}
-                                                />
-                                            </td>
-                                            <td className="p-4 align-middle">
-                                                {product.processedImageUrls && product.processedImageUrls.length > 0 ? (
-                                                    <img src={product.processedImageUrls[0]} alt={product.name || ""} className="h-12 w-12 object-cover rounded-md border" />
-                                                ) : (
-                                                    <div className="h-12 w-12 bg-muted rounded-md border flex items-center justify-center text-xs text-muted-foreground">No img</div>
-                                                )}
-                                            </td>
-                                            <td className="p-4 align-middle">
-                                                <div className="font-medium line-clamp-1">{product.processedName || product.name}</div>
-                                                <div className="text-xs text-muted-foreground">{product.marketItemId}</div>
-                                            </td>
-                                            <td className="p-4 align-middle">
-                                                {product.sellingPrice?.toLocaleString()} 원
-                                            </td>
-                                            <td className="p-4 align-middle">
-                                                <div className="flex flex-col gap-1">
-                                                    {getStatusBadge(product)}
-                                                    {getCoupangStatusBadge(product)}
-                                                    {getActiveListing(product) && (
-                                                        <span className="text-[10px] text-muted-foreground">Coupang Linked</span>
-                                                    )}
-                                                </div>
-                                            </td>
-                                            <td className="p-4 align-middle text-right">
-                                                <div className="flex justify-end gap-2">
-                                                    {getActiveListing(product) && (
-                                                        <>
-                                                            {product.productId && (
-                                                                <>
-                                                                    <Button size="icon" variant="ghost" onClick={() => handleSyncStatus(product.productId!)} title="상태 동기화">
-                                                                        <RefreshCcw className="h-4 w-4" />
-                                                                    </Button>
-                                                                    <Button size="icon" variant="ghost" onClick={() => handleUpdateCoupang(product.productId!)} title="쿠팡 수정">
-                                                                        <RefreshCw className="h-4 w-4" />
-                                                                    </Button>
-                                                                </>
-                                                            )}
-                                                            <Button
-                                                                size="icon"
-                                                                variant="ghost"
-                                                                onClick={() => handleStopSales(product.marketItemId)}
-                                                                title="판매중지"
-                                                            >
-                                                                <AlertTriangle className="h-4 w-4" />
-                                                            </Button>
-                                                            <Button
-                                                                size="icon"
-                                                                variant="ghost"
-                                                                onClick={() => handleDeleteCoupang(product.marketItemId)}
-                                                                title="삭제"
-                                                            >
-                                                                <Trash2 className="h-4 w-4" />
-                                                            </Button>
-                                                        </>
-                                                    )}
-                                                    {product.productId && (
-                                                        <Button size="sm" variant="outline" onClick={() => router.push(`/products/${product.productId}`)}>
-                                                            수정
-                                                        </Button>
-                                                    )}
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    ))
-                                )}
-                            </tbody>
-                        </table>
+            {/* Table */}
+            <div className="border border-border rounded-sm bg-card">
+                <div className="px-3 py-1.5 border-b border-border bg-muted/50">
+                    <span className="text-[11px] font-semibold text-foreground">등록 상품 관리</span>
+                </div>
+                <div className="p-2">
+                    <Table
+                        columns={columns}
+                        data={paginatedProducts}
+                        loading={loading}
+                        compact={true}
+                        striped={true}
+                        hover={true}
+                        emptyMessage="등록된 상품이 없습니다."
+                        onRowClick={(row) => setSelectedProduct(row)}
+                        className="cursor-pointer"
+                    />
+                </div>
+            </div>
+
+            {/* Product Detail Drawer */}
+            <Drawer
+                isOpen={!!selectedProduct}
+                onClose={() => setSelectedProduct(null)}
+                title="상품 상세 정보"
+                description={selectedProduct?.processedName || selectedProduct?.name || undefined}
+                size="lg"
+                footer={
+                    <div className="flex justify-end gap-2">
+                        <Button variant="outline" onClick={() => setSelectedProduct(null)}>닫기</Button>
+                        {selectedProduct?.productId && (
+                            <Button variant="primary" onClick={() => router.push(`/products/${selectedProduct.productId}`)}>편집 페이지로 이동</Button>
+                        )}
                     </div>
-                </CardContent>
-            </Card>
+                }
+            >
+                {selectedProduct && (
+                    <div className="space-y-6">
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-1">
+                                <span className="text-[10px] font-bold text-muted-foreground uppercase">마켓 상품 ID</span>
+                                <p className="text-sm font-semibold">{selectedProduct.marketItemId}</p>
+                            </div>
+                            <div className="space-y-1">
+                                <span className="text-[10px] font-bold text-muted-foreground uppercase">내부 상품 ID</span>
+                                <p className="text-sm font-semibold">{selectedProduct.productId || "None"}</p>
+                            </div>
+                            <div className="space-y-1">
+                                <span className="text-[10px] font-bold text-muted-foreground uppercase">판매 가격</span>
+                                <p className="text-sm font-semibold text-primary">{selectedProduct.sellingPrice?.toLocaleString()} 원</p>
+                            </div>
+                            <div className="space-y-1">
+                                <span className="text-[10px] font-bold text-muted-foreground uppercase">상태</span>
+                                <div className="flex gap-2">
+                                    {getStatusBadge(selectedProduct)}
+                                    {getCoupangStatusBadge(selectedProduct)}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="space-y-2">
+                            <span className="text-[10px] font-bold text-muted-foreground uppercase">상품 이미지</span>
+                            <div className="grid grid-cols-4 gap-2">
+                                {selectedProduct.processedImageUrls?.map((url, i) => (
+                                    <div key={i} className="aspect-square rounded-lg border border-border overflow-hidden relative">
+                                        <Image src={url} alt={`Image ${i}`} fill className="object-cover" />
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="space-y-2">
+                            <span className="text-[10px] font-bold text-muted-foreground uppercase">원본 데이터 (JSON)</span>
+                            <pre className="p-4 bg-muted rounded-lg text-[10px] font-mono overflow-auto max-h-[300px]">
+                                {JSON.stringify(selectedProduct, null, 2)}
+                            </pre>
+                        </div>
+                    </div>
+                )}
+            </Drawer>
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+                <div className="flex items-center justify-between px-4 py-2 border-t border-border bg-card">
+                    <div className="text-[10px] text-muted-foreground">
+                        {(currentPage - 1) * itemsPerPage + 1} - {Math.min(currentPage * itemsPerPage, filteredProducts.length)} / {filteredProducts.length}
+                    </div>
+                    <div className="flex items-center gap-1">
+                        <Button
+                            variant="outline"
+                            size="xs"
+                            onClick={() => setCurrentPage(1)}
+                            disabled={currentPage === 1}
+                        >
+                            처음
+                        </Button>
+                        <Button
+                            variant="outline"
+                            size="xs"
+                            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                            disabled={currentPage === 1}
+                        >
+                            이전
+                        </Button>
+                        <span className="px-2 text-[10px] font-medium">
+                            {currentPage} / {totalPages}
+                        </span>
+                        <Button
+                            variant="outline"
+                            size="xs"
+                            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                            disabled={currentPage === totalPages}
+                        >
+                            다음
+                        </Button>
+                        <Button
+                            variant="outline"
+                            size="xs"
+                            onClick={() => setCurrentPage(totalPages)}
+                            disabled={currentPage === totalPages}
+                        >
+                            마지막
+                        </Button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

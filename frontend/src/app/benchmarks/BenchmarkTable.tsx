@@ -1,5 +1,6 @@
 'use client';
 
+import Image from "next/image";
 import { BenchmarkProduct } from "@/lib/types/benchmark";
 import { Badge } from "@/components/ui/Badge";
 import { Star, MessageSquare, ShieldCheck, ExternalLink } from "lucide-react";
@@ -44,9 +45,15 @@ export default function BenchmarkTable({ items, selectedId, onSelect, isLoading 
                         >
                             <td className="px-4 py-3">
                                 <div className="flex items-center gap-3">
-                                    <div className="h-12 w-12 rounded bg-muted overflow-hidden flex-shrink-0 border">
+                                    <div className="h-12 w-12 rounded bg-muted overflow-hidden flex-shrink-0 border relative">
                                         {item.imageUrls?.[0] ? (
-                                            <img src={item.imageUrls[0]} alt="" className="h-full w-full object-cover" />
+                                            <Image
+                                                src={item.imageUrls[0]}
+                                                alt={item.name || "상품 이미지"}
+                                                fill
+                                                sizes="48px"
+                                                className="object-cover"
+                                            />
                                         ) : (
                                             <div className="h-full w-full flex items-center justify-center text-[8px] text-muted-foreground">No Img</div>
                                         )}

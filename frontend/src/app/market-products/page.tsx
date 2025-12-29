@@ -1,63 +1,30 @@
 "use client";
 
-import { useEffect, useState, memo, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback } from "react";
 import useSWR from 'swr';
-import Image from "next/image";
 import {
-    Loader2,
     Search,
     ShoppingBag,
-    ExternalLink,
     RotateCw,
     AlertCircle,
     CheckCircle2,
-    Edit,
-    Trash2,
-    MoreVertical,
-    ArrowLeft,
-    Zap,
-    Sparkles
+    ArrowLeft
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
+import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { Badge } from "@/components/ui/Badge";
 import api from "@/lib/api";
-import { cn } from "@/lib/utils";
 import { Select } from "@/components/ui/Select";
 import MarketProductCard from "@/components/MarketProductCard";
 
 const fetcher = (url: string) => api.get(url).then(res => res.data);
-
-interface MarketAccount {
-    id: string;
-    name: string;
-    marketCode: string;
-}
-
-interface MarketProduct {
-    id: string;
-    productId: string;
-    marketItemId: string;
-    status: string;
-    linkedAt: string | null;
-    name: string | null;
-    processedName: string | null;
-    sellingPrice: number;
-    processedImageUrls: string[] | null;
-    productStatus: string | null;
-    processingStatus: string | null;
-    marketAccountId: string;
-    accountName: string | null;
-    marketCode: string;
-}
 
 export default function MarketProductsPage() {
     const [selectedAccountId, setSelectedAccountId] = useState<string>("all");
     const [searchTerm, setSearchTerm] = useState("");
 
     // SWR로 계정 데이터 가져오기
-    const { data: accountsData, error: accountsError } = useSWR(
+    const { data: accountsData } = useSWR(
         ['/settings/markets/coupang/accounts', '/settings/markets/smartstore/accounts'],
         async (urls) => {
             const [coupangRes, smartstoreRes] = await Promise.all(
@@ -98,7 +65,7 @@ export default function MarketProductsPage() {
         }
     );
 
-    const items = productsData?.items || [];
+    const items = useMemo(() => productsData?.items ?? [], [productsData]);
     const total = productsData?.total || 0;
     const error = productsError ? "마켓 상품 목록을 불러오지 못했습니다." : null;
 
@@ -126,7 +93,7 @@ export default function MarketProductsPage() {
 
     const filteredItems = useMemo(() => {
         const searchLower = searchTerm.toLowerCase();
-        return items.filter(item =>
+        return items.filter((item: any) =>
             (item.name || "").toLowerCase().includes(searchLower) ||
             (item.processedName || "").toLowerCase().includes(searchLower) ||
             item.marketItemId.toLowerCase().includes(searchLower)
@@ -188,7 +155,7 @@ export default function MarketProductsPage() {
                             </div>
                             <div>
                                 <p className="text-sm text-muted-foreground">활성 상품</p>
-                                <p className="text-3xl font-bold">{items.filter(i => i.status === "ACTIVE").length}</p>
+                                <p className="text-3xl font-bold">{items.filter((i: any) => i.status === "ACTIVE").length}</p>
                             </div>
                         </div>
                     </CardContent>
@@ -202,7 +169,7 @@ export default function MarketProductsPage() {
                         value={selectedAccountId}
                         options={[
                             { value: 'all', label: '모든 계정 보기' },
-                            ...accounts.map(acc => ({
+                            ...accounts.map((acc: any) => ({
                                 value: acc.id,
                                 label: `${acc.marketCode.toUpperCase()} - ${acc.name}`
                             }))
@@ -250,7 +217,7 @@ export default function MarketProductsPage() {
                         </Button>
                     </div>
                 ) : (
-                    filteredItems.map((item) => (
+                    filteredItems.map((item: any) => (
                         <MarketProductCard
                             key={item.id}
                             item={item}

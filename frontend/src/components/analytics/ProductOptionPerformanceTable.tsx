@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Layers, Package, TrendingUp, DollarSign } from "lucide-react";
+import { Layers, Package } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { analyticsAPI } from "@/lib/analytics-api";
 import type { OptionPerformance } from "@/lib/types/analytics";
@@ -38,22 +38,22 @@ export default function ProductOptionPerformanceTable({
     const [performance, setPerformance] = useState<OptionPerformance[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
-    const fetchPerformance = async () => {
-        try {
-            setIsLoading(true);
-            const data = await analyticsAPI.getProductOptionPerformance(productId, periodType);
-            setPerformance(data);
-        } catch (error) {
-            console.error("Failed to fetch option performance:", error);
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
     useEffect(() => {
-        if (productId) {
-            fetchPerformance();
-        }
+        if (!productId) return;
+
+        const fetchPerformance = async () => {
+            try {
+                setIsLoading(true);
+                const data = await analyticsAPI.getProductOptionPerformance(productId, periodType);
+                setPerformance(data);
+            } catch (error) {
+                console.error("Failed to fetch option performance:", error);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
+        fetchPerformance();
     }, [productId, periodType]);
 
     const formatCurrency = (value: number) => {

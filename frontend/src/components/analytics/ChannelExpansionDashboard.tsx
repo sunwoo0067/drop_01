@@ -4,15 +4,12 @@ import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
     Share2,
-    TrendingUp,
     Zap,
     ChevronRight,
     Loader2,
-    AlertCircle,
     ArrowRightLeft,
     Coins,
-    CheckCircle2,
-    Store
+    CheckCircle2
 } from "lucide-react";
 import { analyticsClient } from "@/lib/analytics-api";
 import type { ScalingRecommendation } from "@/lib/types/analytics";

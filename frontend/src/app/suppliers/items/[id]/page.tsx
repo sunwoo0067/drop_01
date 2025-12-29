@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Image from "next/image";
 import { useParams, useRouter } from "next/navigation";
 import axios from "axios";
 import api from "@/lib/api";
@@ -186,12 +187,14 @@ export default function SupplierItemDetailPage() {
                                                     href={String(url)}
                                                     target="_blank"
                                                     rel="noreferrer"
-                                                    className="rounded-md border overflow-hidden bg-muted/20"
+                                                    className="rounded-md border overflow-hidden bg-muted/20 block relative h-40"
                                                 >
-                                                    <img
+                                                    <Image
                                                         src={String(url)}
                                                         alt={typeof itemName === "string" ? itemName : "image"}
-                                                        className="h-40 w-full object-cover"
+                                                        fill
+                                                        sizes="(min-width: 1024px) 16vw, (min-width: 768px) 25vw, 50vw"
+                                                        className="object-cover"
                                                     />
                                                 </a>
                                             ))}

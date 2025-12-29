@@ -1,12 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import {
     X,
     Brain,
     TrendingUp,
-    AlertTriangle,
     Target,
     Zap,
     ChevronRight,
@@ -19,7 +18,6 @@ import { analyticsAPI } from "@/lib/analytics-api";
 import type { StrategicReport, OptimalPricePrediction } from "@/lib/types/analytics";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent } from "@/components/ui/Card";
-import { badgeVariants } from "@/components/ui/Badge";
 import { cn } from "@/lib/utils";
 
 interface StrategicReportModalProps {

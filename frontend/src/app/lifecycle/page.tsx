@@ -32,7 +32,6 @@ export default function LifecycleDashboard() {
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedStage, setSelectedStage] = useState<string>("ALL");
   const [loading, setLoading] = useState(true);
-  const [autoTransitions, setAutoTransitions] = useState<any>(null);
 
   // 라이프사이클 단계별 상품 조회
   const fetchProductsByStage = async (stage: string) => {
@@ -67,7 +66,6 @@ export default function LifecycleDashboard() {
         method: "POST",
       });
       const data = await response.json();
-      setAutoTransitions(data);
       alert(`전환 완료:\nSTEP 1→2: ${data.step1_to_step2?.transitioned || 0}건\nSTEP 2→3: ${data.step2_to_step3?.transitioned || 0}건`);
       // 데이터 새로고침
       fetchStageDistribution();
@@ -323,4 +321,3 @@ export default function LifecycleDashboard() {
     </div>
   );
 }
-

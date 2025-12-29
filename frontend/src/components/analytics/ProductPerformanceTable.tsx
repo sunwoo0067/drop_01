@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { TrendingUp, TrendingDown, Package, ChevronRight, Brain } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
@@ -34,12 +34,14 @@ const item = {
 export default function ProductPerformanceTable({
     type,
     limit = 10,
-    periodType = "weekly"
+    periodType = "weekly",
+    onProductClick,
+    onAIAnalysisClick
 }: ProductPerformanceTableProps) {
     const [products, setProducts] = useState<ProductPerformance[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
-    const fetchProducts = async () => {
+    const fetchProducts = useCallback(async () => {
         try {
             setIsLoading(true);
             const data = type === "top"
@@ -51,11 +53,11 @@ export default function ProductPerformanceTable({
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [limit, periodType, type]);
 
     useEffect(() => {
         fetchProducts();
-    }, [type, limit, periodType]);
+    }, [fetchProducts]);
 
     const formatCurrency = (value: number) => {
         return new Intl.NumberFormat("ko-KR", {
@@ -201,6 +203,7 @@ export default function ProductPerformanceTable({
                                         )}
                                         <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                                     </div>
+                                </div>
                             </motion.div>
                         ))}
                     </motion.div>
