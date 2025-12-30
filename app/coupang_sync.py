@@ -67,6 +67,11 @@ DEFAULT_COUPANG_BLOCKED_REQUIRED_DOC_KEYWORDS = [
     "적합등록",
     "시험성적서",
 ]
+DEFAULT_COUPANG_NEVER_REQUIRED_DOC_TEMPLATES = [
+    "UN 38.3 Test Report",
+    "MSDS Test Report",
+    "MANDATORY INGREDIENTS PIC",
+]
 
 DEFAULT_COUPANG_BLOCKED_CATEGORY_KEYWORDS = [
     "전기",
@@ -89,6 +94,10 @@ class CoupangDocumentPendingError(SkipCoupangRegistrationError):
     def __init__(self, reason: str, missing_templates: list[str] | None = None):
         super().__init__(reason)
         self.missing_templates = missing_templates or []
+
+
+class CoupangNeverEligibleError(SkipCoupangRegistrationError):
+    """쿠팡 등록을 영구적으로 제외하는 경우."""
 
 
 def _parse_env_list(env_key: str) -> list[str]:
@@ -1567,6 +1576,10 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
     if not product:
         logger.error(f"상품을 찾을 수 없습니다: {product_id}")
         return False, "상품을 찾을 수 없습니다"
+    if product.coupang_doc_pending and (product.coupang_doc_pending_reason or "").startswith("NEVER:"):
+        reason = f"SKIPPED: {product.coupang_doc_pending_reason}"
+        _log_registration_skip(session, account, product.id, reason, None)
+        return False, reason
 
     original_images = _get_original_image_urls(session, product)
     payload_images = original_images
@@ -1626,6 +1639,20 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
             meta_result["delivery_company_code"],
             image_urls=payload_images,
         )
+    except CoupangNeverEligibleError as e:
+        reason = f"SKIPPED: {e}"
+        logger.info(f"상품 등록 스킵: {e}")
+        product.coupang_doc_pending = True
+        product.coupang_doc_pending_reason = str(e)
+        session.commit()
+        _log_registration_skip(
+            session,
+            account,
+            product.id,
+            reason,
+            meta_result.get("predicted_category_code"),
+        )
+        return False, reason
     except CoupangDocumentPendingError as e:
         reason = f"SKIPPED: {e}"
         logger.info(f"상품 등록 스킵: {e}")
@@ -3008,8 +3035,10 @@ def _map_product_to_coupang_payload(
         if docs:
             allowed_templates = _parse_env_list("COUPANG_ALLOWED_REQUIRED_DOCUMENTS") or DEFAULT_COUPANG_ALLOWED_REQUIRED_DOC_TEMPLATES
             blocked_keywords = _parse_env_list("COUPANG_BLOCKED_REQUIRED_DOCUMENTS") or DEFAULT_COUPANG_BLOCKED_REQUIRED_DOC_KEYWORDS
+            never_templates = _parse_env_list("COUPANG_NEVER_REQUIRED_DOCUMENTS") or DEFAULT_COUPANG_NEVER_REQUIRED_DOC_TEMPLATES
             allowed_tokens = _normalize_tokens(allowed_templates)
             blocked_tokens = _normalize_tokens(blocked_keywords)
+            never_tokens = _normalize_tokens(never_templates)
 
             required_templates: list[str] = []
             for doc in docs:
@@ -3026,6 +3055,11 @@ def _map_product_to_coupang_payload(
                     blocked_templates.append(name)
                 elif allowed_tokens and not _match_any(name, allowed_tokens):
                     blocked_templates.append(name)
+
+            never_hits = [name for name in required_templates if _match_any(name, never_tokens)]
+            if never_hits:
+                never_label = ", ".join(never_hits)
+                raise CoupangNeverEligibleError(f"NEVER: 구비서류 템플릿 포함 ({never_label})")
 
             if blocked_templates:
                 blocked_label = ", ".join(blocked_templates)
