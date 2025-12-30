@@ -53,9 +53,12 @@ class OwnerClanClient:
         resp.raise_for_status()
         data = resp.json()
         status_code = data.get("status", 500)
+        proxy_data = data.get("data")
+        if proxy_data is None:
+            proxy_data = {}
         if status_code != 200:
             logger.warning(f"Proxy request failed: {method} {url} -> status={status_code}, data={data}")
-        return status_code, data.get("data", {})
+        return status_code, proxy_data
 
 
     def with_token(self, access_token: str) -> "OwnerClanClient":

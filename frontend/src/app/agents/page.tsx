@@ -114,75 +114,79 @@ export default function AgentsPage() {
             variants={container}
             initial="hidden"
             animate="show"
-            className="space-y-6 py-6"
+            className="space-y-4 py-4"
         >
             {/* Header */}
-            <motion.div variants={item} className="flex items-center justify-between">
-                <div>
-                    <h1 className="text-4xl font-black tracking-tight bg-gradient-to-r from-foreground to-foreground/60 bg-clip-text text-transparent">
-                        AI 에이전트 관리
-                    </h1>
-                    <p className="text-muted-foreground font-medium mt-2">
-                        드랍쉬핑 자동화 시스템의 AI 에이전트 상태를 모니터링하고 제어합니다.
-                    </p>
+            <motion.div variants={item} className="flex items-center justify-between px-3 py-2 border border-border bg-card rounded-sm">
+                <div className="flex items-center gap-3">
+                    <div className="h-6 w-6 rounded-sm bg-primary/10 flex items-center justify-center">
+                        <Bot className="h-3 w-3 text-primary" />
+                    </div>
+                    <div>
+                        <h1 className="text-sm font-semibold text-foreground">AI 에이전트 관리</h1>
+                        <p className="text-[10px] text-muted-foreground">
+                            에이전트 상태 모니터링 및 제어
+                        </p>
+                    </div>
                 </div>
                 <Button
                     variant="outline"
-                    size="icon"
+                    size="sm"
                     onClick={handleRefresh}
                     disabled={isLoading}
                 >
-                    <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+                    <RefreshCw className={`h-3 w-3 mr-1.5 ${isLoading ? 'animate-spin' : ''}`} />
+                    새로고침
                 </Button>
             </motion.div>
 
             {/* 시스템 개요 */}
             <motion.div variants={item}>
-                <Card className="bg-gradient-to-br from-primary/5 to-transparent border-primary/20">
-                    <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                            <Zap className="h-5 w-5 text-primary" />
+                <Card className="border border-border">
+                    <CardHeader className="py-2">
+                        <CardTitle className="flex items-center gap-2 text-xs">
+                            <Zap className="h-3.5 w-3.5 text-primary" />
                             시스템 개요
                         </CardTitle>
                     </CardHeader>
-                    <CardContent>
-                        <div className="grid gap-6 md:grid-cols-4">
+                    <CardContent className="py-2">
+                        <div className="grid gap-3 md:grid-cols-4">
                             <div className="flex items-center gap-3">
-                                <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                                    <Bot className="h-5 w-5 text-primary" />
+                                <div className="h-7 w-7 rounded-sm bg-muted flex items-center justify-center">
+                                    <Bot className="h-3.5 w-3.5 text-primary" />
                                 </div>
                                 <div>
-                                    <div className="text-2xl font-black">3</div>
-                                    <div className="text-xs font-medium text-muted-foreground">활성 에이전트</div>
+                                    <div className="text-lg font-semibold">3</div>
+                                    <div className="text-[10px] font-medium text-muted-foreground">활성 에이전트</div>
                                 </div>
                             </div>
                             <div className="flex items-center gap-3">
-                                <div className="h-10 w-10 rounded-lg bg-emerald-500/10 flex items-center justify-center">
-                                    <Activity className="h-5 w-5 text-emerald-500" />
+                                <div className="h-7 w-7 rounded-sm bg-muted flex items-center justify-center">
+                                    <Activity className="h-3.5 w-3.5 text-emerald-500" />
                                 </div>
                                 <div>
-                                    <div className="text-2xl font-black text-emerald-500">
+                                    <div className="text-lg font-semibold text-emerald-600">
                                         {((agentStatus?.sourcing?.queue_size || 0) + (agentStatus?.processing?.queue_size || 0))}
                                     </div>
-                                    <div className="text-xs font-medium text-muted-foreground">대기 작업</div>
+                                    <div className="text-[10px] font-medium text-muted-foreground">대기 작업</div>
                                 </div>
                             </div>
                             <div className="flex items-center gap-3">
-                                <div className="h-10 w-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
-                                    <Cpu className="h-5 w-5 text-blue-500" />
+                                <div className="h-7 w-7 rounded-sm bg-muted flex items-center justify-center">
+                                    <Cpu className="h-3.5 w-3.5 text-blue-500" />
                                 </div>
                                 <div>
-                                    <div className="text-2xl font-black text-blue-500">100%</div>
-                                    <div className="text-xs font-medium text-muted-foreground">가용성</div>
+                                    <div className="text-lg font-semibold text-blue-600">100%</div>
+                                    <div className="text-[10px] font-medium text-muted-foreground">가용성</div>
                                 </div>
                             </div>
                             <div className="flex items-center gap-3">
-                                <div className="h-10 w-10 rounded-lg bg-amber-500/10 flex items-center justify-center">
-                                    <Network className="h-5 w-5 text-amber-500" />
+                                <div className="h-7 w-7 rounded-sm bg-muted flex items-center justify-center">
+                                    <Network className="h-3.5 w-3.5 text-amber-500" />
                                 </div>
                                 <div>
-                                    <div className="text-2xl font-black text-amber-500">Active</div>
-                                    <div className="text-xs font-medium text-muted-foreground">시스템 상태</div>
+                                    <div className="text-lg font-semibold text-amber-600">Active</div>
+                                    <div className="text-[10px] font-medium text-muted-foreground">시스템 상태</div>
                                 </div>
                             </div>
                         </div>

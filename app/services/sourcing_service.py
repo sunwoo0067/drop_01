@@ -10,8 +10,17 @@ from app.services.ai.agents.sourcing_agent import SourcingAgent
 from app.embedding_service import EmbeddingService
 from app.normalization import clean_product_name
 from app.settings import settings
+from app.services.analytics.coupang_policy import CoupangSourcingPolicyService
 
 logger = logging.getLogger(__name__)
+
+FORBIDDEN_KEYWORDS = [
+    "배터리", "리튬", "lithium", "battery",
+    "전기차", "electric vehicle", "ev",
+    "킥보드", "kickboard", "스쿠터", "scooter",
+    "전동", "motorized",
+    "성인용품", "adult",
+]
 
 class SourcingService:
     def __init__(self, db: Session):
@@ -73,6 +82,28 @@ class SourcingService:
         Standard keyword-based sourcing.
         """
         logger.info(f"Executing keyword sourcing for: {keyword}")
+        
+        # 1. Coupang Sourcing Policy Check (Option C)
+        policy = CoupangSourcingPolicyService.evaluate_keyword_policy(self.db, keyword)
+        decision = CoupangSourcingPolicyService.get_action_from_policy(policy)
+        
+        logger.info(
+            "[SOURCING_POLICY] keyword=\"%s\" grade=%s score=%s mode=%s action=%s (Limit: %d)",
+            keyword, decision["grade"], decision["score"], decision["mode"], decision["action"], decision["max_items"]
+        )
+        
+        # Override limit based on policy
+        final_limit = min(limit, decision["max_items"])
+        
+        if decision["action"] == "skip_coupang" and settings.coupang_sourcing_policy_mode != "shadow":
+            logger.warning("Coupang sourcing skipped for keyword: %s (BLOCK)", keyword)
+            # 네이버 전용으로 진행하거나 아예 중단 선택 가능. 여기서는 수량 0으로 중단 효과.
+            if not decision["allowed_markets"] or "coupang" not in decision["allowed_markets"]:
+                # 만약 네이버만 허용된다면 네이버용으로 소싱 진행 가능하나, 
+                # 현재 시스템은 소싱 후 등록 단계에서 계정별로 처리하므로 
+                # 여기서는 수량 제한으로 제어합니다.
+                pass
+
         from app.ownerclan_client import OwnerClanClient
         from app.models import SupplierAccount
         acc = self.db.execute(
@@ -85,14 +116,19 @@ class SourcingService:
             graphql_url=settings.ownerclan_graphql_url,
             access_token=acc.access_token if acc else None
         )
-        status, data = client.get_products(keyword=keyword, limit=limit)
+        # 정책에 따른 수량 제한 적용
+        status, data = client.get_products(keyword=keyword, limit=final_limit)
         if status != 200:
             logger.error(f"Failed to fetch products for keyword: {keyword}")
             return
 
         items = data.get("data", {}).get("items") or data.get("items") or []
         for item in items:
-            await self._create_candidate(item, strategy="KEYWORD_SEARCH")
+            await self._create_candidate(
+                item, 
+                strategy="KEYWORD_SEARCH",
+                policy_decision=decision # 정책 결정 사항 전달
+            )
 
     async def execute_trend_sourcing(self):
         """
@@ -145,10 +181,11 @@ class SourcingService:
         visual_analysis: str | None = None,
         expert_match_score: float | None = None,
         expert_match_reason: str | None = None,
+        policy_decision: dict | None = None,
     ):
         async with self._ai_semaphore:
             return await self._execute_create_candidate(
-                item, strategy, benchmark_id, seasonal_score, margin_score, spec_data, thumbnail_url, visual_analysis, expert_match_score, expert_match_reason
+                item, strategy, benchmark_id, seasonal_score, margin_score, spec_data, thumbnail_url, visual_analysis, expert_match_score, expert_match_reason, policy_decision
             )
 
     async def _execute_create_candidate(
@@ -163,6 +200,7 @@ class SourcingService:
         visual_analysis: str | None = None,
         expert_match_score: float | None = None,
         expert_match_reason: str | None = None,
+        policy_decision: dict | None = None,
     ):
         supplier_id = (
             item.get("item_code")
@@ -173,6 +211,14 @@ class SourcingService:
         )
         if supplier_id is None:
             return
+
+        name = item.get("item_name") or item.get("name") or item.get("itemName") or "Unknown"
+        
+        # 0. Keyword filtering (Pre-emptive)
+        for kw in FORBIDDEN_KEYWORDS:
+            if kw.lower() in name.lower():
+                logger.info("Skipping forbidden product candidate: %s (keyword: %s)", name, kw)
+                return
 
         exists = (
             self.db.execute(
@@ -279,6 +325,22 @@ class SourcingService:
         if expert_match_score is not None:
             final_score_val = (final_score_val + (expert_match_score * 100.0)) / 2.0
 
+        # 4. Policy Boost (Amplification): 검증된 등급에 가산점 부여
+        if policy_decision:
+            grade = policy_decision.get("grade")
+            if grade == "CORE":
+                final_score_val += 10.0
+                logger.info(f"Policy Boost: CORE +10 (New Score: {final_score_val:.1f})")
+            elif grade in ("TRY", "RESEARCH"):
+                # RESEARCH도 신규모험 촉진을 위해 TRY와 동일하게 가산점 부여 (사용자 제안 반영)
+                final_score_val += 5.0
+                logger.info(f"Policy Boost: {grade} +5 (New Score: {final_score_val:.1f})")
+            elif grade == "BLOCK":
+                final_score_val -= 50.0 # BLOCK은 자동 승인 방지
+                logger.info(f"Policy Penalty: BLOCK -50 (New Score: {final_score_val:.1f})")
+
+        final_score_val = max(0.0, min(100.0, final_score_val))
+
         candidate = SourcingCandidate(
             supplier_code="ownerclan",
             supplier_item_id=str(supplier_id),
@@ -294,6 +356,7 @@ class SourcingService:
             thumbnail_url=final_thumbnail_url,
             visual_analysis=visual_analysis,
             final_score=final_score_val,
+            sourcing_policy=policy_decision,
             status="PENDING",
         )
 
@@ -405,6 +468,7 @@ class SourcingService:
             description=item_full_data.get("detail_html") or item_full_data.get("content"),
             coupang_parallel_imported=parallel_imported,
             coupang_overseas_purchased=overseas_purchased,
+            sourcing_policy=candidate.sourcing_policy,
         )
         self.db.add(product)
         self.db.flush() # ID 확보
@@ -543,6 +607,16 @@ class SourcingService:
             
             # Basic validation
             if not name or price <= 0:
+                continue
+                
+            # Keyword filtering
+            is_forbidden = False
+            for kw in FORBIDDEN_KEYWORDS:
+                if kw.lower() in str(name).lower():
+                    logger.info("Skipping forbidden product candidate from raw: %s (keyword: %s)", name, kw)
+                    is_forbidden = True
+                    break
+            if is_forbidden:
                 continue
                 
             candidate = SourcingCandidate(

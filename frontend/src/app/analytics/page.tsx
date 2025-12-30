@@ -4,7 +4,7 @@ import { useState } from "react";
 import { RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-import { Breadcrumb, BreadcrumbItem } from "@/components/ui/Breadcrumb";
+import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import SalesSummaryCards from "@/components/analytics/SalesSummaryCards";
 import ProductPerformanceTable from "@/components/analytics/ProductPerformanceTable";
 import ProductOptionPerformanceTable from "@/components/analytics/ProductOptionPerformanceTable";
@@ -13,7 +13,6 @@ import ChannelExpansionDashboard from "@/components/analytics/ChannelExpansionDa
 
 export default function AnalyticsPage() {
     const [selectedProduct, setSelectedProduct] = useState<{ id: string, name: string } | null>(null);
-    const [analysisProduct, setAnalysisProduct] = useState<{ id: string, name: string } | null>(null);
     const [showCharts, setShowCharts] = useState(true);
     const [expandedSection, setExpandedSection] = useState<string | null>(null);
 
@@ -31,14 +30,17 @@ export default function AnalyticsPage() {
             />
 
             {/* Header */}
-            <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-card">
-                <div className="flex flex-col">
-                    <h1 className="text-sm font-semibold text-foreground leading-tight">
-                        매출 분석
-                    </h1>
-                    <span className="text-[10px] text-muted-foreground">
-                        매출 데이터, AI 예측, 소싱 추천을 통합한 대시보드입니다.
-                    </span>
+            <div className="flex items-center justify-between px-3 py-2 border border-border bg-card rounded-sm">
+                <div className="flex items-center gap-3">
+                    <div className="h-6 w-6 rounded-sm bg-primary/10 flex items-center justify-center">
+                        <RefreshCw className="h-3 w-3 text-primary" />
+                    </div>
+                    <div>
+                        <h1 className="text-sm font-semibold text-foreground">매출 분석</h1>
+                        <span className="text-[10px] text-muted-foreground">
+                            매출 데이터, AI 예측, 소싱 추천 통합 뷰
+                        </span>
+                    </div>
                 </div>
                 <div className="flex items-center gap-2">
                     <Button

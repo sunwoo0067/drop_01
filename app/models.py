@@ -392,6 +392,9 @@ class Product(DropshipBase):
     coupang_doc_pending: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     coupang_doc_pending_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     coupang_eligibility: Mapped[str] = mapped_column(Text, nullable=False, default="UNKNOWN")
+    coupang_category_source: Mapped[str | None] = mapped_column(Text, nullable=True) # PREDICTED, FALLBACK_SAFE, MANUAL
+    coupang_fallback_used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    sourcing_policy: Mapped[dict | None] = mapped_column(JSONB, nullable=True) # Option C decision result
 
     # === 3단계 전략 관련 필드 ===
     # 라이프사이클 단계
@@ -536,6 +539,9 @@ class MarketListing(MarketBase):
     store_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     coupang_status: Mapped[str | None] = mapped_column(Text, nullable=True)
     rejection_reason: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    proven_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    category_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    category_grade: Mapped[str | None] = mapped_column(Text, nullable=True) # FALLBACK_SAFE, VERIFIED_EXACT
 
     # === 3단계 전략 관련 필드 ===
     # 노출/클릭 지표
@@ -687,6 +693,7 @@ class SourcingCandidate(DropshipBase):
     seo_keywords: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True) # High value keywords
     target_event: Mapped[str | None] = mapped_column(Text, nullable=True) # e.g. "Christmas"
     visual_analysis: Mapped[str | None] = mapped_column(Text, nullable=True) # Spatial analysis from Qwen-VL
+    sourcing_policy: Mapped[dict | None] = mapped_column(JSONB, nullable=True) # Option C decision result
 
     embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
     
@@ -1027,3 +1034,30 @@ class ProcessingHistory(DropshipBase):
         nullable=True,
         comment="가공 후 KPI 측정 시점"
     )
+
+class AdaptivePolicyEvent(MarketBase):
+    __tablename__ = "adaptive_policy_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    category_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    keyword: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    # PENALTY(감점), RECOVERY(복원), DRIFT(환경변화감지)
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    
+    # NONE, CRITICAL, WARNING, TRANSIENT
+    severity: Mapped[str] = mapped_column(Text, nullable=False, default="NONE")
+    
+    multiplier: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    # 추가 메타데이터
+    policy_version: Mapped[str | None] = mapped_column(Text, nullable=True, default="1.1.0")
+    window_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    window_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    top_rejection_reasons: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    
+    # 당시의 AR, Trials 등 상세 지표
+    context: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

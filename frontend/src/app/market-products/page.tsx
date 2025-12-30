@@ -101,61 +101,58 @@ export default function MarketProductsPage() {
     }, [items, searchTerm]);
 
     return (
-        <div className="space-y-8 animate-in fade-in duration-500">
+        <div className="space-y-4 animate-in fade-in duration-500">
             {/* 헤더 섹션 */}
-            <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b">
-                <div className="space-y-2">
-                    <div className="flex items-center gap-2 text-primary font-medium">
-                        <ShoppingBag className="h-5 w-5" />
-                        <span>Market Products</span>
-                    </div>
-                    <h1 className="text-4xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-                        마켓 상품
-                    </h1>
-                    <p className="text-muted-foreground max-w-2xl">
-                        쿠팡에 등록된 상품 목록입니다. 등록된 상품의 상태를 확인하고 관리할 수 있습니다.
-                    </p>
-                </div>
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 px-3 py-2 border border-border bg-card rounded-sm">
                 <div className="flex items-center gap-3">
+                    <div className="h-6 w-6 rounded-sm bg-primary/10 flex items-center justify-center">
+                        <ShoppingBag className="h-3 w-3 text-primary" />
+                    </div>
+                    <div>
+                        <h1 className="text-sm font-semibold text-foreground">마켓 상품</h1>
+                        <p className="text-[10px] text-muted-foreground">등록 상품 관리 및 상태 확인</p>
+                    </div>
+                </div>
+                <div className="flex items-center gap-2">
                     <Button
                         variant="outline"
-                        className="rounded-xl h-11 px-6 border-2 hover:bg-accent"
+                        size="sm"
                         onClick={() => window.location.href = '/registration'}
                     >
-                        <ArrowLeft className="mr-2 h-4 w-4" />
+                        <ArrowLeft className="mr-1.5 h-3 w-3" />
                         등록 페이지
                     </Button>
-                    <Button variant="outline" className="rounded-xl h-11 px-6 border-2 hover:bg-accent" onClick={() => mutate()}>
-                        <RotateCw className="mr-2 h-4 w-4" />
+                    <Button variant="outline" size="sm" onClick={() => mutate()}>
+                        <RotateCw className="mr-1.5 h-3 w-3" />
                         새로고침
                     </Button>
                 </div>
             </div>
 
             {/* 통계 */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Card className="border-none shadow-md bg-gradient-to-br from-primary/10 to-primary/5">
-                    <CardContent className="p-6">
-                        <div className="flex items-center gap-4">
-                            <div className="h-12 w-12 rounded-xl bg-primary/20 flex items-center justify-center">
-                                <ShoppingBag className="h-6 w-6 text-primary" />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <Card className="border border-border">
+                    <CardContent className="p-3">
+                        <div className="flex items-center gap-3">
+                            <div className="h-7 w-7 rounded-sm bg-muted flex items-center justify-center">
+                                <ShoppingBag className="h-3.5 w-3.5 text-muted-foreground" />
                             </div>
                             <div>
-                                <p className="text-sm text-muted-foreground">등록된 상품</p>
-                                <p className="text-3xl font-bold">{total}</p>
+                                <p className="text-[10px] text-muted-foreground">등록된 상품</p>
+                                <p className="text-lg font-semibold">{total}</p>
                             </div>
                         </div>
                     </CardContent>
                 </Card>
-                <Card className="border-none shadow-md bg-gradient-to-br from-emerald-500/10 to-emerald-600/5">
-                    <CardContent className="p-6">
-                        <div className="flex items-center gap-4">
-                            <div className="h-12 w-12 rounded-xl bg-emerald-500/20 flex items-center justify-center">
-                                <CheckCircle2 className="h-6 w-6 text-emerald-500" />
+                <Card className="border border-border">
+                    <CardContent className="p-3">
+                        <div className="flex items-center gap-3">
+                            <div className="h-7 w-7 rounded-sm bg-muted flex items-center justify-center">
+                                <CheckCircle2 className="h-3.5 w-3.5 text-success" />
                             </div>
                             <div>
-                                <p className="text-sm text-muted-foreground">활성 상품</p>
-                                <p className="text-3xl font-bold">{items.filter((i: any) => i.status === "ACTIVE").length}</p>
+                                <p className="text-[10px] text-muted-foreground">활성 상품</p>
+                                <p className="text-lg font-semibold">{items.filter((i: any) => i.status === "ACTIVE").length}</p>
                             </div>
                         </div>
                     </CardContent>
@@ -163,7 +160,7 @@ export default function MarketProductsPage() {
             </div>
 
             {/* 필터 및 검색 */}
-            <div className="flex flex-col md:flex-row gap-4 items-center">
+            <div className="flex flex-col md:flex-row gap-3 items-center">
                 <div className="w-full md:w-64">
                     <Select
                         value={selectedAccountId}
@@ -175,16 +172,17 @@ export default function MarketProductsPage() {
                             }))
                         ]}
                         onChange={(e) => handleAccountChange(e.target.value)}
-                        className="h-12 rounded-2xl bg-accent/50 border-none focus:ring-2 focus:ring-primary/20"
+                        className="bg-accent/50 border-none"
                     />
                 </div>
                 <div className="relative flex-1 group w-full">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground group-focus-within:text-primary transition-colors" />
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
                     <Input
                         placeholder="상품명 또는 상품 ID로 검색..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="pl-12 h-12 rounded-2xl border-none bg-accent/50 focus-visible:ring-2 focus-visible:ring-primary/20 transition-all text-base w-full"
+                        className="pl-9"
+                        size="sm"
                     />
                 </div>
             </div>

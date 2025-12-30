@@ -156,6 +156,13 @@ class UpdatePriceOut(BaseModel):
     success: bool
     message: Optional[str] = None
 
+class CoupangOperationalStatsOut(BaseModel):
+    """쿠팡 소싱 정책 운영 지표 모델"""
+    summary: dict
+    grade_distribution: dict
+    time_series: List[dict]
+    guardrails: Optional[dict] = None
+
 
 # ============================================================================
 # API Endpoints
@@ -618,27 +625,50 @@ def get_dashboard_stats(
 
     # 1-2. 가공 단계 (Product Processing Status)
     # Product는 SourcingCandidate에서 APPROVED된 것들을 기반으로 생성됨
-    product_stats = session.execute(
-        select(Product.processing_status, func.count(Product.id)).group_by(Product.processing_status)
-    ).all()
+    product_query = select(Product.processing_status, func.count(Product.id))
+    if not is_all:
+        product_query = (
+            product_query.join(SupplierItemRaw, SupplierItemRaw.id == Product.supplier_item_id)
+            .where(SupplierItemRaw.supplier_code == supplier_code)
+        )
+    product_stats = session.execute(product_query.group_by(Product.processing_status)).all()
     product_map = {status: count for status, count in product_stats}
 
     # 라이프사이클 단계별 (STEP_1, STEP_2, STEP_3)
-    lifecycle_stats = session.execute(
-        select(Product.lifecycle_stage, func.count(Product.id)).group_by(Product.lifecycle_stage)
-    ).all()
+    lifecycle_query = select(Product.lifecycle_stage, func.count(Product.id))
+    if not is_all:
+        lifecycle_query = (
+            lifecycle_query.join(SupplierItemRaw, SupplierItemRaw.id == Product.supplier_item_id)
+            .where(SupplierItemRaw.supplier_code == supplier_code)
+        )
+    lifecycle_stats = session.execute(lifecycle_query.group_by(Product.lifecycle_stage)).all()
     lifecycle_map = {stage: count for stage, count in lifecycle_stats}
 
     # 1-3. 합계 수량 (Stock Quantity sum)
     # ProductOption에서 전체 재고 합계
-    total_stock = session.scalar(
-        select(func.sum(ProductOption.stock_quantity))
-    ) or 0
+    total_stock_query = select(func.sum(ProductOption.stock_quantity)).join(
+        Product, ProductOption.product_id == Product.id
+    )
+    if not is_all:
+        total_stock_query = (
+            total_stock_query.join(SupplierItemRaw, SupplierItemRaw.id == Product.supplier_item_id)
+            .where(SupplierItemRaw.supplier_code == supplier_code)
+        )
+    total_stock = session.scalar(total_stock_query) or 0
 
     # 2. 주문 현황
-    order_status_counts = session.execute(
-        select(Order.status, func.count(Order.id)).group_by(Order.status)
-    ).all()
+    start_of_day = datetime.now(timezone.utc).astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+    order_query = select(Order.status, func.count(func.distinct(Order.id))).where(
+        Order.created_at >= start_of_day
+    )
+    if not is_all:
+        order_query = (
+            order_query.join(OrderItem, OrderItem.order_id == Order.id)
+            .join(Product, Product.id == OrderItem.product_id)
+            .join(SupplierItemRaw, SupplierItemRaw.id == Product.supplier_item_id)
+            .where(SupplierItemRaw.supplier_code == supplier_code)
+        )
+    order_status_counts = session.execute(order_query.group_by(Order.status)).all()
     orders_map = {status: count for status, count in order_status_counts}
 
     # 3. 마켓 현황 (계정별 등록 상품 수 및 리스팅 상태)
@@ -702,6 +732,28 @@ def get_dashboard_stats(
         },
         "markets": market_results
     }
+
+
+@router.get("/coupang/operational-stats", response_model=CoupangOperationalStatsOut)
+def get_coupang_operational_stats(
+    days: int = Query(default=7, ge=1, le=30),
+    session: Session = Depends(get_session)
+):
+    """
+    쿠팡 소싱 정책 운영 지표 및 가드레일 상태를 조회합니다.
+    """
+    from app.services.analytics.reporting import CoupangOperationalReportService
+    from app.services.analytics.guardrails import CoupangGuardrailService
+    
+    stats = CoupangOperationalReportService.get_daily_operational_stats(session, days)
+    is_critical, msg, rec = CoupangGuardrailService.check_system_integrity(session)
+    
+    stats["guardrails"] = {
+        "is_critical": is_critical,
+        "message": msg,
+        "recommended_mode": rec
+    }
+    return stats
 
 
 # ============================================================================

@@ -77,16 +77,16 @@ export default function SourcingPage() {
     };
 
     return (
-        <div className="space-y-6">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <h1 className="text-3xl font-bold tracking-tight">상품 소싱</h1>
+        <div className="space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 px-3 py-2 border border-border bg-card rounded-sm">
+                <h1 className="text-sm font-semibold">상품 소싱</h1>
                 <div className="flex items-center gap-2">
-                    <Button variant="outline">
-                        <Filter className="mr-2 h-4 w-4" />
+                    <Button variant="outline" size="sm">
+                        <Filter className="mr-1.5 h-3 w-3" />
                         필터
                     </Button>
-                    <Button>
-                        <Plus className="mr-2 h-4 w-4" />
+                    <Button size="sm">
+                        <Plus className="mr-1.5 h-3 w-3" />
                         새 소싱 작업
                     </Button>
                 </div>
@@ -97,15 +97,16 @@ export default function SourcingPage() {
                     <CardTitle>상품 검색</CardTitle>
                 </CardHeader>
                 <CardContent>
-                    <div className="flex gap-4">
+                    <div className="flex gap-3">
                         <Input
                             placeholder="키워드 또는 상품 ID 검색..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                             className="max-w-md"
+                            size="sm"
                         />
-                        <Button onClick={handleSearch} disabled={loading}>
-                            <Search className="mr-2 h-4 w-4" />
+                        <Button size="sm" onClick={handleSearch} disabled={loading}>
+                            <Search className="mr-1.5 h-3 w-3" />
                             검색
                         </Button>
                     </div>

@@ -535,8 +535,9 @@ class ImageProcessingService:
                             )
                             return (url, None, f"validation_failed:{validation.reason}")
                         
-                        # 업로드
-                        new_url = storage_service.upload_image(
+                        # 업로드 (동기 I/O이므로 별도 스레드에서 실행)
+                        new_url = await asyncio.to_thread(
+                            storage_service.upload_image,
                             image_bytes,
                             path_prefix=f"market_processing/{product_id}"
                         )

@@ -125,17 +125,18 @@ def _build_smartstore_payload(
             if opt_selling_price > 0 and opt_selling_price < min_opt_price:
                 min_opt_price = opt_selling_price
                 
+            option_stock = max(int(opt.stock_quantity or 0), 0)
             combinations.append({
                 "optionName1": opt_vals[0],
                 "optionName2": opt_vals[1] if len(opt_vals) > 1 else None,
                 "optionName3": opt_vals[2] if len(opt_vals) > 2 else None,
                 "optionName4": opt_vals[3] if len(opt_vals) > 3 else None,
-                "stockQuantity": max(int(opt.stock_quantity or 0), 999), # 최소 수량 보장
+                "stockQuantity": option_stock,
                 "price": opt_selling_price - sale_price, # 기준가(salePrice)와의 차액
                 "sellerManagerCode": opt.external_option_key or str(getattr(opt, "id", idx)),
                 "usable": True
             })
-            total_stock += max(int(opt.stock_quantity or 0), 999)
+            total_stock += option_stock
 
         # 기준가를 최소가로 조정할 경우 차액(price) 재계산 필요
         # 단, 여기서는 단순화를 위해 최초 입력된 sale_price를 기준가로 사용
@@ -150,8 +151,8 @@ def _build_smartstore_payload(
             },
             "optionCombinations": combinations
         }
-        # 조합형 옵션 사용 시 원상품 재고는 옵션 총합 또는 최소 1로 설정 (네이버 정책에 따라 0이 안 될 수도 있음)
-        origin_product["stockQuantity"] = max(total_stock, 1)
+        # 조합형 옵션 사용 시 원상품 재고는 옵션 총합으로 설정
+        origin_product["stockQuantity"] = total_stock
 
     if images:
         origin_product["images"] = images
@@ -869,6 +870,12 @@ class SmartStoreSync:
                 opt_prices = [int(opt.selling_price) for opt in options if opt.selling_price]
                 if opt_prices:
                     sale_price = min(opt_prices)
+                option_total_stock = sum(int(opt.stock_quantity or 0) for opt in options)
+                if option_total_stock <= 0:
+                    return {
+                        "status": "error",
+                        "message": "SmartStore 옵션 재고가 0입니다. 재고를 확인해 주세요.",
+                    }
             
             stock_quantity = int(getattr(product, "stock_quantity", 0) or 0)
             if stock_quantity <= 0:

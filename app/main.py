@@ -47,6 +47,8 @@ app.include_router(products.router, prefix="/api/products", tags=["Products"])
 app.include_router(coupang.router, prefix="/api/coupang", tags=["Coupang"])
 app.include_router(settings_endpoint.router, prefix="/api/settings", tags=["Settings"])
 app.include_router(suppliers_endpoint.router, prefix="/api/suppliers", tags=["Suppliers"])
+from app.api.endpoints import market, health, orchestration, analytics, recommendations, products, benchmarks, sourcing, lifecycle, kpi, coupang_dashboard, sourcing_recommendations
+
 app.include_router(market.router, prefix="/api/market", tags=["Market"])
 app.include_router(orchestration.router, prefix="/api/orchestration", tags=["Orchestration"])
 app.include_router(health.router, prefix="/api/health", tags=["Health"])
@@ -54,6 +56,8 @@ app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"]
 app.include_router(recommendations.router, prefix="/api/recommendations", tags=["Recommendations"])
 app.include_router(lifecycle.router, prefix="/api", tags=["Lifecycle"])
 app.include_router(kpi.router, prefix="/api", tags=["KPI"])
+app.include_router(coupang_dashboard.router, prefix="/api/coupang/dashboard", tags=["Coupang Dashboard"])
+app.include_router(sourcing_recommendations.router, prefix="/api/coupang/sourcing", tags=["Coupang Recommendations"])
 
 
 # Next.js(/api/products) 경로 정규화로 인해 백엔드가 /api/products → /api/products/ 로 307 redirect를 내보내면

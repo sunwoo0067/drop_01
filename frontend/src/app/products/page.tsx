@@ -8,10 +8,9 @@ import { MarketProduct } from "@/types";
 import { Loader2, RefreshCw, RefreshCcw, AlertTriangle, Trash2, Ban } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Table, TableColumn, exportToCSV } from "@/components/ui/Table";
 import { Input } from "@/components/ui/Input";
-import { Breadcrumb, BreadcrumbItem } from "@/components/ui/Breadcrumb";
+import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Drawer } from "@/components/ui/Drawer";
 import { Download } from "lucide-react";
 
@@ -247,14 +246,6 @@ export default function ProductListPage() {
         }
     };
 
-    const toggleSelectAll = (checked: boolean) => {
-        if (checked) {
-            setSelectedIds(filteredProducts.map(p => p.marketItemId));
-        } else {
-            setSelectedIds([]);
-        }
-    };
-
     const toggleSelect = (id: string, checked: boolean) => {
         if (checked) {
             setSelectedIds(prev => [...prev, id]);
@@ -412,7 +403,7 @@ export default function ProductListPage() {
             />
 
             {/* Toolbar */}
-            <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-card">
+            <div className="flex items-center justify-between px-3 py-2 border border-border bg-card rounded-sm">
                 <div className="flex items-center gap-2 flex-1">
                     <Input
                         type="text"
@@ -422,7 +413,8 @@ export default function ProductListPage() {
                             setSearchQuery(e.target.value);
                             setCurrentPage(1);
                         }}
-                        className="text-xs h-7 max-w-xs"
+                        className="max-w-xs"
+                        size="sm"
                     />
                     <div className="text-[10px] text-muted-foreground bg-muted px-2 py-1 rounded-sm">
                         총 {filteredProducts.length}개

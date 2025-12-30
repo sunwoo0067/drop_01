@@ -21,7 +21,7 @@ export function OrchestrationControl({
 }: OrchestrationControlProps) {
     return (
         <Card className="border border-border">
-            <CardHeader className="pb-2">
+            <CardHeader className="py-2">
                 <CardTitle className="flex items-center gap-2 text-xs">
                     <Bot className="h-3.5 w-3.5 text-primary" />
                     AI 오케스트레이션 제어 센터
@@ -63,7 +63,7 @@ export function OrchestrationControl({
                         onClick={() => onRunCycle(true)}
                         disabled={isLoading || isRunning}
                         variant="outline"
-                        size="sm"
+                        size="xs"
                         className="flex-1"
                     >
                         <RefreshCw className={`h-3 w-3 mr-1 ${isLoading ? 'animate-spin' : ''}`} />
@@ -72,7 +72,7 @@ export function OrchestrationControl({
                     <Button
                         onClick={() => onRunCycle(false)}
                         disabled={isLoading || isRunning}
-                        size="sm"
+                        size="xs"
                         className="flex-1"
                     >
                         {isRunning ? (

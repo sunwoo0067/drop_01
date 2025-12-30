@@ -283,37 +283,36 @@ export default function RegistrationPage() {
     return (
         <div className="space-y-8 animate-in fade-in duration-500">
             {/* Header Section */}
-            <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b">
-                <div className="space-y-2">
-                    <div className="flex items-center gap-2 text-primary font-medium">
-                        <Upload className="h-5 w-5" />
-                        <span>Market Registration</span>
-                    </div>
-                    <h1 className="text-4xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-                        상품 등록
-                    </h1>
-                    <p className="text-muted-foreground max-w-2xl">
-                        가공 완료된 상품을 쿠팡 마켓에 등록합니다. 이미지가 1장 이상인 상품만 등록 가능합니다.
-                    </p>
-                </div>
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 px-3 py-2 border border-border bg-card rounded-sm">
                 <div className="flex items-center gap-3">
-                    <Button variant="outline" className="rounded-xl h-11 px-6 border-2 hover:bg-accent" onClick={fetchProducts}>
-                        <RotateCw className="mr-2 h-4 w-4" />
+                    <div className="h-6 w-6 rounded-sm bg-primary/10 flex items-center justify-center">
+                        <Upload className="h-3 w-3 text-primary" />
+                    </div>
+                    <div>
+                        <h1 className="text-sm font-semibold text-foreground">상품 등록</h1>
+                        <p className="text-[10px] text-muted-foreground">
+                            가공 완료 상품 등록 및 대기 항목 관리
+                        </p>
+                    </div>
+                </div>
+                <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" onClick={fetchProducts}>
+                        <RotateCw className="mr-1.5 h-3 w-3" />
                         새로고침
                     </Button>
-                    <Button variant="outline" className="rounded-xl h-11 px-6 border-2 hover:bg-accent" onClick={handleResetPending}>
-                        <RefreshCcw className="mr-2 h-4 w-4" />
+                    <Button variant="outline" size="sm" onClick={handleResetPending}>
+                        <RefreshCcw className="mr-1.5 h-3 w-3" />
                         등록대기 초기화
                     </Button>
                     <Button
-                        className="rounded-xl h-11 px-6 shadow-lg shadow-primary/20 hover:scale-105 transition-transform"
+                        size="sm"
                         onClick={handleBulkRegister}
                         disabled={selectedIds.size === 0 || bulkRegistering}
                     >
                         {bulkRegistering ? (
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
                         ) : (
-                            <Sparkles className="mr-2 h-4 w-4" />
+                            <Sparkles className="mr-1.5 h-3 w-3" />
                         )}
                         선택 등록 ({selectedIds.size})
                     </Button>
@@ -321,42 +320,42 @@ export default function RegistrationPage() {
             </div>
 
             {/* Stats Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Card className="border-none shadow-md bg-gradient-to-br from-blue-500/10 to-blue-600/5">
-                    <CardContent className="p-6">
-                        <div className="flex items-center gap-4">
-                            <div className="h-12 w-12 rounded-xl bg-blue-500/20 flex items-center justify-center">
-                                <Clock className="h-6 w-6 text-blue-500" />
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <Card className="border border-border">
+                    <CardContent className="p-3">
+                        <div className="flex items-center gap-3">
+                            <div className="h-7 w-7 rounded-sm bg-muted flex items-center justify-center">
+                                <Clock className="h-3.5 w-3.5 text-muted-foreground" />
                             </div>
                             <div>
-                                <p className="text-sm text-muted-foreground">등록 대기</p>
-                                <p className="text-3xl font-bold">{filteredItems.length}</p>
+                                <p className="text-[10px] text-muted-foreground">등록 대기</p>
+                                <p className="text-lg font-semibold">{filteredItems.length}</p>
                             </div>
                         </div>
                     </CardContent>
                 </Card>
-                <Card className="border-none shadow-md bg-gradient-to-br from-emerald-500/10 to-emerald-600/5">
-                    <CardContent className="p-6">
-                        <div className="flex items-center gap-4">
-                            <div className="h-12 w-12 rounded-xl bg-emerald-500/20 flex items-center justify-center">
-                                <CheckCircle2 className="h-6 w-6 text-emerald-500" />
+                <Card className="border border-border">
+                    <CardContent className="p-3">
+                        <div className="flex items-center gap-3">
+                            <div className="h-7 w-7 rounded-sm bg-muted flex items-center justify-center">
+                                <CheckCircle2 className="h-3.5 w-3.5 text-success" />
                             </div>
                             <div>
-                                <p className="text-sm text-muted-foreground">등록 가능</p>
-                                <p className="text-3xl font-bold">{readyCount}</p>
+                                <p className="text-[10px] text-muted-foreground">등록 가능</p>
+                                <p className="text-lg font-semibold">{readyCount}</p>
                             </div>
                         </div>
                     </CardContent>
                 </Card>
-                <Card className="border-none shadow-md bg-gradient-to-br from-amber-500/10 to-amber-600/5">
-                    <CardContent className="p-6">
-                        <div className="flex items-center gap-4">
-                            <div className="h-12 w-12 rounded-xl bg-amber-500/20 flex items-center justify-center">
-                                <AlertCircle className="h-6 w-6 text-amber-500" />
+                <Card className="border border-border">
+                    <CardContent className="p-3">
+                        <div className="flex items-center gap-3">
+                            <div className="h-7 w-7 rounded-sm bg-muted flex items-center justify-center">
+                                <AlertCircle className="h-3.5 w-3.5 text-warning" />
                             </div>
                             <div>
-                                <p className="text-sm text-muted-foreground">이미지 부족</p>
-                                <p className="text-3xl font-bold">{notReadyCount}</p>
+                                <p className="text-[10px] text-muted-foreground">이미지 부족</p>
+                                <p className="text-lg font-semibold">{notReadyCount}</p>
                             </div>
                         </div>
                     </CardContent>
@@ -364,14 +363,15 @@ export default function RegistrationPage() {
             </div>
 
             {/* Search and Filters */}
-            <div className="flex flex-col md:flex-row gap-4 items-center">
+            <div className="flex flex-col md:flex-row gap-3 items-center">
                 <div className="relative flex-1 group w-full">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground group-focus-within:text-primary transition-colors" />
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
                     <Input
                         placeholder="상품명으로 검색..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="pl-12 h-12 rounded-2xl border-none bg-accent/50 focus-visible:ring-2 focus-visible:ring-primary/20 transition-all text-base w-full"
+                        className="pl-9"
+                        size="sm"
                     />
                 </div>
                 <div className="flex items-center gap-2">
@@ -382,17 +382,17 @@ export default function RegistrationPage() {
                         onChange={(e) => toggleSelectAll(e.target.checked)}
                         className="h-5 w-5 rounded border-gray-300"
                     />
-                    <label htmlFor="selectAll" className="text-sm text-muted-foreground">
+                    <label htmlFor="selectAll" className="text-xs text-muted-foreground">
                         등록 가능 전체 선택
                     </label>
                 </div>
                 <Button
                     variant="outline"
-                    className="h-12 rounded-2xl px-6"
+                    size="sm"
                     onClick={() => window.location.href = '/market-products'}
                 >
                     마켓 상품 보기
-                    <ArrowRight className="ml-2 h-4 w-4" />
+                    <ArrowRight className="ml-1.5 h-3 w-3" />
                 </Button>
             </div>
 

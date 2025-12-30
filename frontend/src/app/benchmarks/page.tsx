@@ -98,45 +98,47 @@ export default function BenchmarkPage() {
     return (
         <div className="flex flex-col h-[calc(100vh-140px)] -m-6 box-border overflow-hidden">
             {/* Header Area */}
-            <div className="flex items-center justify-between px-6 py-4 bg-background border-b z-10 shrink-0">
-                <div>
-                    <h1 className="text-2xl font-black tracking-tight flex items-center gap-2">
-                        <BarChart4 className="h-6 w-6 text-primary" />
-                        BENCHMARKS
-                    </h1>
-                    <p className="text-xs text-muted-foreground font-medium uppercase tracking-widest opacity-70">
-                        Market Intelligence & Product Analysis
-                    </p>
+            <div className="flex items-center justify-between px-4 py-2 bg-card border-b z-10 shrink-0">
+                <div className="flex items-center gap-3">
+                    <div className="h-6 w-6 rounded-sm bg-primary/10 flex items-center justify-center">
+                        <BarChart4 className="h-3.5 w-3.5 text-primary" />
+                    </div>
+                    <div>
+                        <h1 className="text-sm font-semibold text-foreground">벤치마크</h1>
+                        <p className="text-[10px] text-muted-foreground">
+                            시장 인텔리전스 및 상품 성과 비교
+                        </p>
+                    </div>
                 </div>
 
                 <div className="flex items-center gap-2">
-                    <div className="flex bg-muted p-1 rounded-lg mr-4">
+                    <div className="flex bg-muted p-1 rounded-sm">
                         <Button
                             variant={activeTab === 'products' ? 'secondary' : 'ghost'}
-                            size="sm"
-                            className="h-8 px-4 text-xs font-semibold"
+                            size="xs"
+                            className="h-7 px-3 text-[11px] font-semibold"
                             onClick={() => setActiveTab('products')}
                         >
-                            <BarChart4 className="h-3.5 w-3.5 mr-2" />
+                            <BarChart4 className="h-3 w-3 mr-1.5" />
                             상품 분석
                         </Button>
                         <Button
                             variant={activeTab === 'jobs' ? 'secondary' : 'ghost'}
-                            size="sm"
-                            className="h-8 px-4 text-xs font-semibold"
+                            size="xs"
+                            className="h-7 px-3 text-[11px] font-semibold"
                             onClick={() => setActiveTab('jobs')}
                         >
-                            <ClipboardList className="h-3.5 w-3.5 mr-2" />
+                            <ClipboardList className="h-3 w-3 mr-1.5" />
                             수집 모니터
                         </Button>
                     </div>
 
-                    <Button onClick={() => setIsCollectionOpen(true)} size="sm" className="h-9 px-4 shadow-md hover:shadow-lg transition-all">
-                        <Plus className="mr-2 h-4 w-4" />
+                    <Button onClick={() => setIsCollectionOpen(true)} size="sm" className="h-8 px-3">
+                        <Plus className="mr-1.5 h-3 w-3" />
                         신규 수집
                     </Button>
-                    <Button onClick={fetchBenchmarks} variant="outline" size="sm" className="h-9 w-9 p-0" disabled={loading}>
-                        <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                    <Button onClick={fetchBenchmarks} variant="outline" size="sm" className="h-8 w-8 p-0" disabled={loading}>
+                        <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
                     </Button>
                 </div>
             </div>

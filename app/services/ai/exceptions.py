@@ -70,13 +70,15 @@ class APIError(AgentError):
         url: Optional[str] = None,
         response_body: Optional[str] = None,
         severity: ErrorSeverity = ErrorSeverity.MEDIUM,
-        recoverable: bool = True
+        recoverable: bool = True,
+        **kwargs
     ):
         context = {
             "status_code": status_code,
             "url": url,
             "response_body": response_body
         }
+        context.update(kwargs) # 나머지 인자들도 컨텍스트에 포함
         super().__init__(
             message=message,
             error_code="API_ERROR",
@@ -106,13 +108,15 @@ class DatabaseError(AgentError):
         query: Optional[str] = None,
         operation: Optional[str] = None,
         severity: ErrorSeverity = ErrorSeverity.HIGH,
-        recoverable: bool = False
+        recoverable: bool = False,
+        **kwargs
     ):
         context = {
             "table_name": table_name,
             "query": query,
             "operation": operation
         }
+        context.update(kwargs)
         super().__init__(
             message=message,
             error_code="DATABASE_ERROR",
@@ -144,7 +148,8 @@ class AIError(AgentError):
         prompt: Optional[str] = None,
         fallback_available: bool = False,
         severity: ErrorSeverity = ErrorSeverity.MEDIUM,
-        recoverable: bool = True
+        recoverable: bool = True,
+        **kwargs
     ):
         context = {
             "provider": provider,
@@ -152,6 +157,7 @@ class AIError(AgentError):
             "prompt": prompt,
             "fallback_available": fallback_available
         }
+        context.update(kwargs)
         super().__init__(
             message=message,
             error_code="AI_ERROR",
@@ -184,7 +190,8 @@ class ValidationError(AgentError):
         actual_value: Optional[Any] = None,
         constraints: Optional[Dict[str, Any]] = None,
         severity: ErrorSeverity = ErrorSeverity.LOW,
-        recoverable: bool = False
+        recoverable: bool = False,
+        **kwargs
     ):
         context = {
             "field": field,
@@ -192,6 +199,7 @@ class ValidationError(AgentError):
             "actual_value": str(actual_value) if actual_value is not None else None,
             "constraints": constraints or {}
         }
+        context.update(kwargs)
         super().__init__(
             message=message,
             error_code="VALIDATION_ERROR",
@@ -222,13 +230,15 @@ class WorkflowError(AgentError):
         step: Optional[str] = None,
         state: Optional[Dict[str, Any]] = None,
         severity: ErrorSeverity = ErrorSeverity.HIGH,
-        recoverable: bool = False
+        recoverable: bool = False,
+        **kwargs
     ):
         context = {
             "workflow_name": workflow_name,
             "step": step,
             "state": state
         }
+        context.update(kwargs)
         super().__init__(
             message=message,
             error_code="WORKFLOW_ERROR",
@@ -285,12 +295,14 @@ class TimeoutError(AgentError):
         operation: Optional[str] = None,
         timeout_seconds: Optional[float] = None,
         severity: ErrorSeverity = ErrorSeverity.MEDIUM,
-        recoverable: bool = True
+        recoverable: bool = True,
+        **kwargs
     ):
         context = {
             "operation": operation,
             "timeout_seconds": timeout_seconds
         }
+        context.update(kwargs)
         super().__init__(
             message=message,
             error_code="TIMEOUT_ERROR",

@@ -12,23 +12,19 @@ type LogFilter = {
 };
 
 interface LogViewerProps {
-    events: any[];
     filteredEvents: any[];
     logFilter: LogFilter;
     setLogFilter: (filter: LogFilter) => void;
     autoScroll: boolean;
     setAutoScroll: (value: boolean) => void;
-    lastUpdatedAt: Date | null;
 }
 
 export function LogViewer({
-    events,
     filteredEvents,
     logFilter,
     setLogFilter,
     autoScroll,
     setAutoScroll,
-    lastUpdatedAt
 }: LogViewerProps) {
     const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -57,7 +53,7 @@ export function LogViewer({
 
     return (
         <Card className="border border-border">
-            <CardHeader className="border-b border-border py-2">
+            <CardHeader className="border-b border-border py-1.5">
                 <CardTitle className="text-xs flex items-center gap-2">
                     <div className="relative flex h-2 w-2">
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary/75"></span>
@@ -67,7 +63,7 @@ export function LogViewer({
                 </CardTitle>
             </CardHeader>
             {/* 로그 필터 및 검색 */}
-            <div className="border-b border-border p-2 flex flex-wrap gap-2 items-center">
+            <div className="border-b border-border p-1.5 flex flex-wrap gap-2 items-center">
                 <div className="flex items-center gap-1.5 flex-1 min-w-[180px]">
                     <Search className="h-3 w-3 text-muted-foreground" />
                     <Input

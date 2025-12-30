@@ -26,6 +26,18 @@ class KeywordSourceIn(BaseModel):
     min_margin: float = 0.15
 
 
+class KeywordEvaluateIn(BaseModel):
+    keyword: str
+
+
+class KeywordEvaluateOut(BaseModel):
+    keyword: str
+    grade: str
+    score: int
+    reason: str
+    involved_categories: List[str]
+
+
 class SourcingCandidateUpdateIn(BaseModel):
     status: str
 
@@ -340,6 +352,21 @@ async def trigger_keyword_sourcing(
     background_tasks.add_task(_execute_global_keyword_sourcing_bg, payload.keywords, float(payload.min_margin))
     
     return {"status": "accepted", "message": f"Global keyword sourcing started for {len(payload.keywords)} keywords"}
+
+
+@router.post("/evaluate-keyword", response_model=KeywordEvaluateOut)
+def evaluate_keyword_policy(
+    payload: KeywordEvaluateIn,
+    session: Session = Depends(get_session)
+):
+    """
+    특정 키워드에 대한 쿠팡 소싱 정책(등급, 점수, 분석 사유)을 평가합니다.
+    UI에서 소싱 시작 전 키워드 정보를 미리 확인하는 용도로 사용합니다.
+    """
+    from app.services.analytics.coupang_policy import CoupangSourcingPolicyService
+    
+    result = CoupangSourcingPolicyService.evaluate_keyword_policy(session, payload.keyword)
+    return result
 
 async def _execute_global_keyword_sourcing_bg(keywords: list[str], min_margin: float) -> None:
     await anyio.to_thread.run_sync(_execute_global_keyword_sourcing, keywords, min_margin)

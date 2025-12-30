@@ -700,7 +700,26 @@ def delete_ai_key(key_id: uuid.UUID, session: Session = Depends(get_session)) ->
 class OrchestratorSettingIn(BaseModel):
     listing_limit: int = 15000
     sourcing_keyword_limit: int = 30
+    sourcing_import_limit: int = 15000
+    initial_processing_batch: int = 100
+    processing_batch_size: int = 50
+    listing_concurrency: int = 5
+    listing_batch_limit: int = 100
+    backfill_approve_enabled: bool = True
+    backfill_approve_limit: int = 2000
     continuous_mode: bool = False
+
+
+class LifecycleCriteriaUpdateIn(BaseModel):
+    step1_to_step2: dict | None = None
+    step2_to_step3: dict | None = None
+    category_adjusted: dict | None = None
+
+
+class LifecycleUiSettingsIn(BaseModel):
+    categorySort: dict | None = None
+    autoSortEnabled: bool | None = None
+    categoryFilter: str | None = None
 
 
 @router.get("/orchestrator")
@@ -713,6 +732,13 @@ def get_orchestrator_settings(session: Session = Depends(get_session)) -> dict:
         return {
             "listing_limit": 15000,
             "sourcing_keyword_limit": 30,
+            "sourcing_import_limit": 15000,
+            "initial_processing_batch": 100,
+            "processing_batch_size": 50,
+            "listing_concurrency": 5,
+            "listing_batch_limit": 100,
+            "backfill_approve_enabled": True,
+            "backfill_approve_limit": 2000,
             "continuous_mode": False
         }
     
@@ -734,5 +760,86 @@ def update_orchestrator_settings(payload: OrchestratorSettingIn, session: Sessio
     else:
         setting.value = payload.model_dump()
     
+    session.commit()
+    return setting.value
+
+
+@router.get("/lifecycle-criteria")
+def get_lifecycle_criteria(session: Session = Depends(get_session)) -> dict:
+    from app.models import SystemSetting
+    from app.services.product_lifecycle_service import ProductLifecycleService
+
+    setting = session.query(SystemSetting).filter_by(key="lifecycle_criteria").one_or_none()
+    if not setting or not isinstance(setting.value, dict):
+        return ProductLifecycleService.default_criteria()
+    return setting.value
+
+
+@router.post("/lifecycle-criteria")
+def update_lifecycle_criteria(payload: LifecycleCriteriaUpdateIn, session: Session = Depends(get_session)) -> dict:
+    from app.models import SystemSetting
+    from app.services.product_lifecycle_service import ProductLifecycleService
+
+    default_criteria = ProductLifecycleService.default_criteria()
+    setting = session.query(SystemSetting).filter_by(key="lifecycle_criteria").one_or_none()
+    current = setting.value if setting and isinstance(setting.value, dict) else default_criteria
+
+    updated = {
+        "step1_to_step2": {
+            **default_criteria["step1_to_step2"],
+            **(current.get("step1_to_step2") or {}),
+            **(payload.step1_to_step2 or {}),
+        },
+        "step2_to_step3": {
+            **default_criteria["step2_to_step3"],
+            **(current.get("step2_to_step3") or {}),
+            **(payload.step2_to_step3 or {}),
+        },
+        "category_adjusted": {
+            **default_criteria["category_adjusted"],
+            **(current.get("category_adjusted") or {}),
+            **(payload.category_adjusted or {}),
+        },
+    }
+
+    if not setting:
+        setting = SystemSetting(
+            key="lifecycle_criteria",
+            value=updated,
+            description="Product lifecycle transition criteria"
+        )
+        session.add(setting)
+    else:
+        setting.value = updated
+
+    session.commit()
+    return updated
+
+
+@router.get("/lifecycle-ui")
+def get_lifecycle_ui_settings(session: Session = Depends(get_session)) -> dict:
+    from app.models import SystemSetting
+    setting = session.query(SystemSetting).filter_by(key="lifecycle_ui").one_or_none()
+    return setting.value if setting and isinstance(setting.value, dict) else {}
+
+
+@router.post("/lifecycle-ui")
+def update_lifecycle_ui_settings(payload: LifecycleUiSettingsIn, session: Session = Depends(get_session)) -> dict:
+    from app.models import SystemSetting
+    setting = session.query(SystemSetting).filter_by(key="lifecycle_ui").one_or_none()
+    value = {
+        "categorySort": payload.categorySort or {},
+        "autoSortEnabled": bool(payload.autoSortEnabled) if payload.autoSortEnabled is not None else False,
+        "categoryFilter": payload.categoryFilter or ""
+    }
+    if not setting:
+        setting = SystemSetting(
+            key="lifecycle_ui",
+            value=value,
+            description="Lifecycle UI preferences"
+        )
+        session.add(setting)
+    else:
+        setting.value = value
     session.commit()
     return setting.value

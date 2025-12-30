@@ -25,6 +25,20 @@ class Settings(BaseSettings):
     pricing_default_margin_rate: float = 0.0
     pricing_market_fee_rate: float = 0.13 # 마켓 수수료율 (쿠팡 기본 13%)
     product_processing_name_only: bool = True
+    
+    # Coupang Testing
+    coupang_bulk_try: str = "0"
+    coupang_research_ignore_skip_log: str = "0"
+    coupang_research_ignore_doc_pending: str = "0"
+    coupang_fallback_category_codes: str = "77800,77797,77795"
+    coupang_daily_limit: int = 50
+    coupang_fallback_ratio_threshold: float = 0.3
+    coupang_stability_mode: bool = False
+    coupang_fallback_cooldown_threshold: int = 50
+    coupang_fallback_cooldown_days: int = 7
+    coupang_sourcing_policy_mode: str = "shadow" # shadow, enforce_lite, enforce
+    coupang_stability_declination_threshold: float = 0.3 # 30%p 하락 시 가드레일 작동
+    coupang_block_surge_threshold: float = 2.0 # BLOCK 비율 200% 증가 시 알림
 
     product_name_forbidden_keywords: list[str] = [
         "정품",

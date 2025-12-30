@@ -25,8 +25,8 @@ export default function BenchmarkTable({ items, selectedId, onSelect, isLoading 
 
     return (
         <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left">
-                <thead className="text-xs text-muted-foreground uppercase bg-muted/50 border-y">
+            <table className="w-full text-base text-left">
+                <thead className="text-sm text-muted-foreground uppercase bg-muted/50 border-y">
                     <tr>
                         <th className="px-4 py-3 font-medium">상품정보</th>
                         <th className="px-4 py-3 font-medium text-right">가격</th>
@@ -55,12 +55,12 @@ export default function BenchmarkTable({ items, selectedId, onSelect, isLoading 
                                                 className="object-cover"
                                             />
                                         ) : (
-                                            <div className="h-full w-full flex items-center justify-center text-[8px] text-muted-foreground">No Img</div>
+                                            <div className="h-full w-full flex items-center justify-center text-[10px] text-muted-foreground">No Img</div>
                                         )}
                                     </div>
                                     <div className="min-w-0">
                                         <p className="font-medium line-clamp-1" title={item.name}>{item.name}</p>
-                                        <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                                        <p className="text-sm text-muted-foreground flex items-center gap-1 mt-0.5">
                                             <ExternalLink className="h-3 w-3" />
                                             {item.productId}
                                         </p>
@@ -71,7 +71,7 @@ export default function BenchmarkTable({ items, selectedId, onSelect, isLoading 
                                 {item.price.toLocaleString()}원
                             </td>
                             <td className="px-4 py-3 text-center">
-                                <Badge variant="outline" className="text-[10px]">{item.marketCode}</Badge>
+                                <Badge variant="outline" className="text-xs">{item.marketCode}</Badge>
                             </td>
                             <td className="px-4 py-3 text-center">
                                 <div className="flex flex-col items-center">
@@ -79,7 +79,7 @@ export default function BenchmarkTable({ items, selectedId, onSelect, isLoading 
                                         <Star className="h-3 w-3 fill-current" />
                                         {item.rating?.toFixed(1) || '0.0'}
                                     </div>
-                                    <div className="flex items-center gap-1 text-muted-foreground text-[10px]">
+                                    <div className="flex items-center gap-1 text-muted-foreground text-xs">
                                         <MessageSquare className="h-2.5 w-2.5" />
                                         {item.reviewCount || 0}
                                     </div>
@@ -94,7 +94,7 @@ export default function BenchmarkTable({ items, selectedId, onSelect, isLoading 
                                     {item.qualityScore?.toFixed(1) || '0.0'}
                                 </div>
                             </td>
-                            <td className="px-4 py-3 text-center text-xs text-muted-foreground">
+                            <td className="px-4 py-3 text-center text-sm text-muted-foreground">
                                 {new Date(item.createdAt || '').toLocaleDateString()}
                             </td>
                         </tr>

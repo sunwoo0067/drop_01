@@ -12,7 +12,7 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 import uuid
 
-from app.models import Product, ProductLifecycle, MarketListing, OrderItem, Order
+from app.models import Product, ProductLifecycle, MarketListing, OrderItem, Order, SystemSetting
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ class ProductLifecycleService:
     """
 
     # STEP 1 → 2 전환 기준 (탐색 → 검증)
-    STEP_1_TO_2_CRITERIA = {
+    DEFAULT_STEP_1_TO_2_CRITERIA = {
         "min_sales": 1,           # 최소 판매 횟수
         "min_ctr": 0.02,          # 최소 CTR (2%)
         "min_views": 100,         # 최소 노출수
@@ -35,7 +35,7 @@ class ProductLifecycleService:
     }
 
     # STEP 2 → 3 전환 기준 (검증 → 스케일)
-    STEP_2_TO_3_CRITERIA = {
+    DEFAULT_STEP_2_TO_3_CRITERIA = {
         "min_sales": 5,                    # 최소 판매 횟수
         "min_repeat_purchase": 1,          # 최소 재구매 횟수
         "min_customer_retention": 0.1,     # 최소 고객 유지율 (10%)
@@ -44,7 +44,7 @@ class ProductLifecycleService:
     }
 
     # 카테고리별 전환 기준 조정 (향후 확장 가능)
-    CATEGORY_ADJUSTED_CRITERIA = {
+    DEFAULT_CATEGORY_ADJUSTED_CRITERIA = {
         "패션의류": {"min_sales": 3},  # 빠른 회전
         "가전제품": {"min_sales": 7},  # 느린 회전
         "기본": {},
@@ -52,6 +52,15 @@ class ProductLifecycleService:
 
     def __init__(self, db: Session):
         self.db = db
+        self._criteria_config = self._load_lifecycle_criteria()
+
+    @classmethod
+    def default_criteria(cls) -> Dict[str, any]:
+        return {
+            "step1_to_step2": dict(cls.DEFAULT_STEP_1_TO_2_CRITERIA),
+            "step2_to_step3": dict(cls.DEFAULT_STEP_2_TO_3_CRITERIA),
+            "category_adjusted": dict(cls.DEFAULT_CATEGORY_ADJUSTED_CRITERIA),
+        }
 
     def check_transition_eligibility(self, product_id: uuid.UUID) -> Dict[str, any]:
         """
@@ -62,6 +71,8 @@ class ProductLifecycleService:
                 "eligible": bool,
                 "current_stage": str,
                 "next_stage": Optional[str],
+                "criteria": Dict[str, any],
+                "category_label": str,
                 "criteria_met": Dict[str, any],
                 "missing_criteria": List[str],
                 "kpi_snapshot": Dict[str, any]
@@ -72,6 +83,7 @@ class ProductLifecycleService:
             raise ValueError(f"Product not found: {product_id}")
 
         current_stage = product.lifecycle_stage
+        category_label = self._resolve_category_label(product)
         
         # KPI 스냅샷 생성
         kpi_snapshot = self._get_kpi_snapshot(product)
@@ -80,6 +92,8 @@ class ProductLifecycleService:
             "eligible": False,
             "current_stage": current_stage,
             "next_stage": None,
+            "criteria": {},
+            "category_label": category_label,
             "criteria_met": {},
             "missing_criteria": [],
             "kpi_snapshot": kpi_snapshot
@@ -96,7 +110,10 @@ class ProductLifecycleService:
 
     def _check_step1_to_step2(self, product: Product) -> Dict[str, any]:
         """STEP 1 → 2 전환 조건 확인"""
-        criteria = self.STEP_1_TO_2_CRITERIA
+        criteria = self._get_adjusted_criteria(
+            self._criteria_config["step1_to_step2"],
+            product
+        )
         criteria_met = {}
         missing_criteria = []
 
@@ -133,13 +150,17 @@ class ProductLifecycleService:
         return {
             "eligible": eligible,
             "next_stage": "STEP_2" if eligible else None,
+            "criteria": criteria,
             "criteria_met": criteria_met,
             "missing_criteria": missing_criteria
         }
 
     def _check_step2_to_step3(self, product: Product) -> Dict[str, any]:
         """STEP 2 → 3 전환 조건 확인"""
-        criteria = self.STEP_2_TO_3_CRITERIA
+        criteria = self._get_adjusted_criteria(
+            self._criteria_config["step2_to_step3"],
+            product
+        )
         criteria_met = {}
         missing_criteria = []
 
@@ -183,6 +204,7 @@ class ProductLifecycleService:
         return {
             "eligible": eligible,
             "next_stage": "STEP_3" if eligible else None,
+            "criteria": criteria,
             "criteria_met": criteria_met,
             "missing_criteria": missing_criteria
         }
@@ -418,6 +440,45 @@ class ProductLifecycleService:
             "snapshot_at": datetime.now().isoformat()
         }
 
+    def _resolve_category_label(self, product: Product) -> str:
+        """카테고리 라벨을 후보 속성에서 추출 (없으면 '기본')."""
+        category = (
+            getattr(product, "processed_category", None)
+            or getattr(product, "category_path", None)
+            or getattr(product, "category_name", None)
+        )
+        if not category:
+            return "기본"
+        if isinstance(category, str):
+            return category.split(">")[0].strip() or "기본"
+        return "기본"
+
+    def _get_adjusted_criteria(self, base: Dict[str, any], product: Product) -> Dict[str, any]:
+        """카테고리별 보정 기준을 적용한 전환 기준 반환."""
+        criteria = dict(base)
+        category_label = self._resolve_category_label(product)
+        adjustment = self._criteria_config["category_adjusted"].get(category_label, {})
+        criteria.update(adjustment)
+        return criteria
+
+    def _load_lifecycle_criteria(self) -> Dict[str, any]:
+        """DB 저장 설정을 우선 적용하고 기본값으로 보정."""
+        defaults = self.default_criteria()
+        setting = self.db.query(SystemSetting).filter_by(key="lifecycle_criteria").one_or_none()
+        if not setting or not isinstance(setting.value, dict):
+            return defaults
+
+        value = setting.value or {}
+        step1 = value.get("step1_to_step2") or {}
+        step2 = value.get("step2_to_step3") or {}
+        adjusted = value.get("category_adjusted") or {}
+
+        return {
+            "step1_to_step2": {**defaults["step1_to_step2"], **step1},
+            "step2_to_step3": {**defaults["step2_to_step3"], **step2},
+            "category_adjusted": {**defaults["category_adjusted"], **adjusted},
+        }
+
     def _get_days_listed(self, product: Product) -> int:
         """상품 등록 일수 계산 (단순화)"""
         # 현재 Product 모델의 기존 필드만 사용
@@ -524,5 +585,3 @@ class ProductLifecycleService:
                 })
 
         return candidates
-
-

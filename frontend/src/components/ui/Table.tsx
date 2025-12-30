@@ -58,25 +58,25 @@ const Table = forwardRef<HTMLDivElement, TableProps>(
 
         const getSortIcon = (key: string) => {
             if (sortKey !== key) return null;
-            if (sortDirection === "asc") return <ChevronUp className="h-3 w-3" />;
-            if (sortDirection === "desc") return <ChevronDown className="h-3 w-3" />;
+            if (sortDirection === "asc") return <ChevronUp className="h-3.5 w-3.5" />;
+            if (sortDirection === "desc") return <ChevronDown className="h-3.5 w-3.5" />;
             return null;
         };
 
-        const rowHeight = compact ? "h-8" : "h-10";
-        const cellPadding = compact ? "px-2 py-1.5" : "px-3 py-2";
-        const fontSize = compact ? "text-xs" : "text-sm";
+        const rowHeight = compact ? "h-9" : "h-11";
+        const cellPadding = compact ? "px-3 py-2" : "px-4 py-2.5";
+        const fontSize = compact ? "text-sm" : "text-base";
 
         return (
             <div ref={ref} className={cn("w-full overflow-auto table-scroll max-h-[600px]", className)} {...props}>
-                <table className="w-full border-collapse caption-bottom text-xs relative">
+                <table className="w-full border-collapse caption-bottom relative">
                     <thead className="bg-muted/90 backdrop-blur-sm border-b border-border sticky top-0 z-10 shadow-sm">
                         <tr>
                             {columns.map((column) => (
                                 <th
                                     key={column.key}
                                     className={cn(
-                                        "h-8 px-2 py-1.5 text-left font-semibold text-foreground border-b border-border whitespace-nowrap",
+                                        "h-9 px-3 py-2 text-left font-semibold text-foreground border-b border-border whitespace-nowrap",
                                         column.align === "center" && "text-center",
                                         column.align === "right" && "text-right",
                                         column.sortable && "cursor-pointer hover:bg-muted/80 select-none",
@@ -86,7 +86,7 @@ const Table = forwardRef<HTMLDivElement, TableProps>(
                                     style={{ width: column.width }}
                                 >
                                     <div className="flex items-center gap-1">
-                                        <span className="text-[11px] uppercase tracking-wider">{column.title}</span>
+                                        <span className="text-[12px] uppercase tracking-wider">{column.title}</span>
                                         {getSortIcon(column.key)}
                                     </div>
                                 </th>
@@ -99,7 +99,7 @@ const Table = forwardRef<HTMLDivElement, TableProps>(
                     )}>
                         {loading ? (
                             <tr>
-                                <td colSpan={columns.length} className={cn("text-center py-8 text-muted-foreground", rowHeight)}>
+                                <td colSpan={columns.length} className={cn("text-center py-8 text-muted-foreground", rowHeight, fontSize)}>
                                     <div className="flex items-center justify-center gap-2">
                                         <div className="h-4 w-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
                                         <span>로딩 중...</span>
@@ -108,7 +108,7 @@ const Table = forwardRef<HTMLDivElement, TableProps>(
                             </tr>
                         ) : data.length === 0 ? (
                             <tr>
-                                <td colSpan={columns.length} className={cn("text-center py-12 text-muted-foreground", rowHeight)}>
+                                <td colSpan={columns.length} className={cn("text-center py-12 text-muted-foreground", rowHeight, fontSize)}>
                                     {emptyMessage}
                                 </td>
                             </tr>

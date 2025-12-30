@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 import re
 from datetime import datetime, timezone
 
+from app.settings import settings
 from app.db import get_session
 from app.models import Product, MarketAccount, MarketOrderRaw, MarketListing, MarketProductRaw, SupplierRawFetchLog
 from app.services.order_sync_retry import get_coupang_client_from_account, retry_coupang_failures
@@ -329,7 +330,7 @@ async def register_products_bulk_endpoint(
             )
 
     if research_mode:
-        if os.getenv("COUPANG_BULK_TRY", "0") != "1":
+        if settings.coupang_bulk_try != "1":
             raise HTTPException(status_code=403, detail="Research mode disabled (COUPANG_BULK_TRY!=1)")
         if not wait:
             raise HTTPException(status_code=400, detail="Research mode requires wait=true")

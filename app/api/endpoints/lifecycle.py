@@ -32,6 +32,8 @@ class TransitionEligibilityResponse(BaseModel):
     eligible: bool
     current_stage: str
     next_stage: Optional[str]
+    criteria: dict
+    category_label: str
     criteria_met: dict
     missing_criteria: List[str]
     kpi_snapshot: dict
@@ -605,4 +607,3 @@ async def compare_processing_methods(
     except Exception as e:
         logger.error(f"가공 방법 비교 실패: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"비교 실패: {str(e)}")
-

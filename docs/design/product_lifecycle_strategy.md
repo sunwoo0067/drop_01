@@ -346,6 +346,25 @@ STEP_2_TO_3_CRITERIA = {
 }
 ```
 
+### 4.3 카테고리별 기준 보정 템플릿
+
+카테고리 특성에 따라 최소 판매 기준을 가감합니다. 기본값은 유지하되 필요한 값만 덮어씁니다.
+
+```python
+CATEGORY_ADJUSTED_CRITERIA = {
+    "패션의류": {"min_sales": 3},
+    "가전제품": {"min_sales": 7},
+    "기본": {},
+}
+```
+
+## 4.4 전환 기준 템플릿 (운영 기준표)
+
+| 전환 구간 | 필수 KPI | 보조 KPI | 비고 |
+|----------|---------|----------|------|
+| STEP 1 → 2 | 판매 ≥ 1, CTR ≥ 2%, 노출 ≥ 100 | 등록일 ≥ 7일 | CTR은 클릭/노출 기반 |
+| STEP 2 → 3 | 판매 ≥ 5, 재구매 ≥ 1, 고객 유지율 ≥ 10%, 매출 ≥ 10만원 | STEP 2 체류 ≥ 14일 | 카테고리별 보정 허용 |
+
 ## 5. Alembic 마이그레이션
 
 ```bash
@@ -459,3 +478,32 @@ graph TD
 4. 자동 단계 전환 스케줄러 구현
 5. KPI 수집 및 업데이트 API 구현
 6. 대시보드 UI 구현
+
+## 11. 운영 커스터마이징 (DB 저장)
+
+전환 기준은 `system_settings`의 `lifecycle_criteria` 키로 저장하고 런타임에 적용합니다.
+
+예시 구조:
+
+```json
+{
+  "step1_to_step2": {
+    "min_sales": 1,
+    "min_ctr": 0.02,
+    "min_views": 100,
+    "min_days_listed": 7
+  },
+  "step2_to_step3": {
+    "min_sales": 5,
+    "min_repeat_purchase": 1,
+    "min_customer_retention": 0.1,
+    "min_revenue": 100000,
+    "min_days_in_step2": 14
+  },
+  "category_adjusted": {
+    "패션의류": { "min_sales": 3 },
+    "가전제품": { "min_sales": 7 },
+    "기본": {}
+  }
+}
+```

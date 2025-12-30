@@ -107,46 +107,46 @@ export default function ProcessingPage() {
     );
 
     return (
-        <div className="space-y-8 animate-in fade-in duration-500">
+        <div className="space-y-4 animate-in fade-in duration-500">
             {/* Header Section */}
-            <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b">
-                <div className="space-y-2">
-                    <div className="flex items-center gap-2 text-primary font-medium">
-                        <Wand2 className="h-5 w-5" />
-                        <span>Work Management</span>
-                    </div>
-                    <h1 className="text-4xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-                        상품 가공 센터
-                    </h1>
-                    <p className="text-muted-foreground max-w-2xl">
-                        AI를 사용하여 상품명을 최적화하고 이미지를 가공합니다. 고유한 콘텐츠를 생성하여 마켓 노출 확률을 높입니다.
-                    </p>
-                </div>
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 px-3 py-2 border border-border bg-card rounded-sm">
                 <div className="flex items-center gap-3">
-                    <Button variant="outline" className="rounded-xl h-11 px-6 border-2 hover:bg-accent" onClick={fetchProducts}>
-                        <RotateCw className="mr-2 h-4 w-4" />
+                    <div className="h-6 w-6 rounded-sm bg-primary/10 flex items-center justify-center">
+                        <Wand2 className="h-3 w-3 text-primary" />
+                    </div>
+                    <div>
+                        <h1 className="text-sm font-semibold text-foreground">상품 가공 센터</h1>
+                        <p className="text-[10px] text-muted-foreground">
+                            AI 기반 가공 진행 상황 및 작업 제어
+                        </p>
+                    </div>
+                </div>
+                <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" onClick={fetchProducts}>
+                        <RotateCw className="mr-1.5 h-3 w-3" />
                         새로고침
                     </Button>
-                    <Button className="rounded-xl h-11 px-6 shadow-lg shadow-primary/20 hover:scale-105 transition-transform" onClick={handleProcessPending}>
-                        <Sparkles className="mr-2 h-4 w-4" />
+                    <Button size="sm" onClick={handleProcessPending}>
+                        <Sparkles className="mr-1.5 h-3 w-3" />
                         일괄 가공 시작
                     </Button>
                 </div>
             </div>
 
             {/* Search and Filters */}
-            <div className="flex flex-col md:flex-row gap-4 items-center">
+            <div className="flex flex-col md:flex-row gap-3 items-center">
                 <div className="relative flex-1 group w-full">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground group-focus-within:text-primary transition-colors" />
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
                     <Input
                         placeholder="가공 중인 상품 또는 최적화된 이름搜索..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="pl-12 h-12 rounded-2xl border-none bg-accent/50 focus-visible:ring-2 focus-visible:ring-primary/20 transition-all text-base w-full"
+                        className="pl-9"
+                        size="sm"
                     />
                 </div>
-                <Button variant="outline" className="h-12 rounded-2xl px-6 border-2 shrink-0 bg-background/50 backdrop-blur-sm">
-                    <Filter className="mr-2 h-4 w-4" />
+                <Button variant="outline" size="sm" className="shrink-0">
+                    <Filter className="mr-1.5 h-3 w-3" />
                     상태 필터
                 </Button>
             </div>

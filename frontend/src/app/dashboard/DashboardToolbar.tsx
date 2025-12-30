@@ -19,28 +19,22 @@ export function DashboardToolbar({
     notificationCount
 }: DashboardToolbarProps) {
     return (
-        <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-card">
-            <div className="flex flex-col">
-                <h1 className="text-sm font-semibold text-foreground leading-tight">
-                    대시보드
-                </h1>
+        <div className="flex items-center justify-between px-3 py-2 border border-border bg-card rounded-sm">
+            <div className="flex items-center gap-3">
+                <h1 className="text-sm font-semibold text-foreground">대시보드</h1>
                 <span className="text-[10px] text-muted-foreground">
                     자동화 시스템의 실시간 가동 현황 및 핵심 지표
                 </span>
             </div>
 
             <div className="flex items-center gap-2">
-                <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={onToggleSettings}
-                >
+                <Button variant="outline" size="xs" onClick={onToggleSettings}>
                     <Settings className="h-3 w-3 mr-1.5" />
                     설정
                 </Button>
                 <Button
                     variant="outline"
-                    size="sm"
+                    size="xs"
                     onClick={onToggleNotifications}
                     className="relative"
                 >
@@ -53,7 +47,7 @@ export function DashboardToolbar({
                     )}
                 </Button>
                 <Button
-                    size="sm"
+                    size="xs"
                     onClick={onRunCycle}
                     disabled={isLoading || isRunning}
                 >

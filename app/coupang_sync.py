@@ -100,6 +100,107 @@ class CoupangNeverEligibleError(SkipCoupangRegistrationError):
     """쿠팡 등록을 영구적으로 제외하는 경우."""
 
 
+def check_coupang_fallback_ratio(session: Session, account_id: uuid.UUID) -> bool:
+    """
+    오늘 쿠팡에 등록된 상품 중 Fallback 카테고리를 사용한 비율이 임계치를 넘었는지 확인합니다.
+    """
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    # 총 등록 수
+    total_count = session.execute(
+        select(func.count(MarketListing.id))
+        .where(MarketListing.market_account_id == account_id)
+        .where(MarketListing.linked_at >= today_start)
+    ).scalar() or 0
+    
+    if total_count < 20: # 최소 20건 이상일 때부터 비율 체크 (운영 초기 안정성 확보)
+        return False
+        
+    # Fallback 사용 수
+    fallback_count = session.execute(
+        select(func.count(MarketListing.id))
+        .join(Product, MarketListing.product_id == Product.id)
+        .where(MarketListing.market_account_id == account_id)
+        .where(MarketListing.linked_at >= today_start)
+        .where(Product.coupang_fallback_used == True)
+    ).scalar() or 0
+    
+    ratio = fallback_count / total_count
+    logger.info(f"Coupang Fallback Ratio: {ratio:.2f} (Total: {total_count}, Fallback: {fallback_count})")
+    return ratio >= settings.coupang_fallback_ratio_threshold
+
+
+def check_coupang_daily_limit(session: Session, account_id: uuid.UUID) -> bool:
+    """
+    오늘 쿠팡에 등록된 상품 총합이 일일 제한을 넘었는지 확인합니다.
+    """
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    total_count = session.execute(
+        select(func.count(MarketListing.id))
+        .where(MarketListing.market_account_id == account_id)
+        .where(MarketListing.linked_at >= today_start)
+    ).scalar() or 0
+    
+    return total_count >= settings.coupang_daily_limit
+
+
+def check_fallback_cooldown(session: Session, account_id: uuid.UUID, category_code: str) -> bool:
+    """
+    최근 N일간 특정 우회 카테고리가 임계치 이상 사용되었는지 확인합니다.
+    """
+    days = settings.coupang_fallback_cooldown_days
+    threshold = settings.coupang_fallback_cooldown_threshold
+    
+    start_date = datetime.now(timezone.utc) - timedelta(days=days)
+    
+    count = session.execute(
+        select(func.count(MarketListing.id))
+        .join(Product, MarketListing.product_id == Product.id)
+        .where(MarketListing.market_account_id == account_id)
+        .where(MarketListing.linked_at >= start_date)
+        .where(MarketListing.category_code == category_code)
+        .where(Product.coupang_fallback_used == True)
+    ).scalar() or 0
+    
+    if count >= threshold:
+        logger.warning(f"Fallback 카테고리 {category_code} 사용량 초과 ({count} >= {threshold}). 쿨다운 진입.")
+        return True
+    return False
+
+
+def _lookup_proven_payload_template(session: Session, category_code: int) -> tuple[dict, str] | tuple[None, None]:
+    """
+    동일 카테고리에서 성공한 적이 있는 페이로드 템플릿을 조회합니다.
+    VERIFIED_EXACT 등급을 우선하며, 없으면 FALLBACK_SAFE를 반환합니다.
+    """
+    # 1. VERIFIED_EXACT 우선 조회
+    stmt_exact = (
+        select(MarketListing.proven_payload, MarketListing.category_grade)
+        .where(MarketListing.category_code == str(category_code))
+        .where(MarketListing.category_grade == "VERIFIED_EXACT")
+        .where(MarketListing.proven_payload != None)
+        .order_by(MarketListing.linked_at.desc())
+        .limit(1)
+    )
+    result = session.execute(stmt_exact).first()
+    if result:
+        return result[0], result[1] or "VERIFIED_EXACT"
+    
+    # 2. 없으면 FALLBACK_SAFE 조회
+    stmt_fallback = (
+        select(MarketListing.proven_payload, MarketListing.category_grade)
+        .where(MarketListing.category_code == str(category_code))
+        .where(MarketListing.proven_payload != None)
+        .order_by(MarketListing.linked_at.desc())
+        .limit(1)
+    )
+    result = session.execute(stmt_fallback).first()
+    if result:
+        return result[0], result[1] or "FALLBACK_SAFE"
+        
+    return None, None
+
+
 def _parse_env_list(env_key: str) -> list[str]:
     raw = os.getenv(env_key, "")
     if not raw:
@@ -137,6 +238,18 @@ def _required_doc_applies(required_flag: str, product: Product) -> bool:
         return bool(getattr(product, "coupang_parallel_imported", False))
     if flag.startswith("MANDATORY_OVERSEAS_PURCHASED"):
         return bool(getattr(product, "coupang_overseas_purchased", False))
+    if "BATTERY" in flag:
+        # 배터리 관련 서류는 상품명에 배터리 키워드가 있을 때만 필수인 것으로 간주 (사전 필터링에서 이미 걸러졌어야 함)
+        name = (product.name or "").lower()
+        if any(kw in name for kw in ["battery", "배터리", "리튬", "lithium"]):
+            return True
+        return False
+    if "INGREDIENTS" in flag:
+        # 성분/원료 관련 서류는 관련 키워드가 있을 때만 필수
+        name = (product.name or "").lower()
+        if any(kw in name for kw in ["식품", "화장품", "원료", "성분", "ingredient"]):
+            return True
+        return False
     if flag.startswith("MANDATORY"):
         return True
     return False
@@ -1728,11 +1841,16 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
             msg = data.get("message")
         msg_s = str(msg) if msg is not None else ""
         msg_s = msg_s.replace("\n", " ")
+        from app.services.analytics.feedback_loop import CoupangFeedbackLoopService
+        CoupangFeedbackLoopService.report_registration_result(session, product.id, "FAILURE", f"HTTP={code}, code={data.get('code')}, message={msg_s[:300]}")
         return False, f"상품 생성 실패(HTTP={code}, code={data.get('code')}, message={msg_s[:300]})"
 
     # 3. 성공 처리
     # data['data']에 sellerProductId (등록상품ID)가 포함됨
     seller_product_id = str(data.get("data"))
+    
+    from app.services.analytics.feedback_loop import CoupangFeedbackLoopService
+    CoupangFeedbackLoopService.report_registration_result(session, product.id, "SUCCESS")
 
     # 등록 직후 쿠팡이 내려주는 vendor_inventory 기반 이미지 경로로 상세(contents)를 한 번 더 보강합니다.
     # (내부 저장 포맷/렌더링 이슈 회피 목적)
@@ -1827,11 +1945,21 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
         market_account_id=account.id,
         market_item_id=seller_product_id,
         status="ACTIVE", 
-        coupang_status="IN_REVIEW" # 등록 직후 보통 심사 중
+        coupang_status="IN_REVIEW", # 등록 직후 보통 심사 중
+        proven_payload=payload,
+        category_code=str(meta_result.get("predicted_category_code")),
+        category_grade="VERIFIED_EXACT" if product.coupang_category_source == "PREDICTED" else "FALLBACK_SAFE"
     )
     stmt = stmt.on_conflict_do_update(
         index_elements=["market_account_id", "market_item_id"],
-        set_={"status": "ACTIVE", "linked_at": func.now(), "coupang_status": "IN_REVIEW"}
+        set_={
+            "status": "ACTIVE", 
+            "linked_at": func.now(), 
+            "coupang_status": "IN_REVIEW",
+            "proven_payload": payload,
+            "category_code": str(meta_result.get("predicted_category_code")),
+            "category_grade": "VERIFIED_EXACT" if product.coupang_category_source == "PREDICTED" else "FALLBACK_SAFE"
+        }
     )
     session.execute(stmt)
     
@@ -2839,6 +2967,20 @@ def _map_product_to_coupang_payload(
     # 가공된 이름이 있으면 사용, 없으면 원본 이름 사용
     name_to_use = product.processed_name if product.processed_name else product.name
     
+    # === [Option B] 템플릿 참조 로직 ===
+    template, grade = _lookup_proven_payload_template(session, predicted_category_code)
+    template_attrs = {}
+    template_notices = {}
+    if template:
+        # sellerProductId 등 상품별 고유 필드를 제외한 페이로드 정보 추출
+        t_items = template.get("items", [])
+        if t_items and isinstance(t_items[0], dict):
+            for a in t_items[0].get("attributes", []):
+                template_attrs[a.get("attributeTypeName")] = a.get("attributeValueName")
+            for n in t_items[0].get("notices", []):
+                template_notices[n.get("noticeCategoryDetailName")] = n.get("content")
+        logger.info("성공 전력이 있는 페이로드 템플릿(%d개 속성)을 참조합니다.", len(template_attrs))
+    
     processed_images = product.processed_image_urls if isinstance(product.processed_image_urls, list) else []
     payload_images = image_urls if isinstance(image_urls, list) and image_urls else processed_images
     
@@ -2920,7 +3062,7 @@ def _map_product_to_coupang_payload(
                         {
                             "noticeCategoryName": selected.get("noticeCategoryName"),
                             "noticeCategoryDetailName": dn,
-                            "content": "상세페이지 참조",
+                            "content": template_notices.get(dn, "상세페이지 참조"),
                         }
                     )
     except Exception:
@@ -2955,7 +3097,10 @@ def _map_product_to_coupang_payload(
                 usable_units = attr.get("usableUnits", [])
                 
                 # 기본값 설정: 수량/무게/부피는 1개/1g/1ml, 그 외는 "-"
-                attr_value = "-"
+                # 템플릿에 값이 있으면 우선 사용, 없으면 기본값 계산
+                attr_value = template_attrs.get(attr_type)
+                if not attr_value:
+                    attr_value = "상세페이지 참조" # 기본값
                 if data_type == "NUMBER":
                     if "수량" in attr_type or "qty" in attr_type.lower():
                         attr_value = "1개"
@@ -2971,6 +3116,17 @@ def _map_product_to_coupang_payload(
                             attr_value = f"1{basic_unit}"
                     else:
                         attr_value = "1"
+                elif data_type == "STRING":
+                    # 색상, 사이즈 등 특정 키워드에 대한 처리
+                    low_type = attr_type.lower()
+                    if "색상" in low_type or "color" in low_type:
+                        attr_value = "상세이미지 참조"
+                    elif "사이즈" in low_type or "size" in low_type:
+                        attr_value = "상세페이지 참조"
+                    elif "재질" in low_type or "material" in low_type:
+                        attr_value = "상세페이지 참조"
+                    elif "모델명" in low_type or "model" in low_type:
+                        attr_value = "상세페이지 참조"
                 
                 # 필수 옵션에 추가
                 item_attributes.append({
@@ -3364,59 +3520,120 @@ def _get_coupang_product_metadata(
                 return True
         return False
 
+    # 상위 N개 또는 리스트 형태의 응답 처리 가능 여부 확인 (Coupang API 응답 구조에 따라 다름)
+    # 현재는 단일 코드로 처리 중이므로, predicted_category_code가 구비서류를 요구할 경우 fallback으로 순차적으로 넘어가는 로직 강화
+    
     notice_meta = _fetch_category_meta(predicted_category_code)
+    
+    # 구비서류 요건 체크 및 안전성 검색
+    def _needs_heavy_docs(meta: dict[str, Any] | None) -> bool:
+        if not meta: return False
+        docs = meta.get("requiredDocumentNames")
+        if not isinstance(docs, list): docs = []
+        
+        heavy_doc_keywords = ["MSDS", "UN38.3", "전기용품", "의료기기", "건강기능식품", "전파법", "어린이", "안전확인", "부적합"]
+        for d in docs:
+            if not isinstance(d, dict): continue
+            if d.get("required") == "MANDATORY":
+                doc_name = d.get("documentName", "")
+                if any(kw in doc_name for kw in heavy_doc_keywords):
+                    return True
+        
+        # attributes(인증정보 등) 체크 추가
+        attrs = meta.get("attributes")
+        if isinstance(attrs, list):
+            for a in attrs:
+                if not isinstance(a, dict): continue
+                if a.get("required") == "MANDATORY":
+                    attr_name = a.get("attributeTypeName", "")
+                    if any(kw in attr_name for kw in ["인증", "KC", "어린이", "전기", "전파"]):
+                        return True
+        
+        # certifications 체크 추가 (MANDATORY 또는 RECOMMEND)
+        certs = meta.get("certifications")
+        if isinstance(certs, list):
+            for c in certs:
+                if not isinstance(c, dict): continue
+                if c.get("required") in ["MANDATORY", "RECOMMEND"]:
+                    return True
+        return False
+
     unsafe_predicted = False
     safety_reasons: list[str] = []
     if predicted_from_ai:
         safety_score, safety_reasons = _score_category_safety(notice_meta, product)
         unsafe_predicted = safety_score < 0
-        logger.info(
-            "쿠팡 예측 카테고리 안전 점수: product=%s category=%s score=%s reasons=%s",
-            product.id,
-            predicted_category_code,
-            safety_score,
-            ",".join(safety_reasons) if safety_reasons else "-",
-        )
-    if _has_mandatory_required_docs(notice_meta, product) or unsafe_predicted:
+        
+    # 카테고리 선정 및 운영 제한 체크
+    if check_coupang_daily_limit(session, account.id):
+        raise SkipCoupangRegistrationError(f"쿠팡 일일 등록 제한 초과 ({settings.coupang_daily_limit}건)")
+
+    # 0. Sourcing Policy Enforcement (Option C)
+    if product.sourcing_policy:
+        sp = product.sourcing_policy
+        if sp.get("action") == "skip_coupang" and settings.coupang_sourcing_policy_mode == "enforce":
+            logger.info("소싱 정책(BLOCK)에 따라 쿠팡 등록을 건너뜁니다. (Score: %s)", sp.get("score"))
+            raise SkipCoupangRegistrationError(f"소싱 정책에 따른 차단: {sp.get('grade')} (Score: {sp.get('score')})")
+
+    # 1. 먼저 예측된 카테고리에 대해 검증된 템플릿(VERIFIED_EXACT)이 있는지 확인
+    # 만약 검증된 템플릿이 있다면 위험 체크를 우회하여 시도합니다.
+    _, grade = _lookup_proven_payload_template(session, predicted_category_code)
+    
+    product.coupang_category_source = "PREDICTED"
+    product.coupang_fallback_used = False
+    
+    # 2. 검증된 템플릿이 없고 위험 요인이 발견되면 Fallback 시도
+    if grade != "VERIFIED_EXACT" and (_needs_heavy_docs(notice_meta) or unsafe_predicted):
+        # 안정 모드(Stability Mode)인 경우 Fallback 비허용
+        if settings.coupang_stability_mode:
+            logger.info("안정 모드(Stability Mode) 활성화로 인해 위험 카테고리 Fallback을 시도하지 않습니다.")
+            raise SkipCoupangRegistrationError(f"안정 모드로 인해 위험 카테고리 등록 제한됨: {predicted_category_code}")
+
+        # Fallback 비중 체크
+        if check_coupang_fallback_ratio(session, account.id):
+            logger.warning("쿠팡 Fallback 비율 임계치 초과로 우회 등록을 중단합니다. (ratio >= %.2f)", settings.coupang_fallback_ratio_threshold)
+            raise SkipCoupangRegistrationError(f"Fallback 등록 비율 제한 초과로 인해 중단됨: {predicted_category_code}")
+
         fallback_raw = (
-            os.getenv("COUPANG_FALLBACK_CATEGORY_CODES", "")
-            or os.getenv("COUPANG_FALLBACK_CATEGORY_CODE", "")
+            settings.coupang_fallback_category_codes
         )
         fallback_codes: list[int] = []
-        if fallback_raw:
-            for part in fallback_raw.split(","):
-                s = part.strip()
-                if not s:
-                    continue
-                try:
-                    fallback_codes.append(int(s))
-                except ValueError:
-                    continue
+        for part in fallback_raw.split(","):
+            s = part.strip()
+            if s:
+                try: fallback_codes.append(int(s))
+                except ValueError: continue
 
         for fallback_code in fallback_codes:
             if fallback_code == predicted_category_code:
                 continue
+            
+            # 쿨다운 체크: 특정 우회 카테고리 남용 방지
+            if check_fallback_cooldown(session, account.id, str(fallback_code)):
+                continue
+
             fallback_meta = _fetch_category_meta(fallback_code)
-            fallback_score, _ = _score_category_safety(fallback_meta, product)
-            if not _has_mandatory_required_docs(fallback_meta, product) and fallback_score >= 0:
+            if not _needs_heavy_docs(fallback_meta):
                 logger.info(
-                    "쿠팡 카테고리 구비서류 요구로 대체 카테고리 사용: %s -> %s",
+                    "쿠팡 카테고리 구비서류 요구(또는 위험)로 안전한 대체 카테고리 사용: %s -> %s",
                     predicted_category_code,
                     fallback_code,
                 )
                 predicted_category_code = fallback_code
                 notice_meta = fallback_meta
+                unsafe_predicted = False # 새로운 카테고리는 안전하다고 가정 (또는 추가 체크 가능)
+                product.coupang_category_source = "FALLBACK_SAFE"
+                product.coupang_fallback_used = True
                 break
         else:
-            logger.warning(
-                "쿠팡 카테고리 구비서류 필요: %s (fallbacks=%s)",
-                predicted_category_code,
-                fallback_codes,
-            )
-            if unsafe_predicted:
-                label = ", ".join(safety_reasons) if safety_reasons else "unsafe_prediction"
+            if _needs_heavy_docs(notice_meta) or unsafe_predicted:
+                logger.warning(
+                    "쿠팡 카테고리 구비서류 필요 또는 위험 판정: %s",
+                    predicted_category_code,
+                )
+                # 만약 autoFix가 켜져 있어도 서류가 없으면 등록 불가
                 raise SkipCoupangRegistrationError(
-                    f"쿠팡 예측 카테고리 안전 점수 미달: {predicted_category_code} ({label})"
+                    f"증빙 서류(MSDS 등)가 필요한 카테고리입니다: {predicted_category_code}"
                 )
 
     if isinstance(notice_meta, dict):

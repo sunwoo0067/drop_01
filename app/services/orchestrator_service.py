@@ -259,43 +259,46 @@ class OrchestratorService:
                 
                 async def _register_task(idx, p_id):
                     async with register_sem:
-                        # 각 테스크마다 독립된 DB 세션 사용
-                        with session_factory() as tmp_db:
-                            from app.services.market_service import MarketService
-                            m_service = MarketService(tmp_db)
-                            
-                            try:
-                                # Product 객체를 새로운 세션에서 다시 가져오기
-                                p = tmp_db.get(Product, p_id)
-                                if not p: return False
+                        def _sync_body():
+                            # 각 테스크마다 독립된 DB 세션 사용
+                            with session_factory() as tmp_db:
+                                from app.services.market_service import MarketService
+                                m_service = MarketService(tmp_db)
+                                
+                                try:
+                                    # Product 객체를 새로운 세션에서 다시 가져오기
+                                    p = tmp_db.get(Product, p_id)
+                                    if not p: return False
 
-                                target_market, reason = decide_target_market_for_product(tmp_db, p)
-                                target_accounts = accounts_by_market.get(target_market, [])
-                                if not target_accounts:
-                                    if target_market != "SMARTSTORE" and accounts_by_market.get("SMARTSTORE"):
-                                        logger.info(
-                                            "No %s accounts; fallback to SMARTSTORE (product=%s, reason=%s)",
-                                            target_market,
-                                            p.id,
-                                            reason,
-                                        )
-                                        target_market = "SMARTSTORE"
-                                        target_accounts = accounts_by_market.get("SMARTSTORE", [])
-                                    else:
-                                        logger.warning(
-                                            "No target accounts for %s (product=%s, reason=%s)",
-                                            target_market,
-                                            p.id,
-                                            reason,
-                                        )
-                                        return False
+                                    target_market, reason = decide_target_market_for_product(tmp_db, p)
+                                    target_accounts = accounts_by_market.get(target_market, [])
+                                    if not target_accounts:
+                                        if target_market != "SMARTSTORE" and accounts_by_market.get("SMARTSTORE"):
+                                            logger.info(
+                                                "No %s accounts; fallback to SMARTSTORE (product=%s, reason=%s)",
+                                                target_market,
+                                                p.id,
+                                                reason,
+                                            )
+                                            target_market = "SMARTSTORE"
+                                            target_accounts = accounts_by_market.get("SMARTSTORE", [])
+                                        else:
+                                            logger.warning(
+                                                "No target accounts for %s (product=%s, reason=%s)",
+                                                target_market,
+                                                p.id,
+                                                reason,
+                                            )
+                                            return False
 
-                                target_acc = target_accounts[idx % len(target_accounts)]
-                                res = m_service.register_product(target_market, target_acc.id, p.id)
-                                return res.get("status") == "success"
-                            except Exception as e:
-                                logger.error(f"Async listing failed for product {p_id}: {e}")
-                                return False
+                                    target_acc = target_accounts[idx % len(target_accounts)]
+                                    res = m_service.register_product(target_market, target_acc.id, p.id)
+                                    return res.get("status") == "success"
+                                except Exception as e:
+                                    logger.error(f"Async listing failed for product {p_id}: {e}")
+                                    return False
+
+                        return await asyncio.to_thread(_sync_body)
 
                 tasks = [_register_task(i, p.id) for i, p in enumerate(products)]
                 results = await asyncio.gather(*tasks)
@@ -461,14 +464,18 @@ class OrchestratorService:
                     
                     async def _task(idx, p_id):
                         async with register_sem:
-                            with session_factory() as tmp_db:
-                                from app.services.market_service import MarketService
-                                m_service = MarketService(tmp_db)
-                                target_acc = accounts[idx % len(accounts)]
-                                try:
-                                    res = m_service.register_product(target_acc.market_code, target_acc.id, p_id)
-                                    return res.get("status") == "success"
-                                except: return False
+                            def _sync_register():
+                                with session_factory() as tmp_db:
+                                    from app.services.market_service import MarketService
+                                    m_service = MarketService(tmp_db)
+                                    target_acc = accounts[idx % len(accounts)]
+                                    try:
+                                        return m_service.register_product(target_acc.market_code, target_acc.id, p_id)
+                                    except:
+                                        return {"status": "error"}
+
+                            res = await asyncio.to_thread(_sync_register)
+                            return res.get("status") == "success"
 
                     tasks = [_task(i, p.id) for i, p in enumerate(products)]
                     await asyncio.gather(*tasks)

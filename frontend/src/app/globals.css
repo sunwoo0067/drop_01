@@ -46,11 +46,11 @@
   --toolbar-border: #e2e8f0;
 
   /* Typography */
-  --font-size-xs: 11px;
-  --font-size-sm: 12px;
-  --font-size-base: 13px;
-  --font-size-md: 14px;
-  --font-size-lg: 16px;
+  --font-size-xs: 13px;
+  --font-size-sm: 14px;
+  --font-size-base: 16px;
+  --font-size-md: 17px;
+  --font-size-lg: 19px;
 
   --line-height-tight: 1.4;
   --line-height-normal: 1.6;

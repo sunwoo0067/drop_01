@@ -185,9 +185,8 @@ class ProcessingService:
             except Exception as e:
                 logger.error(f"ProcessingAgent 실행 실패(productId={product_id}): {e}")
                 if not self._name_only_processing() and (not product.processed_image_urls) and raw_images:
-                    # 비동기 이미지 처리 사용 (호출하는 곳이 async이므로 await 추가 필요)
-                    # 하지만 이 부분은 fallback이므로 동기 메서드 유지
-                    product.processed_image_urls = image_processing_service.process_and_upload_images(
+                    # 비동기 이미지 처리 사용
+                    product.processed_image_urls = await image_processing_service.process_and_upload_images_async(
                         raw_images, product_id=str(product_id)
                     )
 
@@ -298,9 +297,10 @@ class ProcessingService:
                     )
                     
                     if image_bytes:
-                        # 이미지 업로드
+                        # 이미지 업로드 (동기 I/O이므로 별도 스레드에서 실행)
                         from app.services.storage_service import storage_service
-                        new_image_url = storage_service.upload_image(
+                        new_image_url = await asyncio.to_thread(
+                            storage_service.upload_image,
                             image_bytes,
                             path_prefix=f"premium_assets/{product.id}"
                         )
