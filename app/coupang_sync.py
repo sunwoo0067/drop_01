@@ -3000,13 +3000,65 @@ def _get_coupang_product_metadata(
         logger.info(f"카테고리 예측 스킵/실패: {e}")
 
     # 공시 메타
-    notice_meta = None
-    try:
-        meta_http, meta_data = client.get_category_meta(str(predicted_category_code))
-        if meta_http == 200 and isinstance(meta_data, dict) and isinstance(meta_data.get("data"), dict):
-            notice_meta = meta_data["data"]
-    except Exception:
-        pass
+    def _fetch_category_meta(category_code: int) -> dict[str, Any] | None:
+        try:
+            meta_http, meta_data = client.get_category_meta(str(category_code))
+            if meta_http == 200 and isinstance(meta_data, dict) and isinstance(meta_data.get("data"), dict):
+                return meta_data["data"]
+        except Exception:
+            pass
+        return None
+
+    def _has_mandatory_required_docs(meta: dict[str, Any] | None) -> bool:
+        if not isinstance(meta, dict):
+            return False
+        docs = meta.get("requiredDocumentNames")
+        if not isinstance(docs, list):
+            return False
+        for doc in docs:
+            if not isinstance(doc, dict):
+                continue
+            required = doc.get("required") or ""
+            if "MANDATORY" in str(required):
+                return True
+        return False
+
+    notice_meta = _fetch_category_meta(predicted_category_code)
+    if _has_mandatory_required_docs(notice_meta):
+        fallback_raw = (
+            os.getenv("COUPANG_FALLBACK_CATEGORY_CODES", "")
+            or os.getenv("COUPANG_FALLBACK_CATEGORY_CODE", "")
+        )
+        fallback_codes: list[int] = []
+        if fallback_raw:
+            for part in fallback_raw.split(","):
+                s = part.strip()
+                if not s:
+                    continue
+                try:
+                    fallback_codes.append(int(s))
+                except ValueError:
+                    continue
+
+        for fallback_code in fallback_codes:
+            if fallback_code == predicted_category_code:
+                continue
+            fallback_meta = _fetch_category_meta(fallback_code)
+            if not _has_mandatory_required_docs(fallback_meta):
+                logger.info(
+                    "쿠팡 카테고리 구비서류 요구로 대체 카테고리 사용: %s -> %s",
+                    predicted_category_code,
+                    fallback_code,
+                )
+                predicted_category_code = fallback_code
+                notice_meta = fallback_meta
+                break
+        else:
+            logger.warning(
+                "쿠팡 카테고리 구비서류 필요: %s (fallbacks=%s)",
+                predicted_category_code,
+                fallback_codes,
+            )
 
     # 반품지 상세
     return_center_detail = None
