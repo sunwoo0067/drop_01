@@ -1576,6 +1576,10 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
     if not product:
         logger.error(f"상품을 찾을 수 없습니다: {product_id}")
         return False, "상품을 찾을 수 없습니다"
+    if getattr(product, "coupang_eligibility", "") == "NEVER":
+        reason = "SKIPPED: coupang_eligibility=NEVER"
+        _log_registration_skip(session, account, product.id, reason, None)
+        return False, reason
     if product.coupang_doc_pending and (product.coupang_doc_pending_reason or "").startswith("NEVER:"):
         reason = f"SKIPPED: {product.coupang_doc_pending_reason}"
         _log_registration_skip(session, account, product.id, reason, None)
@@ -1644,6 +1648,7 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
         logger.info(f"상품 등록 스킵: {e}")
         product.coupang_doc_pending = True
         product.coupang_doc_pending_reason = str(e)
+        product.coupang_eligibility = "NEVER"
         session.commit()
         _log_registration_skip(
             session,

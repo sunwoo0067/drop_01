@@ -391,6 +391,7 @@ class Product(DropshipBase):
     naver_fallback_disabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     coupang_doc_pending: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     coupang_doc_pending_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    coupang_eligibility: Mapped[str] = mapped_column(Text, nullable=False, default="UNKNOWN")
 
     # === 3단계 전략 관련 필드 ===
     # 라이프사이클 단계

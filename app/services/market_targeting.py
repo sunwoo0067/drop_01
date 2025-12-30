@@ -166,6 +166,11 @@ def decide_target_market_by_category(category_name: str | None) -> tuple[str, st
 
 
 def decide_target_market_for_product(session: Session, product: Product) -> tuple[str, str]:
+    eligibility = getattr(product, "coupang_eligibility", "UNKNOWN")
+    if eligibility == "NEVER":
+        return "SMARTSTORE", "coupang_never"
+    if os.getenv("COUPANG_REQUIRE_CANDIDATE", "1") == "1" and eligibility != "CANDIDATE":
+        return "SMARTSTORE", f"coupang_not_candidate:{eligibility}"
     category_name = resolve_supplier_category_name(session, product)
     return decide_target_market_by_category(category_name)
 
