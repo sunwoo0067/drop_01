@@ -381,9 +381,11 @@ async def register_products_bulk_endpoint(
                     blocked_ids.append(str(p.id))
                     continue
                 if research_mode and p.coupang_doc_pending:
-                    blocked += 1
-                    blocked_ids.append(str(p.id))
-                    continue
+                    ignore_doc_pending = os.getenv("COUPANG_RESEARCH_IGNORE_DOC_PENDING", "0") == "1"
+                    if not ignore_doc_pending:
+                        blocked += 1
+                        blocked_ids.append(str(p.id))
+                        continue
                 if research_mode:
                     existing_skip = session.scalars(
                         select(SupplierRawFetchLog.id)
@@ -391,7 +393,8 @@ async def register_products_bulk_endpoint(
                         .where(SupplierRawFetchLog.request_payload.contains({"productId": str(p.id)}))
                         .limit(1)
                     ).first()
-                    if existing_skip:
+                    ignore_skip_log = os.getenv("COUPANG_RESEARCH_IGNORE_SKIP_LOG", "0") == "1"
+                    if existing_skip and not ignore_skip_log:
                         blocked += 1
                         blocked_ids.append(str(p.id))
                         continue
