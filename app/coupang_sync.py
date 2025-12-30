@@ -33,6 +33,7 @@ from app.models import (
     MarketProductRaw,
     SupplierRawFetchLog,
     MarketListing,
+    CoupangCategoryMetaCache,
 )
 from app.ownerclan_client import OwnerClanClient
 from app.ownerclan_sync import get_primary_ownerclan_account
@@ -3173,12 +3174,50 @@ def _get_coupang_product_metadata(
 
     # 공시 메타
     def _fetch_category_meta(category_code: int) -> dict[str, Any] | None:
+        now = datetime.now(timezone.utc)
+        ttl_hours = 24
+        try:
+            ttl_hours = int(os.getenv("COUPANG_CATEGORY_META_TTL_HOURS", "24"))
+        except Exception:
+            ttl_hours = 24
+
+        cached = (
+            session.query(CoupangCategoryMetaCache)
+            .filter(CoupangCategoryMetaCache.category_code == str(category_code))
+            .first()
+        )
+        if cached and cached.expires_at and cached.expires_at > now:
+            if isinstance(cached.meta, dict):
+                return cached.meta
+
+        meta_data_obj: dict[str, Any] | None = None
         try:
             meta_http, meta_data = client.get_category_meta(str(category_code))
             if meta_http == 200 and isinstance(meta_data, dict) and isinstance(meta_data.get("data"), dict):
-                return meta_data["data"]
+                meta_data_obj = meta_data["data"]
         except Exception:
-            pass
+            meta_data_obj = None
+
+        if meta_data_obj is not None:
+            expires_at = now + timedelta(hours=max(1, ttl_hours))
+            if cached:
+                cached.meta = meta_data_obj
+                cached.fetched_at = now
+                cached.expires_at = expires_at
+            else:
+                session.add(
+                    CoupangCategoryMetaCache(
+                        category_code=str(category_code),
+                        meta=meta_data_obj,
+                        fetched_at=now,
+                        expires_at=expires_at,
+                    )
+                )
+            session.commit()
+            return meta_data_obj
+
+        if cached and isinstance(cached.meta, dict):
+            return cached.meta
         return None
 
     def _has_mandatory_required_docs(meta: dict[str, Any] | None, product: Product) -> bool:

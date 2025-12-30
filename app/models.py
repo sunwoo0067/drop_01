@@ -255,6 +255,16 @@ class MarketRegistrationRetry(MarketBase):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class CoupangCategoryMetaCache(MarketBase):
+    __tablename__ = "coupang_category_meta_cache"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    category_code: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    meta: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class MarketOrderRaw(MarketBase):
     __tablename__ = "market_order_raw"
     __table_args__ = (
