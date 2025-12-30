@@ -61,7 +61,7 @@ def upgrade_market() -> None:
         sa.Column("id", sa.UUID(), nullable=False),
         sa.Column("market_code", sa.Text(), nullable=False),
         sa.Column("product_id", sa.UUID(), nullable=False),
-        sa.Column("status", sa.Text(), server_default=sa.text("queued"), nullable=False),
+        sa.Column("status", sa.Text(), server_default=sa.text("'queued'"), nullable=False),
         sa.Column("attempts", sa.Integer(), server_default=sa.text("0"), nullable=False),
         sa.Column("reason", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
