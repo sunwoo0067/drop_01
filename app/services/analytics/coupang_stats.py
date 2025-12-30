@@ -2,16 +2,56 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import func, select, case, text
 from sqlalchemy.orm import Session
-from app.models import MarketListing, Product
+from app.models import MarketListing, Product, Order, OrderItem
 
 class CoupangAnalyticsService:
     @staticmethod
-    def get_category_approval_stats(session: Session, days: int = 30):
+    def get_category_roi_stats(session: Session, days: int = 90):
         """
-        카테고리별 승인율 및 운영 지표를 계산합니다.
-        (Option C의 핵심 데이터 소스)
+        카테고리별 실질 수익성(ROI)을 계산합니다.
+        ROI = (매출 - 원가) / 원가
         """
         start_date = datetime.now(timezone.utc) - timedelta(days=days)
+        
+        query = (
+            select(
+                MarketListing.category_code,
+                func.sum(OrderItem.total_price).label("revenue"),
+                func.sum(OrderItem.quantity * Product.cost_price).label("cost")
+            )
+            .join(OrderItem, MarketListing.id == OrderItem.market_listing_id)
+            .join(Product, MarketListing.product_id == Product.id)
+            .where(OrderItem.created_at >= start_date)
+            .group_by(MarketListing.category_code)
+        )
+        
+        results = session.execute(query).all()
+        
+        roi_stats = {}
+        for r in results:
+            if not r.category_code: continue
+            
+            revenue = r.revenue or 0
+            cost = r.cost or 0
+            
+            # ROI 계산 (cost가 0인 경우 대비)
+            roi = (revenue - cost) / cost if cost > 0 else 0
+            roi_stats[r.category_code] = {
+                "revenue": revenue,
+                "cost": cost,
+                "roi": round(roi, 2)
+            }
+            
+        return roi_stats
+    @staticmethod
+    def get_category_approval_stats(session: Session, days: int = 30, offset_days: int = 0):
+        """
+        카테고리별 승인율 및 운영 지표를 계산합니다.
+        offset_days를 통해 특정 과거 시점의 윈도우 통계를 가져올 수 있습니다.
+        """
+        now = datetime.now(timezone.utc)
+        start_date = now - timedelta(days=days + offset_days)
+        end_date = now - timedelta(days=offset_days)
         
         query = (
             select(
@@ -23,6 +63,7 @@ class CoupangAnalyticsService:
                 func.max(case((MarketListing.status == "ACTIVE", MarketListing.linked_at), else_=None)).label("last_success_at")
             )
             .where(MarketListing.linked_at >= start_date)
+            .where(MarketListing.linked_at < end_date)
             .group_by(MarketListing.category_code)
         )
         
@@ -50,6 +91,7 @@ class CoupangAnalyticsService:
                     select(func.count(func.distinct(MarketListing.product_id)))
                     .where(MarketListing.category_code == r.category_code)
                     .where(MarketListing.linked_at >= start_date)
+                    .where(MarketListing.linked_at < end_date)
                 ).scalar() or 0
             )
             
@@ -58,6 +100,7 @@ class CoupangAnalyticsService:
                     select(func.count(func.distinct(func.date(MarketListing.linked_at))))
                     .where(MarketListing.category_code == r.category_code)
                     .where(MarketListing.linked_at >= start_date)
+                    .where(MarketListing.linked_at < end_date)
                 ).scalar() or 0
             )
 

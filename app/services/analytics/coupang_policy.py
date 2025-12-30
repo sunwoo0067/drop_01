@@ -7,9 +7,11 @@ from app.models import MarketListing
 from app.settings import settings
 from app.services.analytics.coupang_stats import CoupangAnalyticsService
 
+from app.services.analytics.drift_detector import CoupangDriftDetectorService
+
 logger = logging.getLogger(__name__)
 
-POLICY_VERSION = "1.2.0" # Resilience+ Hysteresis
+POLICY_VERSION = "1.3.0" # Advanced Cognitive (Season Drift + ROI)
 
 class CoupangSourcingPolicyService:
     @staticmethod
@@ -135,6 +137,43 @@ class CoupangSourcingPolicyService:
                 )
 
         ar *= adaptive_multiplier
+
+        # 1.2 Season Drift Detection: 성과 하락 추세 감지 및 추가 감점
+        drift_multiplier = 1.0
+        drift_result = CoupangDriftDetectorService.analyze_category_drift(session, category_code, days=3)
+        if drift_result.get("is_drift"):
+            drift_multiplier = 0.8 if drift_result["severity"] == "WARNING" else 0.5
+            logger.warning(f"Season Drift Detected: {category_code} (Velocity={drift_result['velocity']}, Multiplier={drift_multiplier})")
+
+        ar *= drift_multiplier
+
+        # 1.3 Operator Feedback (v1.3.0): 운영자 수동 피드백 반영 (Human-in-the-loop)
+        # 7일 이내의 가장 최근 운영자 신호를 적용합니다.
+        from app.models import AdaptivePolicyEvent
+        operator_event = session.execute(
+            select(AdaptivePolicyEvent)
+            .where(AdaptivePolicyEvent.category_code == category_code)
+            .where(AdaptivePolicyEvent.event_type.in_(["OPERATOR_UP", "OPERATOR_DOWN"]))
+            .where(AdaptivePolicyEvent.created_at >= datetime.now(timezone.utc) - timedelta(days=7))
+            .order_by(AdaptivePolicyEvent.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        
+        operator_multiplier = 1.0
+        if operator_event:
+            operator_multiplier = operator_event.multiplier
+            logger.info(f"Operator Feedback Applied: {category_code} (Multiplier={operator_multiplier})")
+        
+        ar *= operator_multiplier
+
+        # 1.4 ROI Weighting (v1.3.0): 실질 수익성 지표 반영
+        # 수익 데이터가 있는 경우 가중치 부여, 없는 경우 중립 점수(50) 기준
+        roi_stats = CoupangAnalyticsService.get_category_roi_stats(session, days=90)
+        roi_info = roi_stats.get(category_code, {"roi": 0.0, "revenue": 0})
+        
+        roi = roi_info["roi"]
+        # ROI Score: 0.15(15%)를 50점으로 기준, 0.4(40%) 이상이면 100점, 0 이하면 0점
+        roi_score = min(100, max(0, (roi * 250) + 12.5)) if roi_info["revenue"] > 0 else 50
         
         # 2. Hard Gate 필터
         if ar < 40 or fd > 80:
@@ -156,9 +195,9 @@ class CoupangSourcingPolicyService:
                 "details": stat
             }
             
-        # 4. 소싱 점수 계산
-        # SourcingScore = (ApprovalRate * 0.5) + (ExactRate * 0.3) + ((100 - FallbackDependency) * 0.2)
-        score = (ar * 0.5) + (er * 0.3) + ((100 - fd) * 0.2)
+        # 4. 소싱 점수 계산 (v1.3.0 Optimized Formula)
+        # SourcingScore = (AR * 0.4) + (ER * 0.2) + ((100-FD) * 0.1) + (ROI_Score * 0.3)
+        score = (ar * 0.4) + (er * 0.2) + ((100 - fd) * 0.1) + (roi_score * 0.3)
         
         # 5. 등급 분류
         if score >= 70:
