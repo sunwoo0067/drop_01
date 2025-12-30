@@ -3,7 +3,7 @@ from pgvector.sqlalchemy import Vector
 from datetime import datetime
 import uuid
 
-from sqlalchemy import BigInteger, DateTime, Integer, Text, UniqueConstraint, ForeignKey, Float
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, Text, UniqueConstraint, ForeignKey, Float
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -210,6 +210,51 @@ class MarketAccount(MarketBase):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class CoupangDocumentLibrary(MarketBase):
+    __tablename__ = "coupang_document_library"
+    __table_args__ = (
+        UniqueConstraint("brand", "template_name", name="uq_coupang_document_library_brand_template"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    brand: Mapped[str] = mapped_column(Text, nullable=False)
+    template_name: Mapped[str] = mapped_column(Text, nullable=False)
+    vendor_document_path: Mapped[str] = mapped_column(Text, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CoupangBrandPolicy(MarketBase):
+    __tablename__ = "coupang_brand_policies"
+    __table_args__ = (
+        UniqueConstraint("brand", name="uq_coupang_brand_policies_brand"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    brand: Mapped[str] = mapped_column(Text, nullable=False)
+    naver_fallback_disabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class MarketRegistrationRetry(MarketBase):
+    __tablename__ = "market_registration_retries"
+    __table_args__ = (
+        UniqueConstraint("market_code", "product_id", name="uq_market_registration_retries_market_product"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_code: Mapped[str] = mapped_column(Text, nullable=False)
+    product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="queued")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class MarketOrderRaw(MarketBase):
     __tablename__ = "market_order_raw"
     __table_args__ = (
@@ -331,6 +376,11 @@ class Product(DropshipBase):
     processed_image_urls: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     processing_status: Mapped[str] = mapped_column(Text, nullable=False, default="PENDING") # PENDING, PROCESSING, COMPLETED, FAILED, PENDING_APPROVAL
     benchmark_product_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    coupang_parallel_imported: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    coupang_overseas_purchased: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    naver_fallback_disabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    coupang_doc_pending: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    coupang_doc_pending_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # === 3단계 전략 관련 필드 ===
     # 라이프사이클 단계

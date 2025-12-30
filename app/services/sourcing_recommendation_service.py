@@ -946,6 +946,9 @@ class SourcingRecommendationService:
         cost_price = recommendation.current_supply_price
         selling_price = recommendation.recommended_selling_price
         
+        from app.services.market_targeting import resolve_trade_flags_from_raw
+        parallel_imported, overseas_purchased = resolve_trade_flags_from_raw(raw_entry.raw if raw_entry else None)
+
         product = Product(
             supplier_item_id=raw_entry.id,
             name=cleaned_name,
@@ -956,7 +959,9 @@ class SourcingRecommendationService:
             status="DRAFT",
             processing_status="PENDING",
             processed_image_urls=[],
-            benchmark_product_id=None  # 추천 기반이므로 벤치마크 없음
+            benchmark_product_id=None,  # 추천 기반이므로 벤치마크 없음
+            coupang_parallel_imported=parallel_imported,
+            coupang_overseas_purchased=overseas_purchased,
         )
         
         self.db.add(product)

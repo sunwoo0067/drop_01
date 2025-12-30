@@ -168,6 +168,9 @@ def _create_or_get_product_from_raw_item(session: Session, raw_item: SupplierIte
         market_fee_rate=float(settings.pricing_market_fee_rate or 0.13)
     )
 
+    from app.services.market_targeting import resolve_trade_flags_from_raw
+    parallel_imported, overseas_purchased = resolve_trade_flags_from_raw(raw_item.raw if raw_item else None)
+
     product = Product(
         supplier_item_id=raw_item.id,
         name=str(item_name),
@@ -176,6 +179,8 @@ def _create_or_get_product_from_raw_item(session: Session, raw_item: SupplierIte
         cost_price=cost,
         selling_price=selling_price,
         status="DRAFT",
+        coupang_parallel_imported=parallel_imported,
+        coupang_overseas_purchased=overseas_purchased,
     )
     session.add(product)
     session.flush()
@@ -185,7 +190,7 @@ def _create_or_get_product_from_raw_item(session: Session, raw_item: SupplierIte
 async def _execute_post_promote_actions(product_id: uuid.UUID, auto_register_coupang: bool, min_images_required: int) -> None:
     from app.session_factory import session_factory
     from app.services.processing_service import ProcessingService
-    from app.coupang_sync import register_product
+    from app.services.market_service import MarketService
     from app.services.market_targeting import decide_target_market_for_product
 
     with session_factory() as bg_session:
@@ -205,24 +210,28 @@ async def _execute_post_promote_actions(product_id: uuid.UUID, auto_register_cou
             return
 
         target_market, _reason = decide_target_market_for_product(bg_session, product)
-        if target_market != "COUPANG":
-            return
+        m_service = MarketService(bg_session)
 
-        account = (
-            bg_session.execute(
-                select(MarketAccount)
-                .where(MarketAccount.market_code == "COUPANG")
-                .where(MarketAccount.is_active == True)
+        def _get_account(code: str):
+            return (
+                bg_session.execute(
+                    select(MarketAccount)
+                    .where(MarketAccount.market_code == code)
+                    .where(MarketAccount.is_active == True)
+                )
+                .scalars()
+                .first()
             )
-            .scalars()
-            .first()
-        )
+
+        account = _get_account(target_market)
+        if not account and target_market == "COUPANG":
+            account = _get_account("SMARTSTORE")
+            target_market = "SMARTSTORE"
         if not account:
             return
 
-        # register_product는 동기 함수이므로 직접 호출 (이미 스레드/진입점 분리됨)
-        ok, _reason = register_product(bg_session, account.id, product.id)
-        if ok:
+        result = m_service.register_product(target_market, account.id, product.id)
+        if result.get("status") == "success":
             product.status = "ACTIVE"
             bg_session.commit()
 

@@ -1,9 +1,10 @@
 import os
 from typing import Any
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models import Product, SupplierItemRaw
+from app.models import Product, SupplierItemRaw, CoupangBrandPolicy
 
 
 DEFAULT_COUPANG_CATEGORY_ALLOW_KEYWORDS = [
@@ -49,6 +50,53 @@ def _normalize_text(value: str | None) -> str:
 def _contains_any(text: str, keywords: list[str]) -> bool:
     target = _normalize_text(text)
     return any(_normalize_text(keyword) in target for keyword in keywords if keyword)
+
+
+def _parse_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(int(value))
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in {"y", "yes", "true", "1"}:
+            return True
+        if token in {"n", "no", "false", "0"}:
+            return False
+    return False
+
+
+def resolve_trade_flags_from_raw(raw: dict[str, Any] | None) -> tuple[bool, bool]:
+    if not isinstance(raw, dict):
+        return False, False
+
+    parallel_keys = [
+        "parallelImported",
+        "parallel_imported",
+        "is_parallel_imported",
+        "parallelImportedYn",
+    ]
+    overseas_keys = [
+        "overseasPurchased",
+        "overseas_purchased",
+        "is_overseas_purchased",
+        "overseasPurchasedYn",
+    ]
+
+    parallel_imported = False
+    overseas_purchased = False
+
+    for key in parallel_keys:
+        if key in raw:
+            parallel_imported = _parse_bool(raw.get(key))
+            break
+
+    for key in overseas_keys:
+        if key in raw:
+            overseas_purchased = _parse_bool(raw.get(key))
+            break
+
+    return parallel_imported, overseas_purchased
 
 
 def resolve_supplier_category_name(session: Session, product: Product) -> str | None:
@@ -107,3 +155,20 @@ def decide_target_market_by_category(category_name: str | None) -> tuple[str, st
 def decide_target_market_for_product(session: Session, product: Product) -> tuple[str, str]:
     category_name = resolve_supplier_category_name(session, product)
     return decide_target_market_by_category(category_name)
+
+
+def is_naver_fallback_disabled(session: Session, product: Product) -> bool:
+    if getattr(product, "naver_fallback_disabled", False):
+        return True
+    brand = (product.brand or "").strip()
+    if not brand:
+        return False
+    policy = (
+        session.query(CoupangBrandPolicy)
+        .filter(func.lower(CoupangBrandPolicy.brand) == brand.lower())
+        .filter(CoupangBrandPolicy.is_active.is_(True))
+        .first()
+    )
+    if policy and policy.naver_fallback_disabled:
+        return True
+    return False

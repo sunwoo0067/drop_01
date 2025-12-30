@@ -27,6 +27,7 @@ from app.models import (
     Product,
     ProductOption,
     MarketAccount,
+    CoupangDocumentLibrary,
     SupplierItemRaw,
     MarketOrderRaw,
     MarketProductRaw,
@@ -46,17 +47,24 @@ DEFAULT_COUPANG_ALLOWED_REQUIRED_DOC_TEMPLATES = [
     "유통경로확인서",
     "상표권사용동의서",
     "브랜드소명자료",
+    "브랜드확인서",
 ]
 
 DEFAULT_COUPANG_BLOCKED_REQUIRED_DOC_KEYWORDS = [
     "KC",
+    "KC인증서",
     "전기",
     "전기안전인증",
-    "어린이",
-    "식품",
+    "어린이제품안전",
+    "어린이제품안전확인",
+    "식품위생법",
+    "건강기능식품",
     "의료",
+    "의료기기",
     "안전인증",
-    "방송통신기자재적합등록",
+    "방송통신기자재",
+    "적합등록",
+    "시험성적서",
 ]
 
 DEFAULT_COUPANG_BLOCKED_CATEGORY_KEYWORDS = [
@@ -72,6 +80,75 @@ DEFAULT_COUPANG_BLOCKED_CATEGORY_KEYWORDS = [
 class SkipCoupangRegistrationError(Exception):
     """상품 등록을 정책상 건너뛰는 경우 사용."""
 
+
+class CoupangDocumentPendingError(SkipCoupangRegistrationError):
+    def __init__(self, reason: str, missing_templates: list[str] | None = None):
+        super().__init__(reason)
+        self.missing_templates = missing_templates or []
+
+
+def _parse_env_list(env_key: str) -> list[str]:
+    raw = os.getenv(env_key, "")
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def _normalize_tokens(values: list[str]) -> list[str]:
+    return [str(v).strip().lower() for v in values if str(v).strip()]
+
+
+def _match_any(text: str, keywords: list[str]) -> bool:
+    target = str(text or "").lower()
+    return any(keyword in target for keyword in keywords if keyword)
+
+
+def _extract_required_doc_templates(notice_meta: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(notice_meta, dict):
+        return []
+    docs = notice_meta.get("requiredDocumentNames")
+    if not isinstance(docs, list):
+        return []
+    return [doc for doc in docs if isinstance(doc, dict)]
+
+
+def _required_doc_applies(required_flag: str, product: Product) -> bool:
+    flag = str(required_flag or "")
+    if not flag:
+        return False
+    if flag == "OPTIONAL":
+        return False
+    if flag == "MANDATORY":
+        return True
+    if flag.startswith("MANDATORY_PARALLEL_IMPORTED"):
+        return bool(getattr(product, "coupang_parallel_imported", False))
+    if flag.startswith("MANDATORY_OVERSEAS_PURCHASED"):
+        return bool(getattr(product, "coupang_overseas_purchased", False))
+    if flag.startswith("MANDATORY"):
+        return True
+    return False
+
+
+def _get_document_library_entry(
+    session: Session,
+    brand: str | None,
+    template_name: str | None,
+) -> dict[str, Any] | None:
+    if not brand or not template_name:
+        return None
+    row = (
+        session.query(CoupangDocumentLibrary)
+        .filter(func.lower(CoupangDocumentLibrary.brand) == brand.strip().lower())
+        .filter(func.lower(CoupangDocumentLibrary.template_name) == template_name.strip().lower())
+        .filter(CoupangDocumentLibrary.is_active.is_(True))
+        .first()
+    )
+    if not row or not row.vendor_document_path:
+        return None
+    return {
+        "templateName": row.template_name,
+        "vendorDocumentPath": row.vendor_document_path,
+    }
 
 def _preserve_detail_html(product: Product | None = None) -> bool:
     """
@@ -1484,6 +1561,7 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
 
     try:
         payload = _map_product_to_coupang_payload(
+            session,
             product,
             account,
             meta_result["return_center_code"],
@@ -1495,6 +1573,20 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
             meta_result["delivery_company_code"],
             image_urls=payload_images,
         )
+    except CoupangDocumentPendingError as e:
+        reason = f"SKIPPED: {e}"
+        logger.info(f"상품 등록 스킵: {e}")
+        product.coupang_doc_pending = True
+        product.coupang_doc_pending_reason = str(e)
+        session.commit()
+        _log_registration_skip(
+            session,
+            account,
+            product.id,
+            reason,
+            meta_result.get("predicted_category_code"),
+        )
+        return False, reason
     except SkipCoupangRegistrationError as e:
         reason = f"SKIPPED: {e}"
         logger.info(f"상품 등록 스킵: {e}")
@@ -1659,6 +1751,8 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
     session.execute(stmt)
     
     product.processing_status = "LISTED"
+    product.coupang_doc_pending = False
+    product.coupang_doc_pending_reason = None
     session.commit()
     
     logger.info(f"상품 등록 성공 (ID: {product.id}, sellerProductId: {seller_product_id})")
@@ -1902,6 +1996,7 @@ def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_i
         # 2. 페이로드 생성 (Full Sync 방식: 내부 매핑 함수 활용)
         try:
             payload = _map_product_to_coupang_payload(
+                session,
                 product,
                 account,
                 meta_result["return_center_code"],
@@ -2635,7 +2730,8 @@ def _get_default_centers(client: CoupangClient, account: MarketAccount | None = 
 
 
 def _map_product_to_coupang_payload(
-    product: Product, 
+    session: Session,
+    product: Product,
     account: MarketAccount, 
     return_center_code: str, 
     outbound_center_code: str,
@@ -2835,10 +2931,10 @@ def _map_product_to_coupang_payload(
     try:
         if isinstance(notice_meta, dict) and isinstance(notice_meta.get("certifications"), list):
             certs = [c for c in notice_meta["certifications"] if isinstance(c, dict)]
-            
+
             # 필수/추천 인증 확인
             mandatory_certs = [c for c in certs if c.get("required") in ["MANDATORY", "RECOMMEND"]]
-            
+
             if mandatory_certs:
                 cert_names = []
                 for cert in mandatory_certs:
@@ -2855,20 +2951,47 @@ def _map_product_to_coupang_payload(
     # 구비서류(requiredDocuments) 처리
     required_documents: list[dict[str, Any]] = []
     try:
-        if isinstance(notice_meta, dict) and isinstance(notice_meta.get("requiredDocumentNames"), list):
-            docs = [d for d in notice_meta["requiredDocumentNames"] if isinstance(d, dict)]
-            
-            # 필수 구비서류 확인
-            mandatory_docs = [d for d in docs if "MANDATORY" in d.get("required", "")]
-            
-            if mandatory_docs:
-                doc_names = []
-                for doc in mandatory_docs:
-                    name = doc.get("templateName") or doc.get("documentName")
-                    if name:
-                        doc_names.append(str(name))
-                doc_label = ", ".join(doc_names) if doc_names else "미상"
-                raise SkipCoupangRegistrationError(f"필수 구비서류 정보 필요: {doc_label}")
+        docs = _extract_required_doc_templates(notice_meta)
+        if docs:
+            allowed_templates = _parse_env_list("COUPANG_ALLOWED_REQUIRED_DOCUMENTS") or DEFAULT_COUPANG_ALLOWED_REQUIRED_DOC_TEMPLATES
+            blocked_keywords = _parse_env_list("COUPANG_BLOCKED_REQUIRED_DOCUMENTS") or DEFAULT_COUPANG_BLOCKED_REQUIRED_DOC_KEYWORDS
+            allowed_tokens = _normalize_tokens(allowed_templates)
+            blocked_tokens = _normalize_tokens(blocked_keywords)
+
+            required_templates: list[str] = []
+            for doc in docs:
+                required_flag = doc.get("required") or ""
+                if not _required_doc_applies(str(required_flag), product):
+                    continue
+                name = doc.get("templateName") or doc.get("documentName") or ""
+                if name:
+                    required_templates.append(str(name))
+
+            blocked_templates: list[str] = []
+            for name in required_templates:
+                if _match_any(name, blocked_tokens):
+                    blocked_templates.append(name)
+                elif allowed_tokens and not _match_any(name, allowed_tokens):
+                    blocked_templates.append(name)
+
+            if blocked_templates:
+                blocked_label = ", ".join(blocked_templates)
+                raise SkipCoupangRegistrationError(f"필수 구비서류 금지 템플릿: {blocked_label}")
+
+            missing_templates: list[str] = []
+            for name in required_templates:
+                entry = _get_document_library_entry(session, product.brand, name)
+                if entry:
+                    required_documents.append(entry)
+                else:
+                    missing_templates.append(name)
+
+            if missing_templates:
+                missing_label = ", ".join(missing_templates)
+                raise CoupangDocumentPendingError(
+                    f"필수 구비서류 미보유: {missing_label}",
+                    missing_templates=missing_templates,
+                )
     except SkipCoupangRegistrationError:
         raise
     except Exception as e:
@@ -2893,6 +3016,9 @@ def _map_product_to_coupang_payload(
 
     # 아이템 (옵션) 목록 구성
     items_payload = []
+    parallel_imported = "PARALLEL_IMPORTED" if product.coupang_parallel_imported else "NOT_PARALLEL_IMPORTED"
+    overseas_purchased = "OVERSEAS_PURCHASED" if product.coupang_overseas_purchased else "NOT_OVERSEAS_PURCHASED"
+    pcc_needed = bool(product.coupang_overseas_purchased)
     
     # DB에 옵션이 있으면 사용, 없으면 단일 아이템으로 처리
     options = product.options if product.options else []
@@ -2913,9 +3039,9 @@ def _map_product_to_coupang_payload(
             "outboundShippingTimeDay": 3,
             "taxType": "TAX",
             "adultOnly": "EVERYONE",
-            "parallelImported": "NOT_PARALLEL_IMPORTED",
-            "overseasPurchased": "NOT_OVERSEAS_PURCHASED",
-            "pccNeeded": False,
+            "parallelImported": parallel_imported,
+            "overseasPurchased": overseas_purchased,
+            "pccNeeded": pcc_needed,
             "unitCount": 1,
             "images": images,
             "attributes": item_attributes,
@@ -2946,9 +3072,9 @@ def _map_product_to_coupang_payload(
                 "outboundShippingTimeDay": 3,
                 "taxType": "TAX",
                 "adultOnly": "EVERYONE",
-                "parallelImported": "NOT_PARALLEL_IMPORTED",
-                "overseasPurchased": "NOT_OVERSEAS_PURCHASED",
-                "pccNeeded": False,
+                "parallelImported": parallel_imported,
+                "overseasPurchased": overseas_purchased,
+                "pccNeeded": pcc_needed,
                 "unitCount": 1,
                 "images": images,
                 "attributes": item_attributes, # TODO: 카테고리에 맞는 상세 옵션 속성 매핑 필요 시 보완
@@ -3014,55 +3140,6 @@ def _get_coupang_product_metadata(
     if not return_center_code or not outbound_center_code:
         return {"ok": False, "error": f"기본 센터 정보 조회 실패: {_debug}"}
 
-    def _parse_env_list(env_key: str) -> list[str]:
-        raw = os.getenv(env_key, "")
-        if not raw:
-            return []
-        return [p.strip() for p in raw.split(",") if p.strip()]
-
-    def _normalize_tokens(values: list[str]) -> list[str]:
-        return [str(v).strip().lower() for v in values if str(v).strip()]
-
-    def _match_any(text: str, keywords: list[str]) -> bool:
-        t = str(text or "").lower()
-        return any(k in t for k in keywords if k)
-
-    def _extract_required_doc_templates(meta: dict[str, Any]) -> list[dict[str, Any]]:
-        docs = meta.get("requiredDocumentNames")
-        if not isinstance(docs, list):
-            return []
-        return [d for d in docs if isinstance(d, dict)]
-
-    def _evaluate_required_documents(meta: dict[str, Any]) -> tuple[bool, str | None]:
-        docs = _extract_required_doc_templates(meta)
-        if not docs:
-            return True, None
-
-        mandatory_docs = [d for d in docs if "MANDATORY" in str(d.get("required") or "")]
-        if not mandatory_docs:
-            return True, None
-
-        allowed_templates = _parse_env_list("COUPANG_ALLOWED_REQUIRED_DOCUMENTS") or DEFAULT_COUPANG_ALLOWED_REQUIRED_DOC_TEMPLATES
-        blocked_keywords = _parse_env_list("COUPANG_BLOCKED_REQUIRED_DOCUMENTS") or DEFAULT_COUPANG_BLOCKED_REQUIRED_DOC_KEYWORDS
-        allowed_tokens = _normalize_tokens(allowed_templates)
-        blocked_tokens = _normalize_tokens(blocked_keywords)
-
-        names = []
-        for doc in mandatory_docs:
-            name = doc.get("templateName") or doc.get("documentName") or ""
-            names.append(str(name))
-
-        for name in names:
-            if _match_any(name, blocked_tokens):
-                return False, f"필수 구비서류 금지 템플릿: {name}"
-
-        if allowed_tokens:
-            for name in names:
-                if not _match_any(name, allowed_tokens):
-                    return False, f"필수 구비서류 허용 목록 외: {name}"
-
-        return True, None
-
     # 카테고리 예측
     predicted_category_code = 77800
     try:
@@ -3104,7 +3181,7 @@ def _get_coupang_product_metadata(
             pass
         return None
 
-    def _has_mandatory_required_docs(meta: dict[str, Any] | None) -> bool:
+    def _has_mandatory_required_docs(meta: dict[str, Any] | None, product: Product) -> bool:
         if not isinstance(meta, dict):
             return False
         docs = meta.get("requiredDocumentNames")
@@ -3114,12 +3191,12 @@ def _get_coupang_product_metadata(
             if not isinstance(doc, dict):
                 continue
             required = doc.get("required") or ""
-            if "MANDATORY" in str(required):
+            if _required_doc_applies(str(required), product):
                 return True
         return False
 
     notice_meta = _fetch_category_meta(predicted_category_code)
-    if _has_mandatory_required_docs(notice_meta):
+    if _has_mandatory_required_docs(notice_meta, product):
         fallback_raw = (
             os.getenv("COUPANG_FALLBACK_CATEGORY_CODES", "")
             or os.getenv("COUPANG_FALLBACK_CATEGORY_CODE", "")
@@ -3139,7 +3216,7 @@ def _get_coupang_product_metadata(
             if fallback_code == predicted_category_code:
                 continue
             fallback_meta = _fetch_category_meta(fallback_code)
-            if not _has_mandatory_required_docs(fallback_meta):
+            if not _has_mandatory_required_docs(fallback_meta, product):
                 logger.info(
                     "쿠팡 카테고리 구비서류 요구로 대체 카테고리 사용: %s -> %s",
                     predicted_category_code,
@@ -3160,10 +3237,6 @@ def _get_coupang_product_metadata(
         blocked_keywords = _parse_env_list("COUPANG_BLOCKED_CATEGORY_KEYWORDS") or DEFAULT_COUPANG_BLOCKED_CATEGORY_KEYWORDS
         if _match_any(category_name, _normalize_tokens(blocked_keywords)):
             raise SkipCoupangRegistrationError(f"쿠팡 금지 카테고리 키워드: {category_name}")
-
-        ok, reason = _evaluate_required_documents(notice_meta)
-        if not ok and reason:
-            raise SkipCoupangRegistrationError(reason)
 
     # 반품지 상세
     return_center_detail = None

@@ -292,18 +292,7 @@ class OrchestratorService:
 
                                 target_acc = target_accounts[idx % len(target_accounts)]
                                 res = m_service.register_product(target_market, target_acc.id, p.id)
-                                if res.get("status") == "success":
-                                    return True
-
-                                if res.get("status") == "skipped" and target_market == "COUPANG":
-                                    fallback_accounts = accounts_by_market.get("SMARTSTORE", [])
-                                    if not fallback_accounts:
-                                        return False
-                                    fallback_acc = fallback_accounts[idx % len(fallback_accounts)]
-                                    fallback_res = m_service.register_product("SMARTSTORE", fallback_acc.id, p.id)
-                                    return fallback_res.get("status") == "success"
-
-                                return False
+                                return res.get("status") == "success"
                             except Exception as e:
                                 logger.error(f"Async listing failed for product {p_id}: {e}")
                                 return False

@@ -259,6 +259,9 @@ def create_product_from_ownerclan_raw(payload: ProductFromOwnerClanRawIn, sessio
         market_fee_rate=float(settings.pricing_market_fee_rate or 0.13)
     )
 
+    from app.services.market_targeting import resolve_trade_flags_from_raw
+    parallel_imported, overseas_purchased = resolve_trade_flags_from_raw(raw_item.raw if raw_item else None)
+
     product = Product(
         supplier_item_id=raw_item.id,
         name=str(item_name),
@@ -267,6 +270,8 @@ def create_product_from_ownerclan_raw(payload: ProductFromOwnerClanRawIn, sessio
         cost_price=cost,
         selling_price=selling_price,
         status="DRAFT",
+        coupang_parallel_imported=parallel_imported,
+        coupang_overseas_purchased=overseas_purchased,
     )
     session.add(product)
     session.flush()
@@ -1163,4 +1168,3 @@ def augment_images_from_detail_url(
         "source": "raw_image_urls",
         "candidateImages": len(image_urls),
     }
-

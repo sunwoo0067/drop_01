@@ -389,6 +389,9 @@ class SourcingService:
         processed_name = seo.get("title") or cleaned_name
         processed_keywords = seo.get("tags") or candidate.seo_keywords
         
+        from app.services.market_targeting import resolve_trade_flags_from_raw
+        parallel_imported, overseas_purchased = resolve_trade_flags_from_raw(item_full_data)
+
         product = Product(
             supplier_item_id=raw_entry.id, # Link to raw record
             name=cleaned_name,
@@ -399,7 +402,9 @@ class SourcingService:
             status="DRAFT",
             processing_status="PENDING",
             processed_image_urls=[candidate.thumbnail_url] if candidate.thumbnail_url else [],
-            description=item_full_data.get("detail_html") or item_full_data.get("content")
+            description=item_full_data.get("detail_html") or item_full_data.get("content"),
+            coupang_parallel_imported=parallel_imported,
+            coupang_overseas_purchased=overseas_purchased,
         )
         self.db.add(product)
         self.db.flush() # ID 확보
@@ -527,6 +532,14 @@ class SourcingService:
             # Simple metadata extraction
             name = item_data.get("name") or "Unnamed Product"
             price = item_data.get("price") or item_data.get("fixedPrice") or 0
+            thumbnail_url = None
+            images = item_data.get("images")
+            if isinstance(images, list) and images:
+                thumbnail_url = images[0]
+            elif isinstance(images, str):
+                candidate = images.strip()
+                if candidate.startswith(("http://", "https://")):
+                    thumbnail_url = candidate
             
             # Basic validation
             if not name or price <= 0:
@@ -537,6 +550,7 @@ class SourcingService:
                 supplier_item_id=str(raw.item_code),
                 name=str(name),
                 supply_price=int(price),
+                thumbnail_url=thumbnail_url,
                 source_strategy="BULK_COLLECT",
                 status="PENDING",
                 final_score=50.0 # Default score for bulk collected items
