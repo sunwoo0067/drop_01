@@ -76,6 +76,9 @@ DEFAULT_COUPANG_BLOCKED_CATEGORY_KEYWORDS = [
     "의료",
     "화장품",
 ]
+DEFAULT_COUPANG_BLOCKED_CATEGORY_CODES = [
+    "77800",
+]
 
 
 class SkipCoupangRegistrationError(Exception):
@@ -3166,7 +3169,10 @@ def _get_coupang_product_metadata(
         logger.info(f"카테고리 예측 스킵/실패: {e}")
 
     allowed_category_codes = _parse_env_list("COUPANG_ALLOWED_CATEGORY_CODES")
-    blocked_category_codes = _parse_env_list("COUPANG_BLOCKED_CATEGORY_CODES")
+    blocked_category_codes = (
+        _parse_env_list("COUPANG_BLOCKED_CATEGORY_CODES")
+        or DEFAULT_COUPANG_BLOCKED_CATEGORY_CODES
+    )
     if blocked_category_codes and str(predicted_category_code) in blocked_category_codes:
         raise SkipCoupangRegistrationError(f"쿠팡 금지 카테고리 코드: {predicted_category_code}")
     if allowed_category_codes and str(predicted_category_code) not in allowed_category_codes:
