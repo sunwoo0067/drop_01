@@ -11,7 +11,7 @@ import { DashboardToolbar } from "./dashboard/DashboardToolbar";
 import { OverallStats, StatTable } from "./dashboard/StatTable";
 import { OrchestrationControl } from "./dashboard/OrchestrationControl";
 import { LogViewer } from "./dashboard/LogViewer";
-import { Bot, ShieldCheck, PieChart, CheckCircle } from "lucide-react";
+import { ShieldCheck, CheckCircle, AlertTriangle, RotateCcw, FileText } from "lucide-react";
 
 type LogFilter = {
   step: string;
@@ -30,7 +30,7 @@ export default function Home() {
   const [events, setEvents] = useState<any[]>([]);
   const [filteredEvents, setFilteredEvents] = useState<any[]>([]);
   const [marketStats, setMarketStats] = useState<any[]>([]);
-  const [agentStatus, setAgentStatus] = useState<any>(null);
+  const [gatingReport, setGatingReport] = useState<any | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
@@ -127,12 +127,12 @@ export default function Home() {
     }
   }, []);
 
-  const fetchAgentStatus = useCallback(async () => {
+  const fetchGatingReport = useCallback(async () => {
     try {
-      const res = await api.get("/orchestration/agents/status");
-      setAgentStatus(res.data);
+      const res = await api.get("/orchestration/coupang-gating?limit=20&days=7");
+      setGatingReport(res.data);
     } catch (e) {
-      console.error("Failed to fetch agent status", e);
+      console.error("Failed to fetch coupang gating report", e);
     }
   }, []);
 
@@ -183,18 +183,18 @@ export default function Home() {
     fetchStats();
     fetchEvents();
     fetchMarketStats();
-    fetchAgentStatus();
+    fetchGatingReport();
     fetchSettings();
 
     const interval = setInterval(() => {
       fetchStats();
       fetchEvents();
       fetchMarketStats();
-      fetchAgentStatus();
+      fetchGatingReport();
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [fetchAgentStatus, fetchEvents, fetchMarketStats, fetchSettings, fetchStats]);
+  }, [fetchEvents, fetchMarketStats, fetchGatingReport, fetchSettings, fetchStats]);
 
   const handleRunCycle = async (dryRun: boolean = true) => {
     console.log(`Triggering orchestration cycle: dryRun=${dryRun}`);
@@ -227,8 +227,28 @@ export default function Home() {
 
   // 진행률 계산
   const p = dashboardStats?.products || {};
-  const processingRate = p.sourcing_approved > 0 ? (p.refinement_completed / p.sourcing_approved) * 100 : 0;
   const totalCompleted = p.refinement_completed || stats.completed || 0;
+  const gatingSummary = gatingReport?.summary || {};
+  const gatingStats = [
+    {
+      label: "서류 보류 상품",
+      value: gatingSummary.docPendingCount || 0,
+      icon: <FileText className="h-3 w-3 text-warning" />,
+      description: "서류 대기 상태로 쿠팡 등록이 보류된 상품",
+    },
+    {
+      label: "재시도 큐",
+      value: gatingSummary.retryCount || 0,
+      icon: <RotateCcw className="h-3 w-3 text-info" />,
+      description: "가격/옵션 등 오류로 재시도 대기 중인 상품",
+    },
+    {
+      label: "최근 스킵 로그",
+      value: gatingSummary.skipLogCount || 0,
+      icon: <AlertTriangle className="h-3 w-3 text-destructive" />,
+      description: "최근 7일 내 쿠팡 스킵 로그 건수",
+    },
+  ];
 
   return (
     <div className="space-y-3">
@@ -349,20 +369,20 @@ export default function Home() {
         </Card>
       )}
 
-      {/* 탭 내비게이션 */}
+      {/* 탭/필터 바 */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between px-3 py-2 border border-border bg-card rounded-sm">
           <div className="flex gap-2 text-[11px]">
             <Button
               variant={activeTab === "overall" ? "primary" : "ghost"}
-              size="sm"
+              size="xs"
               onClick={() => setActiveTab("overall")}
             >
               종합 현황
             </Button>
             <Button
               variant={activeTab === "product" ? "primary" : "ghost"}
-              size="sm"
+              size="xs"
               onClick={() => setActiveTab("product")}
               className="relative"
             >
@@ -375,14 +395,14 @@ export default function Home() {
             </Button>
             <Button
               variant={activeTab === "market" ? "primary" : "ghost"}
-              size="sm"
+              size="xs"
               onClick={() => setActiveTab("market")}
             >
               마켓 현황 ({marketStats.length})
             </Button>
             <Button
               variant={activeTab === "order" ? "primary" : "ghost"}
-              size="sm"
+              size="xs"
               onClick={() => setActiveTab("order")}
             >
               주문 현황
@@ -403,21 +423,53 @@ export default function Home() {
               orchestrationProgress={orchestrationProgress}
               onRunCycle={handleRunCycle}
             />
+            <div className="grid gap-3 md:grid-cols-[1.1fr,0.9fr]">
+              <StatTable title="쿠팡 분기 현황" data={gatingStats} />
+              <Card className="border border-border">
+                <CardHeader className="py-2">
+                  <CardTitle className="text-xs">스킵 원인 TOP</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {(gatingSummary.skipReasonsTop || []).length > 0 ? (
+                    (gatingSummary.skipReasonsTop || []).map((row: any, index: number) => (
+                      <div
+                        key={`reason-${index}`}
+                        className="flex items-start justify-between gap-3 rounded-sm border border-border/50 bg-background px-2 py-1.5"
+                      >
+                        <span className="text-[10px] text-muted-foreground leading-tight">
+                          {row[1]}건
+                        </span>
+                        <span className="text-[10px] text-foreground leading-tight flex-1 text-right">
+                          {row[0]}
+                        </span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center text-[11px] text-muted-foreground py-4">
+                      스킵 로그가 없습니다.
+                    </div>
+                  )}
+                  {gatingSummary.cutoff && (
+                    <div className="text-[9px] text-muted-foreground text-right">
+                      기준 시각: {new Date(gatingSummary.cutoff).toLocaleString()}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
             <LogViewer
-              events={events}
               filteredEvents={filteredEvents}
               logFilter={logFilter}
               setLogFilter={setLogFilter}
               autoScroll={autoScroll}
               setAutoScroll={setAutoScroll}
-              lastUpdatedAt={lastUpdatedAt}
             />
           </div>
         )}
 
         {/* 상품 현황 */}
         {activeTab === "product" && (
-          <ProductStats dashboardStats={dashboardStats} stats={stats} />
+          <ProductStats dashboardStats={dashboardStats} />
         )}
 
         {/* 마켓 현황 */}
@@ -434,9 +486,8 @@ export default function Home() {
   );
 }
 
-function ProductStats({ dashboardStats, stats }: any) {
+function ProductStats({ dashboardStats }: any) {
   const p = dashboardStats?.products || {};
-  const processingRate = p.sourcing_approved > 0 ? (p.refinement_completed / p.sourcing_approved) * 100 : 0;
 
   return (
     <div className="space-y-3">
@@ -552,7 +603,7 @@ function MarketStats({ marketStats }: any) {
       key: "market_code",
       title: "마켓 코드",
       width: "20%",
-      render: (value, row) => (
+      render: (value) => (
         <div className="flex items-center gap-2">
           <div className="h-2 w-2 rounded-full bg-success animate-pulse" />
           <span className="text-[11px] font-medium">{value}</span>
@@ -577,7 +628,7 @@ function MarketStats({ marketStats }: any) {
       title: "비율",
       align: "right",
       width: "20%",
-      render: (_, row, index) => {
+      render: (_, row) => {
         const total = marketStats.reduce((sum: number, m: any) => sum + m.listing_count, 0);
         const percentage = total > 0 ? ((row.listing_count / total) * 100).toFixed(1) : "0.0";
         return <span className="text-xs text-muted-foreground">{percentage}%</span>;
