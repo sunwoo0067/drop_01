@@ -3227,17 +3227,19 @@ def _get_coupang_product_metadata(
             if agreed:
                 pred_name = product.processed_name or product.name
                 code, pred_data = client.predict_category(pred_name)
-                if code == 200 and pred_data.get("code") == "SUCCESS":
+                if code == 200 and isinstance(pred_data, dict):
+                    resp_code = pred_data.get("code")
                     resp_data = pred_data.get("data")
-                    if isinstance(resp_data, dict) and "predictedCategoryCode" in resp_data:
-                        predicted_category_code = int(resp_data["predictedCategoryCode"])
-                        predicted_from_ai = True
-                    elif isinstance(resp_data, dict) and "predictedCategoryId" in resp_data:
-                        predicted_category_code = int(resp_data["predictedCategoryId"])
-                        predicted_from_ai = True
-                    elif isinstance(resp_data, (str, int)):
-                        predicted_category_code = int(resp_data)
-                        predicted_from_ai = True
+                    if resp_code in ("SUCCESS", 200, None) and resp_data is not None:
+                        if isinstance(resp_data, dict) and "predictedCategoryCode" in resp_data:
+                            predicted_category_code = int(resp_data["predictedCategoryCode"])
+                            predicted_from_ai = True
+                        elif isinstance(resp_data, dict) and "predictedCategoryId" in resp_data:
+                            predicted_category_code = int(resp_data["predictedCategoryId"])
+                            predicted_from_ai = True
+                        elif isinstance(resp_data, (str, int)):
+                            predicted_category_code = int(resp_data)
+                            predicted_from_ai = True
                     if predicted_from_ai:
                         logger.info(
                             "쿠팡 카테고리 예측 결과: product=%s name=%s predicted=%s",
