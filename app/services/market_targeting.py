@@ -131,8 +131,21 @@ def resolve_supplier_category_name(session: Session, product: Product) -> str | 
     return None
 
 
-def decide_target_market_by_category(category_name: str | None) -> tuple[str, str]:
+def _is_unknown_category(category_name: str | None) -> bool:
     if not category_name:
+        return True
+    normalized = str(category_name).strip().lower()
+    if not normalized:
+        return True
+    unknown_tokens = {"unknown", "n/a", "na", "none", "-", "null"}
+    return normalized in unknown_tokens
+
+
+def decide_target_market_by_category(category_name: str | None) -> tuple[str, str]:
+    if _is_unknown_category(category_name):
+        allow_prediction = os.getenv("COUPANG_PREDICT_ON_UNKNOWN", "1") == "1"
+        if allow_prediction:
+            return "COUPANG", "category_unknown_predict"
         return "SMARTSTORE", "no_category"
 
     allow_keywords = _parse_env_list("COUPANG_CATEGORY_ALLOW_KEYWORDS")

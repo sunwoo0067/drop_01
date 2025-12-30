@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import select, or_
 import asyncio
+import os
 import uuid
 from pydantic import BaseModel, Field
 
@@ -288,6 +289,7 @@ async def register_products_bulk_endpoint(
     force_fetch_ownerclan: bool = Query(default=True, alias="forceFetchOwnerClan"),
     augment_images: bool = Query(default=True, alias="augmentImages"),
     wait: bool = Query(default=False),
+    research_mode: bool = Query(default=False, alias="researchMode"),
     limit: int = Query(default=50, ge=1, le=200),
     account_id: uuid.UUID | None = Query(default=None, alias="accountId"),
 ):
@@ -326,9 +328,20 @@ async def register_products_bulk_endpoint(
                 detail={"message": "쿠팡 등록을 위해서는 가공 완료 및 이미지 1장이 필요합니다", "items": missing[:50]},
             )
 
+    if research_mode:
+        if os.getenv("COUPANG_BULK_TRY", "0") != "1":
+            raise HTTPException(status_code=403, detail="Research mode disabled (COUPANG_BULK_TRY!=1)")
+        if not wait:
+            raise HTTPException(status_code=400, detail="Research mode requires wait=true")
+
     if wait:
         # 동기 실행(운영용). bulk는 시간이 걸릴 수 있으므로 limit을 반드시 사용합니다.
         from app.services.coupang_ready_service import ensure_product_ready_for_coupang
+        from app.models import SupplierRawFetchLog
+        try:
+            from app.smartstore_sync import register_smartstore_product
+        except Exception:
+            register_smartstore_product = None
 
         if payload.productIds:
             stmt = select(Product).where(Product.id.in_(payload.productIds))
@@ -350,6 +363,15 @@ async def register_products_bulk_endpoint(
         blocked_ids: list[str] = []
         skipped_reasons: list[dict] = []
 
+        smartstore_account = None
+        if research_mode:
+            smartstore_account = session.scalars(
+                select(MarketAccount)
+                .where(MarketAccount.market_code == "SMARTSTORE")
+                .where(MarketAccount.is_active == True)
+                .limit(1)
+            ).first()
+
         for account in accounts:
             for p in products:
                 total += 1
@@ -358,6 +380,21 @@ async def register_products_bulk_endpoint(
                     blocked += 1
                     blocked_ids.append(str(p.id))
                     continue
+                if research_mode and p.coupang_doc_pending:
+                    blocked += 1
+                    blocked_ids.append(str(p.id))
+                    continue
+                if research_mode:
+                    existing_skip = session.scalars(
+                        select(SupplierRawFetchLog.id)
+                        .where(SupplierRawFetchLog.endpoint == "register_product_skipped")
+                        .where(SupplierRawFetchLog.request_payload.contains({"productId": str(p.id)}))
+                        .limit(1)
+                    ).first()
+                    if existing_skip:
+                        blocked += 1
+                        blocked_ids.append(str(p.id))
+                        continue
 
                 if auto_fix:
                     ready = await ensure_product_ready_for_coupang(
@@ -406,6 +443,15 @@ async def register_products_bulk_endpoint(
                     registered_ok += 1
                     registered_ok_ids.append(str(p.id))
                 else:
+                    if research_mode:
+                        p.coupang_doc_pending = True
+                        p.coupang_doc_pending_reason = str(reason or "research_mode_failed")
+                        session.commit()
+                        if smartstore_account and register_smartstore_product:
+                            fallback_result = register_smartstore_product(session, smartstore_account.id, p.id)
+                            if fallback_result.get("status") == "success":
+                                p.status = "ACTIVE"
+                                session.commit()
                     if _is_skipped_reason(reason):
                         blocked += 1
                         blocked_ids.append(str(p.id))

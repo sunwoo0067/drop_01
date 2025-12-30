@@ -133,6 +133,55 @@ def _required_doc_applies(required_flag: str, product: Product) -> bool:
     return False
 
 
+def _cert_required_applies(required_flag: str, product: Product) -> bool:
+    return _required_doc_applies(required_flag, product)
+
+
+def _score_category_safety(meta: dict[str, Any] | None, product: Product) -> tuple[int, list[str]]:
+    if not isinstance(meta, dict):
+        return 0, []
+    reasons: list[str] = []
+    score = 0
+
+    required_docs = _extract_required_doc_templates(meta)
+    required_templates: list[str] = []
+    for doc in required_docs:
+        required_flag = doc.get("required") or ""
+        if not _required_doc_applies(str(required_flag), product):
+            continue
+        name = doc.get("templateName") or doc.get("documentName") or ""
+        if name:
+            required_templates.append(str(name))
+
+    blocked_keywords = _parse_env_list("COUPANG_BLOCKED_REQUIRED_DOCUMENTS") or DEFAULT_COUPANG_BLOCKED_REQUIRED_DOC_KEYWORDS
+    allowed_templates = _parse_env_list("COUPANG_ALLOWED_REQUIRED_DOCUMENTS") or DEFAULT_COUPANG_ALLOWED_REQUIRED_DOC_TEMPLATES
+    blocked_tokens = _normalize_tokens(blocked_keywords)
+    allowed_tokens = _normalize_tokens(allowed_templates)
+
+    for name in required_templates:
+        if _match_any(name, blocked_tokens):
+            score -= 100
+            reasons.append(f"blocked_template:{name}")
+
+    if required_templates and not reasons:
+        if all(str(name).strip().lower() in allowed_tokens for name in required_templates):
+            score += 10
+            reasons.append("allowed_templates_only")
+
+    certifications = meta.get("certifications")
+    if isinstance(certifications, list):
+        for cert in certifications:
+            if not isinstance(cert, dict):
+                continue
+            required_flag = cert.get("required") or ""
+            if _cert_required_applies(str(required_flag), product):
+                score -= 100
+                cert_type = cert.get("certificationType") or cert.get("name") or "certification"
+                reasons.append(f"mandatory_cert:{cert_type}")
+
+    return score, reasons
+
+
 def _get_document_library_entry(
     session: Session,
     brand: str | None,
@@ -3146,8 +3195,27 @@ def _get_coupang_product_metadata(
 
     # 카테고리 예측
     predicted_category_code = 77800
+    predicted_from_ai = False
+    category_name = None
     try:
-        if os.getenv("COUPANG_ENABLE_CATEGORY_PREDICTION", "0") == "1":
+        from app.services.market_targeting import resolve_supplier_category_name
+        category_name = resolve_supplier_category_name(session, product)
+    except Exception:
+        category_name = None
+
+    def _is_unknown_category(name: str | None) -> bool:
+        if not name:
+            return True
+        normalized = str(name).strip().lower()
+        if not normalized:
+            return True
+        return normalized in {"unknown", "n/a", "na", "none", "-", "null"}
+
+    allow_prediction = os.getenv("COUPANG_ENABLE_CATEGORY_PREDICTION", "0") == "1"
+    if _is_unknown_category(category_name) and os.getenv("COUPANG_PREDICT_ON_UNKNOWN", "1") == "1":
+        allow_prediction = True
+    try:
+        if allow_prediction:
             agreed = False
             try:
                 agreed_http, agreed_data = client.check_auto_category_agreed(str(account.credentials.get("vendor_id") or "").strip())
@@ -3163,10 +3231,15 @@ def _get_coupang_product_metadata(
                     resp_data = pred_data.get("data")
                     if isinstance(resp_data, dict) and "predictedCategoryCode" in resp_data:
                         predicted_category_code = int(resp_data["predictedCategoryCode"])
+                        predicted_from_ai = True
                     elif isinstance(resp_data, (str, int)):
                         predicted_category_code = int(resp_data)
+                        predicted_from_ai = True
     except Exception as e:
         logger.info(f"카테고리 예측 스킵/실패: {e}")
+
+    if _is_unknown_category(category_name) and allow_prediction and not predicted_from_ai:
+        raise SkipCoupangRegistrationError("카테고리 예측 실패(unknown)")
 
     allowed_category_codes = _parse_env_list("COUPANG_ALLOWED_CATEGORY_CODES")
     blocked_category_codes = (
@@ -3241,7 +3314,12 @@ def _get_coupang_product_metadata(
         return False
 
     notice_meta = _fetch_category_meta(predicted_category_code)
-    if _has_mandatory_required_docs(notice_meta, product):
+    unsafe_predicted = False
+    safety_reasons: list[str] = []
+    if predicted_from_ai:
+        safety_score, safety_reasons = _score_category_safety(notice_meta, product)
+        unsafe_predicted = safety_score < 0
+    if _has_mandatory_required_docs(notice_meta, product) or unsafe_predicted:
         fallback_raw = (
             os.getenv("COUPANG_FALLBACK_CATEGORY_CODES", "")
             or os.getenv("COUPANG_FALLBACK_CATEGORY_CODE", "")
@@ -3261,7 +3339,8 @@ def _get_coupang_product_metadata(
             if fallback_code == predicted_category_code:
                 continue
             fallback_meta = _fetch_category_meta(fallback_code)
-            if not _has_mandatory_required_docs(fallback_meta, product):
+            fallback_score, _ = _score_category_safety(fallback_meta, product)
+            if not _has_mandatory_required_docs(fallback_meta, product) and fallback_score >= 0:
                 logger.info(
                     "쿠팡 카테고리 구비서류 요구로 대체 카테고리 사용: %s -> %s",
                     predicted_category_code,
@@ -3276,6 +3355,11 @@ def _get_coupang_product_metadata(
                 predicted_category_code,
                 fallback_codes,
             )
+            if unsafe_predicted:
+                label = ", ".join(safety_reasons) if safety_reasons else "unsafe_prediction"
+                raise SkipCoupangRegistrationError(
+                    f"쿠팡 예측 카테고리 안전 점수 미달: {predicted_category_code} ({label})"
+                )
 
     if isinstance(notice_meta, dict):
         category_name = notice_meta.get("displayCategoryName") or notice_meta.get("name") or ""
