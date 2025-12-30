@@ -3232,6 +3232,9 @@ def _get_coupang_product_metadata(
                     if isinstance(resp_data, dict) and "predictedCategoryCode" in resp_data:
                         predicted_category_code = int(resp_data["predictedCategoryCode"])
                         predicted_from_ai = True
+                    elif isinstance(resp_data, dict) and "predictedCategoryId" in resp_data:
+                        predicted_category_code = int(resp_data["predictedCategoryId"])
+                        predicted_from_ai = True
                     elif isinstance(resp_data, (str, int)):
                         predicted_category_code = int(resp_data)
                         predicted_from_ai = True
