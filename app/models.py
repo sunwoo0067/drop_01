@@ -1,10 +1,11 @@
+from typing import Any
 from pgvector.sqlalchemy import Vector
 from datetime import datetime
 import uuid
 
-from sqlalchemy import BigInteger, DateTime, Integer, Text, UniqueConstraint, ForeignKey, Float
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, Text, UniqueConstraint, ForeignKey, Float
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 
@@ -18,6 +19,21 @@ class DropshipBase(DeclarativeBase):
 class MarketBase(DeclarativeBase):
     pass
 
+
+
+class MarketFeePolicy(MarketBase):
+    __tablename__ = "market_fee_policies"
+    __table_args__ = (
+        UniqueConstraint("market_code", "category_id", name="uq_market_fee_policies_market_category"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_code: Mapped[str] = mapped_column(Text, nullable=False) # COUPANG, SMARTSTORE
+    category_id: Mapped[str | None] = mapped_column(Text, nullable=True) # Optional category-specific fee
+    fee_rate: Mapped[float] = mapped_column(Float, nullable=False) # 0.12 (12%)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class Embedding(DropshipBase):
@@ -194,6 +210,61 @@ class MarketAccount(MarketBase):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class CoupangDocumentLibrary(MarketBase):
+    __tablename__ = "coupang_document_library"
+    __table_args__ = (
+        UniqueConstraint("brand", "template_name", name="uq_coupang_document_library_brand_template"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    brand: Mapped[str] = mapped_column(Text, nullable=False)
+    template_name: Mapped[str] = mapped_column(Text, nullable=False)
+    vendor_document_path: Mapped[str] = mapped_column(Text, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CoupangBrandPolicy(MarketBase):
+    __tablename__ = "coupang_brand_policies"
+    __table_args__ = (
+        UniqueConstraint("brand", name="uq_coupang_brand_policies_brand"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    brand: Mapped[str] = mapped_column(Text, nullable=False)
+    naver_fallback_disabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class MarketRegistrationRetry(MarketBase):
+    __tablename__ = "market_registration_retries"
+    __table_args__ = (
+        UniqueConstraint("market_code", "product_id", name="uq_market_registration_retries_market_product"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_code: Mapped[str] = mapped_column(Text, nullable=False)
+    product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="queued")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CoupangCategoryMetaCache(MarketBase):
+    __tablename__ = "coupang_category_meta_cache"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    category_code: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    meta: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class MarketOrderRaw(MarketBase):
     __tablename__ = "market_order_raw"
     __table_args__ = (
@@ -222,6 +293,78 @@ class MarketProductRaw(MarketBase):
     raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
 
+class MarketInquiryRaw(MarketBase):
+    __tablename__ = "market_inquiry_raw"
+    __table_args__ = (
+        UniqueConstraint("market_code", "account_id", "inquiry_id", name="uq_market_inquiry_raw_account_inquiry"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_code: Mapped[str] = mapped_column(Text, nullable=False)
+    account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_accounts.id"), nullable=False)
+    inquiry_id: Mapped[str] = mapped_column(Text, nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    ai_suggested_answer: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class MarketRevenueRaw(MarketBase):
+    __tablename__ = "market_revenue_raw"
+    __table_args__ = (
+        UniqueConstraint("market_code", "account_id", "order_id", "sale_type", name="uq_market_revenue_raw_account_order_type"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_code: Mapped[str] = mapped_column(Text, nullable=False)
+    account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_accounts.id"), nullable=False)
+    order_id: Mapped[str] = mapped_column(Text, nullable=False)
+    sale_type: Mapped[str] = mapped_column(Text, nullable=False) # SALE, REFUND
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+
+class MarketSettlementRaw(MarketBase):
+    __tablename__ = "market_settlement_raw"
+    __table_args__ = (
+        UniqueConstraint("market_code", "account_id", "recognition_year_month", name="uq_market_settlement_raw_account_month"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_code: Mapped[str] = mapped_column(Text, nullable=False)
+    account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_accounts.id"), nullable=False)
+    recognition_year_month: Mapped[str] = mapped_column(Text, nullable=False) # YYYY-MM
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+
+class MarketReturnRaw(MarketBase):
+    __tablename__ = "market_return_raw"
+    __table_args__ = (
+        UniqueConstraint("market_code", "account_id", "receipt_id", name="uq_market_return_raw_account_return"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_code: Mapped[str] = mapped_column(Text, nullable=False)
+    account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_accounts.id"), nullable=False)
+    receipt_id: Mapped[str] = mapped_column(Text, nullable=False)  # 쿠팡 반품 접수번호
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+
+class MarketExchangeRaw(MarketBase):
+    __tablename__ = "market_exchange_raw"
+    __table_args__ = (
+        UniqueConstraint("market_code", "account_id", "exchange_id", name="uq_market_exchange_raw_account_exchange"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_code: Mapped[str] = mapped_column(Text, nullable=False)
+    account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_accounts.id"), nullable=False)
+    exchange_id: Mapped[str] = mapped_column(Text, nullable=False)  # 쿠팡 교환 접수번호
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+
 # --------------------------------------------------------------------------
 # Core Business Domain (Unified)
 # --------------------------------------------------------------------------
@@ -243,6 +386,12 @@ class Product(DropshipBase):
     processed_image_urls: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     processing_status: Mapped[str] = mapped_column(Text, nullable=False, default="PENDING") # PENDING, PROCESSING, COMPLETED, FAILED, PENDING_APPROVAL
     benchmark_product_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    coupang_parallel_imported: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    coupang_overseas_purchased: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    naver_fallback_disabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    coupang_doc_pending: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    coupang_doc_pending_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    coupang_eligibility: Mapped[str] = mapped_column(Text, nullable=False, default="UNKNOWN")
 
     # === 3단계 전략 관련 필드 ===
     # 라이프사이클 단계
@@ -346,6 +495,31 @@ class Product(DropshipBase):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
+    # Relationships
+    options: Mapped[list["ProductOption"]] = relationship("ProductOption", back_populates="product", cascade="all, delete-orphan")
+
+
+class ProductOption(DropshipBase):
+    __tablename__ = "product_options"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("products.id"), nullable=False)
+    
+    option_name: Mapped[str] = mapped_column(Text, nullable=False)  # 예: 색상/사이즈
+    option_value: Mapped[str] = mapped_column(Text, nullable=False) # 예: Red/XL
+    
+    cost_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    selling_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    stock_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    
+    external_option_key: Mapped[str | None] = mapped_column(Text, nullable=True) # 공급처 옵션 키
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    product: Mapped["Product"] = relationship("Product", back_populates="options")
+
 
 class MarketListing(MarketBase):
     __tablename__ = "market_listings"
@@ -423,6 +597,7 @@ class OrderItem(MarketBase):
     order_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("orders.id"), nullable=False)
     product_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     market_listing_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("market_listings.id"), nullable=True)
+    product_option_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
     external_item_id: Mapped[str | None] = mapped_column(Text, nullable=True)  # e.g. Coupang orderItemId
     product_name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -629,6 +804,10 @@ class SourcingRecommendation(DropshipBase):
     current_supply_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     recommended_selling_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     expected_margin: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    
+    # 옵션별 성과 및 추천 상세 (JSONB)
+    # [ { "option_id": str, "option_name": str, "option_value": str, "recommended_quantity": int, "score": float, ... } ]
+    option_recommendations: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
     
     # 재고/주문 정보
     current_stock: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

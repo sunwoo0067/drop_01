@@ -4,7 +4,7 @@ import logging
 import re
 import uuid
 from typing import Any
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import os
 import time
 
@@ -15,18 +15,25 @@ from sqlalchemy.sql import func
 
 from app.coupang_client import CoupangClient
 from app.models import (
+    SupplierOrder,
+    Order,
+    OrderItem,
+    OrderStatusHistory,
+    MarketInquiryRaw,
+    MarketRevenueRaw,
+    MarketSettlementRaw,
+    MarketReturnRaw,
+    MarketExchangeRaw,
+    Product,
+    ProductOption,
     MarketAccount,
+    CoupangDocumentLibrary,
+    SupplierItemRaw,
     MarketOrderRaw,
     MarketProductRaw,
     SupplierRawFetchLog,
-    Product,
     MarketListing,
-    SupplierAccount,
-    SupplierItemRaw,
-    SupplierOrderRaw,
-    SupplierOrder,
-    Order,
-    OrderStatusHistory,
+    CoupangCategoryMetaCache,
 )
 from app.ownerclan_client import OwnerClanClient
 from app.ownerclan_sync import get_primary_ownerclan_account
@@ -37,6 +44,173 @@ from app.settings import settings
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_COUPANG_ALLOWED_REQUIRED_DOC_TEMPLATES = [
+    "유통경로확인서",
+    "상표권사용동의서",
+    "브랜드소명자료",
+    "브랜드확인서",
+]
+
+DEFAULT_COUPANG_BLOCKED_REQUIRED_DOC_KEYWORDS = [
+    "KC",
+    "KC인증서",
+    "전기",
+    "전기안전인증",
+    "어린이제품안전",
+    "어린이제품안전확인",
+    "식품위생법",
+    "건강기능식품",
+    "의료",
+    "의료기기",
+    "안전인증",
+    "방송통신기자재",
+    "적합등록",
+    "시험성적서",
+]
+DEFAULT_COUPANG_NEVER_REQUIRED_DOC_TEMPLATES = [
+    "UN 38.3 Test Report",
+    "MSDS Test Report",
+    "MANDATORY INGREDIENTS PIC",
+]
+
+DEFAULT_COUPANG_BLOCKED_CATEGORY_KEYWORDS = [
+    "전기",
+    "전자",
+    "식품",
+    "유아",
+    "의료",
+    "화장품",
+]
+DEFAULT_COUPANG_BLOCKED_CATEGORY_CODES = [
+    "77800",
+]
+
+
+class SkipCoupangRegistrationError(Exception):
+    """상품 등록을 정책상 건너뛰는 경우 사용."""
+
+
+class CoupangDocumentPendingError(SkipCoupangRegistrationError):
+    def __init__(self, reason: str, missing_templates: list[str] | None = None):
+        super().__init__(reason)
+        self.missing_templates = missing_templates or []
+
+
+class CoupangNeverEligibleError(SkipCoupangRegistrationError):
+    """쿠팡 등록을 영구적으로 제외하는 경우."""
+
+
+def _parse_env_list(env_key: str) -> list[str]:
+    raw = os.getenv(env_key, "")
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def _normalize_tokens(values: list[str]) -> list[str]:
+    return [str(v).strip().lower() for v in values if str(v).strip()]
+
+
+def _match_any(text: str, keywords: list[str]) -> bool:
+    target = str(text or "").lower()
+    return any(keyword in target for keyword in keywords if keyword)
+
+
+def _extract_required_doc_templates(notice_meta: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(notice_meta, dict):
+        return []
+    docs = notice_meta.get("requiredDocumentNames")
+    if not isinstance(docs, list):
+        return []
+    return [doc for doc in docs if isinstance(doc, dict)]
+
+
+def _required_doc_applies(required_flag: str, product: Product) -> bool:
+    flag = str(required_flag or "")
+    if not flag:
+        return False
+    if flag == "OPTIONAL":
+        return False
+    if flag == "MANDATORY":
+        return True
+    if flag.startswith("MANDATORY_PARALLEL_IMPORTED"):
+        return bool(getattr(product, "coupang_parallel_imported", False))
+    if flag.startswith("MANDATORY_OVERSEAS_PURCHASED"):
+        return bool(getattr(product, "coupang_overseas_purchased", False))
+    if flag.startswith("MANDATORY"):
+        return True
+    return False
+
+
+def _cert_required_applies(required_flag: str, product: Product) -> bool:
+    return _required_doc_applies(required_flag, product)
+
+
+def _score_category_safety(meta: dict[str, Any] | None, product: Product) -> tuple[int, list[str]]:
+    if not isinstance(meta, dict):
+        return 0, []
+    reasons: list[str] = []
+    score = 0
+
+    required_docs = _extract_required_doc_templates(meta)
+    required_templates: list[str] = []
+    for doc in required_docs:
+        required_flag = doc.get("required") or ""
+        if not _required_doc_applies(str(required_flag), product):
+            continue
+        name = doc.get("templateName") or doc.get("documentName") or ""
+        if name:
+            required_templates.append(str(name))
+
+    blocked_keywords = _parse_env_list("COUPANG_BLOCKED_REQUIRED_DOCUMENTS") or DEFAULT_COUPANG_BLOCKED_REQUIRED_DOC_KEYWORDS
+    allowed_templates = _parse_env_list("COUPANG_ALLOWED_REQUIRED_DOCUMENTS") or DEFAULT_COUPANG_ALLOWED_REQUIRED_DOC_TEMPLATES
+    blocked_tokens = _normalize_tokens(blocked_keywords)
+    allowed_tokens = _normalize_tokens(allowed_templates)
+
+    for name in required_templates:
+        if _match_any(name, blocked_tokens):
+            score -= 100
+            reasons.append(f"blocked_template:{name}")
+
+    if required_templates and not reasons:
+        if all(str(name).strip().lower() in allowed_tokens for name in required_templates):
+            score += 10
+            reasons.append("allowed_templates_only")
+
+    certifications = meta.get("certifications")
+    if isinstance(certifications, list):
+        for cert in certifications:
+            if not isinstance(cert, dict):
+                continue
+            required_flag = cert.get("required") or ""
+            if _cert_required_applies(str(required_flag), product):
+                score -= 100
+                cert_type = cert.get("certificationType") or cert.get("name") or "certification"
+                reasons.append(f"mandatory_cert:{cert_type}")
+
+    return score, reasons
+
+
+def _get_document_library_entry(
+    session: Session,
+    brand: str | None,
+    template_name: str | None,
+) -> dict[str, Any] | None:
+    if not brand or not template_name:
+        return None
+    row = (
+        session.query(CoupangDocumentLibrary)
+        .filter(func.lower(CoupangDocumentLibrary.brand) == brand.strip().lower())
+        .filter(func.lower(CoupangDocumentLibrary.template_name) == template_name.strip().lower())
+        .filter(CoupangDocumentLibrary.is_active.is_(True))
+        .first()
+    )
+    if not row or not row.vendor_document_path:
+        return None
+    return {
+        "templateName": row.template_name,
+        "vendorDocumentPath": row.vendor_document_path,
+    }
 
 def _preserve_detail_html(product: Product | None = None) -> bool:
     """
@@ -250,23 +424,30 @@ def sync_coupang_products(session: Session, account_id: uuid.UUID, deep: bool = 
             if not isinstance(p, dict):
                 continue
             seller_product_id = str(p.get("sellerProductId"))
+            status_name = str(p.get("statusName") or "")
+            
             if deep:
                 detail_code, detail_data = client.get_product(seller_product_id)
                 _log_fetch(session, account, f"get_product/{seller_product_id}", {}, detail_code, detail_data)
                 detail_obj = detail_data.get("data") if isinstance(detail_data, dict) else None
                 if detail_code == 200 and isinstance(detail_obj, dict):
                     p = detail_obj
+                    status_name = str(p.get("statusName") or "")
+
+            # MarketProductRaw 저장 (기존 로직 유지)
             existing_row = session.execute(
                 select(MarketProductRaw)
                 .where(MarketProductRaw.market_code == "COUPANG")
                 .where(MarketProductRaw.account_id == account.id)
                 .where(MarketProductRaw.market_item_id == seller_product_id)
             ).scalars().first()
+            
             if existing_row and isinstance(existing_row.raw, dict):
                 existing_status = (existing_row.raw.get("status") or "").strip().upper()
                 existing_name = str(existing_row.raw.get("statusName") or "")
                 if existing_status == "SUSPENDED" or "판매중지" in existing_name:
                     p = {**p, "status": "SUSPENDED", "statusName": "판매중지"}
+
             stmt = insert(MarketProductRaw).values(
                 market_code="COUPANG",
                 account_id=account.id,
@@ -279,6 +460,38 @@ def sync_coupang_products(session: Session, account_id: uuid.UUID, deep: bool = 
                 set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at},
             )
             session.execute(stmt)
+
+            # MarketListing 상태 연동 및 반려 사유 기록
+            listing = session.execute(
+                select(MarketListing)
+                .where(MarketListing.market_account_id == account.id)
+                .where(MarketListing.market_item_id == seller_product_id)
+            ).scalars().first()
+            
+            if listing:
+                # 상태 정규화
+                normalized_status = None
+                s_upper = status_name.upper()
+                if "반려" in status_name or s_upper == "DENIED":
+                    normalized_status = "DENIED"
+                elif "승인완료" in status_name or s_upper == "APPROVED":
+                    normalized_status = "ACTIVE"
+                elif "심사중" in status_name or s_upper == "IN_REVIEW":
+                    normalized_status = "IN_REVIEW"
+                elif "승인대기" in status_name or s_upper == "APPROVING":
+                    normalized_status = "APPROVING"
+                
+                if normalized_status:
+                    listing.coupang_status = status_name # 원본 상태명 저장
+                    if normalized_status == "ACTIVE":
+                        listing.status = "ACTIVE"
+                    elif normalized_status == "DENIED":
+                        listing.status = "DENIED"
+                    
+                # 승인 반려 시 상세 사유 동기화 (deep이 아니더라도 반려 시에는 상세 조회 수행)
+                if "반려" in status_name or s_upper == "DENIED":
+                    # 이미 사유가 기록되어 있고 상태가 같다면 중복 조회 방지 (선택 사항)
+                    sync_market_listing_status(session, listing.id)
 
         session.commit()
         total_processed += len(products)
@@ -760,11 +973,13 @@ def sync_ownerclan_orders_to_coupang_invoices(
             resp: dict[str, Any] | None = None
             while attempts <= retry_count:
                 attempts += 1
+                # CoupangClient의 통일된 cancel_order 메서드 사용
                 code, resp = client.cancel_order(
                     order_id=coupang_order_id,
                     vendor_item_ids=vendor_item_ids,
                     receipt_counts=receipt_counts,
                     user_id=user_id,
+                    middle_cancel_code="CCPNER",  # 주소지 등 제휴사 오류/취소
                 )
                 resp = resp if isinstance(resp, dict) else {"_raw": resp}
                 ok = _is_cancel_success(code, resp)
@@ -869,68 +1084,6 @@ def sync_ownerclan_orders_to_coupang_invoices(
         "failures": failures[:50],
     }
         
-    if account.market_code != "COUPANG":
-        logger.error(f"Account {account.name} is not a Coupang account")
-        return 0
-        
-    if not account.is_active:
-        logger.info(f"Account {account.name} is inactive, skipping sync")
-        return 0
-
-    try:
-        client = _get_client_for_account(account)
-    except Exception as e:
-        logger.error(f"Failed to initialize client for {account.name}: {e}")
-        return 0
-
-    logger.info(f"Starting product sync for {account.name} ({account.market_code})")
-    
-    total_processed = 0
-    next_token = None
-    
-    while True:
-        # Fetch page
-        code, data = client.get_products(
-            next_token=next_token,
-            max_per_page=50  # Max allowed by Coupang
-        )
-        
-        # Log fetch attempt (optional but good for debugging)
-        _log_fetch(session, account, "get_products", {"nextToken": next_token}, code, data)
-        
-        if code != 200:
-            logger.error(f"Failed to fetch products for {account.name}: {data}")
-            break
-            
-        products = data.get("data", [])
-        if not products:
-            break
-            
-        # Upsert Raw Data
-        for p in products:
-            seller_product_id = str(p.get("sellerProductId"))
-            stmt = insert(MarketProductRaw).values(
-                market_code="COUPANG",
-                account_id=account.id,
-                market_item_id=seller_product_id,
-                raw=p,
-                fetched_at=datetime.now(timezone.utc),
-            )
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["market_code", "account_id", "market_item_id"],
-                set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at}
-            )
-            session.execute(stmt)
-            
-        session.commit()
-        total_processed += len(products)
-        
-        next_token = data.get("nextToken")
-        if not next_token:
-            break
-            
-    logger.info(f"Finished product sync for {account.name}. Total: {total_processed}")
-    return total_processed
 
 
 def sync_coupang_orders_raw(
@@ -939,12 +1092,12 @@ def sync_coupang_orders_raw(
     created_at_from: str,
     created_at_to: str,
     status: str | None = None,
-    max_per_page: int = 100,
+    max_per_page: int = 50,
 ) -> int:
     """
     쿠팡 발주서(주문) 목록을 조회하여 MarketOrderRaw에 저장합니다.
 
-    - created_at_from / created_at_to: 쿠팡 API 규격(yyyy-MM-dd)
+    - created_at_from / created_at_to: yyyy-MM-dd 또는 ISO-8601
     - status: 쿠팡 주문 상태 필터(옵션)
     """
     account = session.get(MarketAccount, account_id)
@@ -966,9 +1119,30 @@ def sync_coupang_orders_raw(
         logger.error(f"Failed to initialize client for {account.name}: {e}")
         return 0
 
-    total_processed = 0
+    # 기간에 따라 search_type 결정 (24시간 이내면 timeFrame 권장)
+    search_type = None
+    try:
+        def _parse_dt(s: str) -> datetime:
+            s_clean = s.split("+")[0].split("Z")[0].strip()
+            if "T" in s_clean:
+                formats = ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"]
+                for f in formats:
+                    try:
+                        return datetime.strptime(s_clean, f)
+                    except ValueError:
+                        continue
+            return datetime.strptime(s_clean, "%Y-%m-%d")
 
-    # status가 없으면 신규 처리 대상 중심으로 2개 상태를 조회
+        dt_from = _parse_dt(created_at_from)
+        dt_to = _parse_dt(created_at_to)
+        duration_hours = (dt_to - dt_from).total_seconds() / 3600
+        if duration_hours <= 24:
+            search_type = "timeFrame"
+    except Exception:
+        # 파싱 실패 시 기본값(Daily) 사용
+        pass
+
+    total_processed = 0
     statuses = [status] if status else ["ACCEPT", "INSTRUCT"]
 
     for st in statuses:
@@ -981,6 +1155,7 @@ def sync_coupang_orders_raw(
                     status=st,
                     next_token=next_token,
                     max_per_page=max_per_page,
+                    search_type=search_type,
                 )
             except Exception as e:
                 logger.error(f"Failed to fetch ordersheets for {account.name}: {e}")
@@ -990,18 +1165,20 @@ def sync_coupang_orders_raw(
                 logger.error(f"Failed to fetch ordersheets for {account.name}: HTTP {code} {data}")
                 break
 
-            if isinstance(data, dict) and data.get("code") not in (None, "SUCCESS", 200, "200"):
-                logger.error(f"Failed to fetch ordersheets for {account.name}: {data}")
+            if not isinstance(data, dict):
                 break
 
-            # 응답 구조 방어: top-level nextToken / data.nextToken 모두 지원
-            root = (data or {}).get("data") if isinstance(data, dict) else None
-            if not isinstance(root, dict):
-                root = {}
+            if data.get("code") not in (None, "SUCCESS", 200, "200"):
+                logger.error(f"Failed to fetch ordersheets for {account.name} (API Error): {data}")
+                break
 
-            content = root.get("content")
-            if content is None and isinstance((data or {}).get("data"), list):
-                content = (data or {}).get("data")
+            # 데이터 추출 (배열 형태)
+            content = data.get("data")
+            if not isinstance(content, list):
+                # 하위 구조(content) 확인 (일부 버전 대응)
+                if isinstance(content, dict):
+                    content = content.get("content")
+            
             if not isinstance(content, list) or not content:
                 break
 
@@ -1009,7 +1186,9 @@ def sync_coupang_orders_raw(
             for row in content:
                 if not isinstance(row, dict):
                     continue
-                order_id = row.get("orderSheetId") or row.get("orderId") or row.get("shipmentBoxId") or row.get("id")
+                
+                # orderId 식별 (shipmentBoxId 가 필수로 존재하는 경우가 많음)
+                order_id = row.get("orderId") or row.get("shipmentBoxId") or row.get("orderSheetId") or row.get("id")
                 if order_id is None:
                     continue
 
@@ -1033,12 +1212,178 @@ def sync_coupang_orders_raw(
 
             session.commit()
 
-            next_token = None
-            if isinstance(data, dict):
-                next_token = data.get("nextToken") or root.get("nextToken")
+            # nextToken 추출
+            next_token = data.get("nextToken")
+            if not next_token and isinstance(data.get("data"), dict):
+                next_token = data["data"].get("nextToken")
+            
             if not next_token:
                 break
 
+    return total_processed
+
+
+def sync_coupang_returns_raw(
+    session: Session,
+    account_id: uuid.UUID,
+    created_at_from: str,
+    created_at_to: str,
+    status: str | None = None,
+    cancel_type: str = "RETURN",
+    search_type: str = "timeFrame",
+) -> int:
+    """
+    쿠팡 반품/취소 요청 목록을 조회하여 수집합니다.
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account or account.market_code != "COUPANG":
+        return 0
+
+    if not account.is_active:
+        return 0
+
+    try:
+        client = _get_client_for_account(account)
+    except Exception as e:
+        logger.error(f"Failed to initialize client for {account.name}: {e}")
+        return 0
+
+    # 반품 요청 조회 (v6 기반)
+    code, data = client.get_return_requests(
+        created_at_from=created_at_from,
+        created_at_to=created_at_to,
+        status=status,
+        search_type=search_type,
+        cancel_type=cancel_type,
+    )
+    
+    _log_fetch(session, account, "get_return_requests", {
+        "from": created_at_from, 
+        "to": created_at_to,
+        "cancelType": cancel_type,
+        "searchType": search_type
+    }, code, data)
+
+    if code != 200:
+        logger.error(f"Failed to fetch return requests: {code} {data}")
+        return 0
+
+    content = data.get("data")
+    if not isinstance(content, list) or not content:
+        return 0
+
+    total_processed = 0
+    now = datetime.now(timezone.utc)
+    for row in content:
+        if not isinstance(row, dict):
+            continue
+        
+        # 반품/취소는 receiptId가 고유 식별자
+        receipt_id = row.get("receiptId")
+        if receipt_id is None:
+            continue
+
+        # MarketOrderRaw에 저장 (prefix 'R-' 또는 'C-'를 붙여서 주문과 구분할 수도 있지만, 
+        # 일단은 원본 그대로 저장하되 raw 데이터에 정보를 남김)
+        # order_id 필드에 receiptId 저장
+        store_id = f"RET-{receipt_id}" if cancel_type == "RETURN" else f"CAN-{receipt_id}"
+        
+        row_to_store = dict(row)
+        row_to_store["_cancelType"] = cancel_type
+        row_to_store["_fetchType"] = "RETURN_REQUEST"
+
+        stmt = insert(MarketOrderRaw).values(
+            market_code="COUPANG",
+            account_id=account.id,
+            order_id=str(store_id),
+            raw=row_to_store,
+            fetched_at=now,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["market_code", "account_id", "order_id"],
+            set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at},
+        )
+        session.execute(stmt)
+        total_processed += 1
+
+    session.commit()
+    return total_processed
+
+
+def sync_coupang_exchanges_raw(
+    session: Session,
+    account_id: uuid.UUID,
+    created_at_from: str,
+    created_at_to: str,
+    status: str | None = None,
+) -> int:
+    """
+    쿠팡 교환 요청 목록을 조회하여 수집합니다.
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account or account.market_code != "COUPANG":
+        return 0
+
+    if not account.is_active:
+        return 0
+
+    try:
+        client = _get_client_for_account(account)
+    except Exception as e:
+        logger.error(f"Failed to initialize client for {account.name}: {e}")
+        return 0
+
+    # 교환 요청 조회 (v4 기반)
+    code, data = client.get_exchange_requests(
+        created_at_from=created_at_from,
+        created_at_to=created_at_to,
+        status=status,
+    )
+    
+    _log_fetch(session, account, "get_exchange_requests", {
+        "from": created_at_from, 
+        "to": created_at_to
+    }, code, data)
+
+    if code != 200:
+        logger.error(f"Failed to fetch exchange requests: {code} {data}")
+        return 0
+
+    content = data.get("data")
+    if not isinstance(content, list) or not content:
+        return 0
+
+    total_processed = 0
+    now = datetime.now(timezone.utc)
+    for row in content:
+        if not isinstance(row, dict):
+            continue
+        
+        # 교환은 exchangeId가 고유 식별자
+        exchange_id = row.get("exchangeId")
+        if exchange_id is None:
+            continue
+
+        store_id = f"EXC-{exchange_id}"
+        
+        row_to_store = dict(row)
+        row_to_store["_fetchType"] = "EXCHANGE_REQUEST"
+
+        stmt = insert(MarketOrderRaw).values(
+            market_code="COUPANG",
+            account_id=account.id,
+            order_id=str(store_id),
+            raw=row_to_store,
+            fetched_at=now,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["market_code", "account_id", "order_id"],
+            set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at},
+        )
+        session.execute(stmt)
+        total_processed += 1
+
+    session.commit()
     return total_processed
 
 
@@ -1090,6 +1435,40 @@ def _log_fetch(session: Session, account: MarketAccount, endpoint: str, payload:
             log_session.commit()
     except Exception as e:
         logger.warning(f"API 로그 기록 실패: {e}")
+
+
+def _log_registration_skip(
+    session: Session,
+    account: MarketAccount,
+    product_id: uuid.UUID,
+    reason: str,
+    category_code: int | None = None,
+) -> None:
+    payload = {
+        "productId": str(product_id),
+        "reason": reason,
+    }
+    if category_code is not None:
+        payload["categoryCode"] = int(category_code)
+    _log_fetch(session, account, "register_product_skipped", payload, 0, {"code": "SKIPPED", "message": reason})
+
+    try:
+        from app.db import SessionLocal
+        with SessionLocal() as log_session:
+            listing = (
+                log_session.query(MarketListing)
+                .filter(MarketListing.market_account_id == account.id)
+                .filter(MarketListing.product_id == product_id)
+                .first()
+            )
+            if listing:
+                listing.rejection_reason = {
+                    "message": reason,
+                    "context": "registration_skip",
+                }
+                log_session.commit()
+    except Exception as e:
+        logger.warning(f"스킵 사유 저장 실패: {e}")
 
 
 def sync_market_listing_status(session: Session, listing_id: uuid.UUID) -> tuple[bool, str | None]:
@@ -1197,6 +1576,14 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
     if not product:
         logger.error(f"상품을 찾을 수 없습니다: {product_id}")
         return False, "상품을 찾을 수 없습니다"
+    if getattr(product, "coupang_eligibility", "") == "NEVER":
+        reason = "SKIPPED: coupang_eligibility=NEVER"
+        _log_registration_skip(session, account, product.id, reason, None)
+        return False, reason
+    if product.coupang_doc_pending and (product.coupang_doc_pending_reason or "").startswith("NEVER:"):
+        reason = f"SKIPPED: {product.coupang_doc_pending_reason}"
+        _log_registration_skip(session, account, product.id, reason, None)
+        return False, reason
 
     original_images = _get_original_image_urls(session, product)
     payload_images = original_images
@@ -1225,22 +1612,80 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
         return False, f"클라이언트 초기화 실패: {e}"
 
     # 1. 메타 데이터 준비
-    meta_result = _get_coupang_product_metadata(session, client, account, product)
+    try:
+        meta_result = _get_coupang_product_metadata(session, client, account, product)
+    except SkipCoupangRegistrationError as e:
+        reason = f"SKIPPED: {e}"
+        logger.info(f"상품 등록 스킵: {e}")
+        _log_registration_skip(
+            session,
+            account,
+            product.id,
+            reason,
+            None,
+        )
+        return False, reason
+
     if not meta_result["ok"]:
         return False, meta_result["error"]
 
-    payload = _map_product_to_coupang_payload(
-        product,
-        account,
-        meta_result["return_center_code"],
-        meta_result["outbound_center_code"],
-        meta_result["predicted_category_code"],
-        meta_result["return_center_detail"],
-        meta_result["notice_meta"],
-        meta_result["shipping_fee"],
-        meta_result["delivery_company_code"],
-        image_urls=payload_images,
-    )
+    try:
+        payload = _map_product_to_coupang_payload(
+            session,
+            product,
+            account,
+            meta_result["return_center_code"],
+            meta_result["outbound_center_code"],
+            meta_result["predicted_category_code"],
+            meta_result["return_center_detail"],
+            meta_result["notice_meta"],
+            meta_result["shipping_fee"],
+            meta_result["delivery_company_code"],
+            image_urls=payload_images,
+        )
+    except CoupangNeverEligibleError as e:
+        reason = f"SKIPPED: {e}"
+        logger.info(f"상품 등록 스킵: {e}")
+        product.coupang_doc_pending = True
+        product.coupang_doc_pending_reason = str(e)
+        product.coupang_eligibility = "NEVER"
+        session.commit()
+        _log_registration_skip(
+            session,
+            account,
+            product.id,
+            reason,
+            meta_result.get("predicted_category_code"),
+        )
+        return False, reason
+    except CoupangDocumentPendingError as e:
+        reason = f"SKIPPED: {e}"
+        logger.info(f"상품 등록 스킵: {e}")
+        product.coupang_doc_pending = True
+        product.coupang_doc_pending_reason = str(e)
+        session.commit()
+        _log_registration_skip(
+            session,
+            account,
+            product.id,
+            reason,
+            meta_result.get("predicted_category_code"),
+        )
+        return False, reason
+    except SkipCoupangRegistrationError as e:
+        reason = f"SKIPPED: {e}"
+        logger.info(f"상품 등록 스킵: {e}")
+        _log_registration_skip(
+            session,
+            account,
+            product.id,
+            reason,
+            meta_result.get("predicted_category_code"),
+        )
+        return False, reason
+    except ValueError as e:
+        logger.error(f"상품 등록 사전검증 실패: {e}")
+        return False, str(e)
     
     # 2. API 호출 (429 대응을 위한 재시도 로직 포함)
     max_retries = 3
@@ -1291,6 +1736,8 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
 
     # 등록 직후 쿠팡이 내려주는 vendor_inventory 기반 이미지 경로로 상세(contents)를 한 번 더 보강합니다.
     # (내부 저장 포맷/렌더링 이슈 회피 목적)
+    # 상품 조회 API 응답에서 items[].vendorItemId는 상품 승인완료 시에 값이 표시됨
+    # 임시저장 상태일 경우 null이므로 최대 10회 재시도
     if not _preserve_detail_html(product):
         try:
             for _ in range(10):
@@ -1301,6 +1748,12 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
                     continue
 
                 items2 = data_obj2.get("items") if isinstance(data_obj2.get("items"), list) else []
+                # vendorItemId가 아직 없으면 재시도 (승인 대기 중일 가능성)
+                if items2 and isinstance(items2[0], dict):
+                    if not items2[0].get("vendorItemId"):
+                        time.sleep(2.0)
+                        continue
+
                 urls: list[str] = []
                 for it in items2:
                     if not isinstance(it, dict):
@@ -1383,6 +1836,8 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
     session.execute(stmt)
     
     product.processing_status = "LISTED"
+    product.coupang_doc_pending = False
+    product.coupang_doc_pending_reason = None
     session.commit()
     
     logger.info(f"상품 등록 성공 (ID: {product.id}, sellerProductId: {seller_product_id})")
@@ -1391,8 +1846,16 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
 
 def delete_product_from_coupang(session: Session, account_id: uuid.UUID, seller_product_id: str) -> tuple[bool, str | None]:
     """
-    쿠팡에서 상품을 삭제합니다. 
-    먼저 모든 아이템을 판매중지 처리한 후 삭제를 시도합니다.
+    쿠팡에서 상품을 삭제합니다.
+    
+    쿠팡 API 문서 요구사항:
+    - 상품이 '승인대기중' 상태가 아니며
+    - 상품에 포함된 옵션(아이템)이 모두 판매중지된 경우에만 삭제 가능
+    
+    삭제 순서:
+    1. 모든 아이템 판매중지 처리 (승인대기중 상태의 경우 필수)
+    2. 상품 삭제 API 호출
+    3. DB에서 MarketListing 삭제
     """
     account = session.get(MarketAccount, account_id)
     if not account:
@@ -1401,17 +1864,27 @@ def delete_product_from_coupang(session: Session, account_id: uuid.UUID, seller_
     try:
         client = _get_client_for_account(account)
         
-        # 1. 현재 상품 정보 조회하여 vendorItemIds 확보
+        # 1. 현재 상품 정보 조회하여 vendorItemIds 및 상태 확보
         code, data = client.get_product(seller_product_id)
         if code != 200:
             return False, f"상품 조회 실패: {data.get('message', '알 수 없는 오류')}"
         
-        items = data.get("data", {}).get("items", [])
-        for item in items:
-            vendor_item_id = item.get("vendorItemId")
-            if vendor_item_id:
-                # 판매 중지 시도 (이미 중지된 경우 무시될 수 있음)
-                client.stop_sales(str(vendor_item_id))
+        # 상품 상태 확인 (쿠팡 API 요구사항)
+        current_data = data.get("data", {})
+        status_name = current_data.get("statusName", "")
+        
+        # 승인대기중 상태인 경우, 모든 옵션이 판매중지되어야 삭제 가능
+        if status_name == "승인대기중":
+            logger.info(f"승인대기중 상품 삭제 시도 (sellerProductId={seller_product_id}, status={status_name})")
+        
+        # 임시저장/승인완료/승인반려 상태에서도 판매중지 처리 후 삭제 (안전한 처리)
+        if status_name in ["임시저장", "승인완료", "승인반려"]:
+            logger.info(f"상품 삭제 시도 (sellerProductId={seller_product_id}, status={status_name})")
+            for item in items:
+                vendor_item_id = item.get("vendorItemId")
+                if vendor_item_id:
+                    # 판매 중지 시도 (이미 중지된 경우 무시될 수 있음)
+                    client.stop_sales(str(vendor_item_id))
         
         # 2. 삭제 시도
         code, data = client.delete_product(seller_product_id)
@@ -1428,7 +1901,12 @@ def delete_product_from_coupang(session: Session, account_id: uuid.UUID, seller_
             session.commit()
             return True, None
         else:
-            return False, f"삭제 실패: {data.get('message', '알 수 없는 오류')}"
+            # 쿠팡 API 오류 메시지 확인
+            error_msg = data.get("message", "알 수 없는 오류")
+            # "업체상품[***]이 없거나 삭제 불가능한 상태입니다." 메시지는
+            # 이미 승인대기중이거나 판매중지가 완료되지 않은 경우 발생
+            logger.error(f"상품 삭제 실패: {error_msg}")
+            return False, f"삭제 실패: {error_msg}"
             
     except Exception as e:
         session.rollback()
@@ -1499,6 +1977,66 @@ def stop_product_sales(session: Session, account_id: uuid.UUID, seller_product_i
         logger.error(f"쿠팡 판매중지 중 예외 발생: {e}")
         return False, {"message": str(e)}
 
+def update_coupang_price(session: Session, account_id: uuid.UUID, market_item_id: str, price: int) -> Tuple[bool, str | None]:
+    """
+    쿠팡 상품 가격을 수정합니다.
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account:
+        return False, "MarketAccount not found"
+    
+    client = _get_client_for_account(account)
+    
+    # 1. 상품 상세 정보 조회하여 vendorItemId 목록 획득
+    code, data = client.get_product(market_item_id)
+    if code != 200:
+        return False, f"상품 조회 실패: {data.get('message', 'Unknown error')}"
+        
+    items = data.get("data", {}).get("items", [])
+    if not items:
+        return False, "상품 아이템(옵션)을 찾을 수 없습니다"
+        
+    success_count = 0
+    errors = []
+    
+    # 2. 모든 아이템(옵션)에 대해 가격 업데이트 수행
+    for item in items:
+        vendor_item_id = str(item.get("vendorItemId"))
+        # 쿠팡은 10원 단위 절사 권장
+        target_price = ((price + 9) // 10) * 10
+        
+        # originalPrice 먼저 업데이트 (salePrice보다 작으면 오류 날 수 있음)
+        client.update_original_price(vendor_item_id, target_price)
+        
+        # salePrice 업데이트
+        u_code, u_data = client.update_price(vendor_item_id, target_price, force=True)
+        if u_code == 200:
+            success_count += 1
+        else:
+            msg = u_data.get("message", "Unknown error")
+            errors.append(f"{vendor_item_id}: {msg}")
+            
+    if success_count == 0:
+        return False, f"가격 수정 실패: {', '.join(errors)}"
+        
+    # 3. DB 업데이트 (MarketListing 및 Product)
+    listing = session.execute(
+        select(MarketListing)
+        .where(MarketListing.market_account_id == account_id)
+        .where(MarketListing.market_item_id == market_item_id)
+    ).scalars().first()
+    
+    if listing:
+        product = session.get(Product, listing.product_id)
+        if product:
+            product.selling_price = price
+            session.commit()
+            
+    if success_count < len(items):
+        return True, f"일부 옵션 수정 완료 ({success_count}/{len(items)}). 오류: {', '.join(errors)}"
+        
+    return True, "가격 수정 완료"
+
 
 def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_id: uuid.UUID) -> tuple[bool, str | None]:
     """
@@ -1541,30 +2079,58 @@ def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_i
             return False, meta_result["error"]
 
         # 2. 페이로드 생성 (Full Sync 방식: 내부 매핑 함수 활용)
-        payload = _map_product_to_coupang_payload(
-            product,
-            account,
-            meta_result["return_center_code"],
-            meta_result["outbound_center_code"],
-            meta_result["predicted_category_code"],
-            meta_result["return_center_detail"],
-            meta_result["notice_meta"],
-            meta_result["shipping_fee"],
-            meta_result["delivery_company_code"],
-            image_urls=_get_original_image_urls(session, product),
-        )
+        try:
+            payload = _map_product_to_coupang_payload(
+                session,
+                product,
+                account,
+                meta_result["return_center_code"],
+                meta_result["outbound_center_code"],
+                meta_result["predicted_category_code"],
+                meta_result["return_center_detail"],
+                meta_result["notice_meta"],
+                meta_result["shipping_fee"],
+                meta_result["delivery_company_code"],
+                image_urls=_get_original_image_urls(session, product),
+            )
+        except SkipCoupangRegistrationError as e:
+            reason = f"SKIPPED: {e}"
+            logger.info(f"상품 업데이트 스킵: {e}")
+            _log_registration_skip(
+                session,
+                account,
+                product.id,
+                reason,
+                meta_result.get("predicted_category_code"),
+            )
+            return False, reason
+        except ValueError as e:
+            logger.error(f"상품 업데이트 사전검증 실패: {e}")
+            return False, str(e)
         
         # 업데이트 API 규격에 맞춰 sellerProductId 및 requested 추가
+        # 쿠팡 API 문서: 상품 수정 시 sellerProductId와 sellerProductItemId 필수
+        # - 기존 옵션 수정: sellerProductItemId와 vendorItemId 삽입
+        # - 옵션 삭제: items 배열에서 제거 후 sellerProductItemId만 유지
+        # - 옵션 추가: sellerProductItemId 미입력하여 items 배열 추가
         payload["sellerProductId"] = int(listing.market_item_id)
         payload["requested"] = True
 
         # 기존 vendorItemId 및 가격/이미지 맵핑 유지/보정
+        # 주의: 승인 완료된 상품의 판매가격, 재고수량, 판매상태는 update_product가 아닌
+        # 별도 API(옵션별 가격/수량/판매여부 변경)를 통해 변경 필요
         if payload.get("items") and current_items and isinstance(current_items[0], dict):
             target_item = payload["items"][0]
             current_item = current_items[0]
 
+            # 기존 옵션 수정을 위한 sellerProductItemId 및 vendorItemId 유지
+            # 쿠팡 API: 기존 옵션 수정시 sellerProductItemId와 vendorItemId 필수
+            # sellerProductItemId: 상품 조회 API를 통해 확인 가능
+            # vendorItemId: 임시저장 상태일 경우 null, 승인완료 시 값 표시
             if "vendorItemId" in current_item:
                 target_item["vendorItemId"] = current_item["vendorItemId"]
+            if "sellerProductItemId" in current_item:
+                target_item["sellerProductItemId"] = current_item["sellerProductItemId"]
 
             # [BUG FIX] 가격 동기화: salePrice가 existing originalPrice보다 크면 originalPrice 상향
             existing_original = int(current_item.get("originalPrice") or 0)
@@ -1614,6 +2180,119 @@ def update_product_on_coupang(session: Session, account_id: uuid.UUID, product_i
         return False, str(e)
 
 
+def update_product_delivery_info(
+    session: Session,
+    account_id: uuid.UUID,
+    product_id: uuid.UUID,
+    delivery_charge: int | None = None,
+    delivery_charge_type: str | None = None,
+    delivery_company_code: str | None = None,
+    return_center_code: str | None = None,
+    outbound_shipping_place_code: str | None = None,
+    outbound_shipping_time_day: int | None = None,
+    return_charge: int | None = None,
+    delivery_charge_on_return: int | None = None,
+    free_ship_over_amount: int | None = None,
+) -> tuple[bool, str | None]:
+    """
+    쿠팡에 등록된 상품의 배송 및 반품지 정보만 승인 없이 빠르게 업데이트합니다.
+    
+    이 함수는 쿠팡의 '상품 수정(승인불필요/partial)' API를 사용합니다.
+    승인 절차 없이 배송/반품지 관련 정보만 빠르게 수정할 수 있습니다.
+    
+    Args:
+        session: DB 세션
+        account_id: 마켓 계정 ID
+        product_id: 상품 ID
+        delivery_charge: 기본배송비 (유료배송 또는 조건부 무료배송 시)
+        delivery_charge_type: 배송비종류 (FREE, NOT_FREE, CHARGE_RECEIVED, CONDITIONAL_FREE)
+        delivery_company_code: 택배사 코드
+        return_center_code: 반품지 센터 코드
+        outbound_shipping_place_code: 출고지 주소 코드
+        outbound_shipping_time_day: 기준출고일(일)
+        return_charge: 반품배송비
+        delivery_charge_on_return: 초도반품배송비
+        free_ship_over_amount: 무료배송을 위한 조건 금액
+    
+    Returns:
+        (성공 여부, 에러 메시지)
+    
+    Note:
+        - '임시저장중', '승인대기중' 상태의 상품은 수정할 수 없습니다.
+        - 모든 매개변수는 선택적(Optional)이며, 원하는 항목만 입력하여 수정 가능합니다.
+    """
+    account = session.get(MarketAccount, account_id)
+    product = session.get(Product, product_id)
+    if not account or not product:
+        return False, "계정 또는 상품을 찾을 수 없습니다"
+    
+    listing = (
+        session.execute(
+            select(MarketListing)
+            .where(MarketListing.market_account_id == account.id)
+            .where(MarketListing.product_id == product.id)
+            .order_by(MarketListing.linked_at.desc())
+        )
+        .scalars()
+        .first()
+    )
+    
+    if not listing:
+        return False, "쿠팡에 등록된 리스팅 정보를 찾을 수 없습니다"
+    
+    try:
+        client = _get_client_for_account(account)
+        
+        # 상품 상태 확인 (임시저장중, 승인대기중 상태는 수정 불가)
+        code, current_data = client.get_product(listing.market_item_id)
+        if code != 200:
+            return False, f"쿠팡 상품 정보 조회 실패: {current_data.get('message')}"
+        
+        status_name = current_data.get("data", {}).get("statusName", "")
+        if status_name in ["임시저장중", "승인대기중", "생성이 진행중"]:
+            return False, f"현재 상태 '{status_name}'에서는 수정할 수 없습니다. 승인완료 후 가능합니다."
+        
+        # partial 업데이트 페이로드 생성
+        payload: dict[str, Any] = {
+            "sellerProductId": int(listing.market_item_id)
+        }
+        
+        # 선택적 매개변수만 페이로드에 추가
+        if delivery_charge is not None:
+            payload["deliveryCharge"] = delivery_charge
+        if delivery_charge_type is not None:
+            payload["deliveryChargeType"] = delivery_charge_type
+        if delivery_company_code is not None:
+            payload["deliveryCompanyCode"] = delivery_company_code
+        if return_center_code is not None:
+            payload["returnCenterCode"] = return_center_code
+        if outbound_shipping_place_code is not None:
+            payload["outboundShippingPlaceCode"] = int(outbound_shipping_place_code)
+        if outbound_shipping_time_day is not None:
+            payload["outboundShippingTimeDay"] = outbound_shipping_time_day
+        if return_charge is not None:
+            payload["returnCharge"] = return_charge
+        if delivery_charge_on_return is not None:
+            payload["deliveryChargeOnReturn"] = delivery_charge_on_return
+        if free_ship_over_amount is not None:
+            payload["freeShipOverAmount"] = free_ship_over_amount
+        
+        # partial 업데이트 API 호출
+        code, data = client.update_product_partial(listing.market_item_id, payload)
+        _log_fetch(session, account, "update_product_partial", payload, code, data)
+        
+        if code == 200 and data.get("code") == "SUCCESS":
+            logger.info(f"배송/반품지 정보 업데이트 성공 (productId={product.id}, sellerProductId={listing.market_item_id})")
+            return True, None
+        else:
+            return False, f"배송/반품지 정보 업데이트 실패: {data.get('message', '알 수 없는 오류')}"
+            
+    except Exception as e:
+        session.rollback()
+        logger.error(f"쿠팡 배송/반품지 정보 업데이트 중 예외 발생: {e}")
+        return False, str(e)
+
+
 def register_products_bulk(session: Session, account_id: uuid.UUID, product_ids: list[uuid.UUID] | None = None) -> dict[str, int]:
     """
     Register multiple products to Coupang.
@@ -1635,6 +2314,7 @@ def register_products_bulk(session: Session, account_id: uuid.UUID, product_ids:
     total = len(products)
     success = 0
     failed = 0
+    skipped = 0
     
     logger.info(f"Starting bulk registration for {total} products on account {account.name}")
     
@@ -1654,17 +2334,20 @@ def register_products_bulk(session: Session, account_id: uuid.UUID, product_ids:
                 session.commit()
             continue
 
-        ok, _reason = register_product(session, account.id, p.id)
+        ok, reason = register_product(session, account.id, p.id)
         if ok:
             success += 1
             # Update status to ACTIVE after successful registration
             p.status = "ACTIVE" 
             session.commit()
         else:
-            failed += 1
+            if reason and str(reason).startswith("SKIPPED:"):
+                skipped += 1
+            else:
+                failed += 1
             
-    logger.info(f"Bulk registration finished. Total: {total}, Success: {success}, Failed: {failed}")
-    return {"total": total, "success": success, "failed": failed}
+    logger.info(f"Bulk registration finished. Total: {total}, Success: {success}, Failed: {failed}, Skipped: {skipped}")
+    return {"total": total, "success": success, "failed": failed, "skipped": skipped}
 
 
 def fulfill_coupang_orders_via_ownerclan(
@@ -1878,24 +2561,66 @@ def fulfill_coupang_orders_via_ownerclan(
         session.flush()
 
         if existing_order:
-            existing_order.supplier_order_id = supplier_order.id
-            existing_order.order_number = existing_order.order_number or order_number
-            existing_order.recipient_name = existing_order.recipient_name or recipient_name
-            existing_order.recipient_phone = existing_order.recipient_phone or recipient_phone
-            existing_order.address = existing_order.address or recipient_address
+            order = existing_order
+            order.supplier_order_id = supplier_order.id
+            order.order_number = order.order_number or order_number
+            order.recipient_name = order.recipient_name or recipient_name
+            order.recipient_phone = order.recipient_phone or recipient_phone
+            order.address = order.address or recipient_address
         else:
-            session.add(
-                Order(
-                    market_order_id=row.id,
-                    supplier_order_id=supplier_order.id,
-                    order_number=order_number,
-                    status="PAYMENT_COMPLETED",
-                    recipient_name=recipient_name,
-                    recipient_phone=recipient_phone,
-                    address=recipient_address,
-                    total_amount=0,
-                )
+            order = Order(
+                market_order_id=row.id,
+                supplier_order_id=supplier_order.id,
+                order_number=order_number,
+                status="PAYMENT_COMPLETED",
+                recipient_name=recipient_name,
+                recipient_phone=recipient_phone,
+                address=recipient_address,
+                total_amount=0,
             )
+            session.add(order)
+            session.flush()
+
+        # OrderItem 생성 및 옵션 매칭
+        # 기존 OrderItem 삭제 (중복 방지)
+        session.query(OrderItem).filter(OrderItem.order_id == order.id).delete()
+        
+        total_order_amount = 0
+        for item in order_items:
+            if not isinstance(item, dict): continue
+            
+            # 쿠팡 sellerItemId(sellerItemCode)를 이용해 ProductOption 식별
+            # 쿠팡 API orderItems 내의 sellerItemId 필드 확인
+            seller_item_code = str(item.get("sellerItemId") or item.get("externalVendorSkuCode") or "")
+            
+            # 매칭 시도 1: sellerItemCode 직접 매칭
+            # 매칭 시도 2: option.id (UUID string) 매칭
+            opt = None
+            if seller_item_code:
+                opt = session.query(ProductOption).filter(
+                    ProductOption.product_id == product.id,
+                    (ProductOption.external_option_key == seller_item_code) | (ProductOption.id == uuid.UUID(seller_item_code) if len(seller_item_code) == 36 else False)
+                ).first()
+            
+            qty = int(item.get("shippingCount") or item.get("quantity") or 1)
+            unit_price = int(item.get("orderPrice") or item.get("unit_price") or 0)
+            item_total_price = unit_price * qty
+            total_order_amount += item_total_price
+            
+            order_item = OrderItem(
+                order_id=order.id,
+                product_id=product.id,
+                market_listing_id=listing.id,
+                product_option_id=opt.id if opt else None,
+                external_item_id=str(item.get("orderItemId") or ""),
+                product_name=str(item.get("sellerProductName") or product.name),
+                quantity=qty,
+                unit_price=unit_price,
+                total_price=item_total_price
+            )
+            session.add(order_item)
+            
+        order.total_amount = total_order_amount
 
         session.add(
             SupplierRawFetchLog(
@@ -1963,6 +2688,25 @@ def _get_default_centers(client: CoupangClient, account: MarketAccount | None = 
 
         return None
 
+    def _extract_delivery_codes(entries: object) -> list[str]:
+        if not isinstance(entries, list):
+            return []
+        codes: list[str] = []
+        for entry in entries:
+            code = None
+            if isinstance(entry, dict):
+                code = (
+                    entry.get("deliveryCompanyCode")
+                    or entry.get("deliveryCode")
+                    or entry.get("code")
+                    or entry.get("id")
+                )
+            else:
+                code = str(entry)
+            if isinstance(code, str) and code.strip():
+                codes.append(code.strip())
+        return codes
+
     # 출고지 (Outbound) 및 택배사 (Delivery Company)
     outbound_rc, outbound_data = client.get_outbound_shipping_centers(page_size=10)
     
@@ -1993,28 +2737,37 @@ def _get_default_centers(client: CoupangClient, account: MarketAccount | None = 
                 
                 remote_infos = c.get("remoteInfos") or []
                 codes = c.get("deliveryCompanyCodes") or c.get("usableDeliveryCompanies") or []
-                
-                has_cj = False
-                for entry in codes:
-                    e_code = ""
-                    if isinstance(entry, dict):
-                        e_code = entry.get("deliveryCompanyCode") or entry.get("code") or entry.get("id") or ""
-                    else:
-                        e_code = str(entry)
-                    if e_code == "CJGLS":
-                        has_cj = True
-                        break
+
+                remote_codes = _extract_delivery_codes(remote_infos)
+                delivery_codes = _extract_delivery_codes(codes)
+                has_cj_remote = "CJGLS" in remote_codes
+                has_cj = "CJGLS" in delivery_codes
+
+                if has_cj_remote:
+                    delivery_code = "CJGLS"
+                elif has_cj:
+                    delivery_code = "CJGLS"
+                elif remote_codes:
+                    delivery_code = remote_codes[0]
+                elif delivery_codes:
+                    delivery_code = delivery_codes[0]
+                else:
+                    delivery_code = None
                 
                 # 강점 점수 계산 (단순화된 방식)
                 score = 0
-                if remote_infos: score += 10
-                if has_cj: score += 5
+                if remote_infos:
+                    score += 10
+                if has_cj_remote:
+                    score += 5
+                elif has_cj:
+                    score += 3
                 
                 if best_center is None or score > best_center["score"]:
                     best_center = {
                         "code": str(c_code),
-                        "has_cj": has_cj,
-                        "codes": codes,
+                        "delivery_code": delivery_code,
+                        "codes": delivery_codes,
                         "score": score
                     }
                     if score >= 15: # CJGLS와 remoteInfos 모두 있으면 베스트
@@ -2022,18 +2775,10 @@ def _get_default_centers(client: CoupangClient, account: MarketAccount | None = 
             
             if best_center:
                 outbound_code = best_center["code"]
-                if best_center["has_cj"]:
-                    delivery_company_code = "CJGLS"
+                if best_center["delivery_code"]:
+                    delivery_company_code = best_center["delivery_code"]
                 elif best_center["codes"]:
-                    first_entry = best_center["codes"][0]
-                    if isinstance(first_entry, dict):
-                        delivery_company_code = (
-                            first_entry.get("deliveryCompanyCode") or 
-                            first_entry.get("code") or 
-                            first_entry.get("id")
-                        )
-                    else:
-                        delivery_company_code = str(first_entry)
+                    delivery_company_code = best_center["codes"][0]
             
             if not outbound_code and content:
                 # fallback: 어쩔 수 없이 첫 번째 코드라도 선택
@@ -2070,7 +2815,8 @@ def _get_default_centers(client: CoupangClient, account: MarketAccount | None = 
 
 
 def _map_product_to_coupang_payload(
-    product: Product, 
+    session: Session,
+    product: Product,
     account: MarketAccount, 
     return_center_code: str, 
     outbound_center_code: str,
@@ -2083,6 +2829,11 @@ def _map_product_to_coupang_payload(
 ) -> dict[str, Any]:
     """
     내부 Product 모델을 쿠팡 API Payload로 매핑합니다.
+    
+    쿠팡 상품 생성 API 요구사항 (2024년 10월 10일 이후):
+    - 필수 구매옵션(attributes)이 MANDATORY인 경우 반드시 입력 필요
+    - 데이터 형식이 유효한 값/단위로 정확하게 입력 필요
+    - 인증(certifications), 구비서류(requiredDocuments) 처리 필요
     """
     
     # 가공된 이름이 있으면 사용, 없으면 원본 이름 사용
@@ -2121,11 +2872,6 @@ def _map_product_to_coupang_payload(
                 if len(images) >= 9:
                     break
     
-    # 가공된 이미지가 없을 경우 처리 방안 필요
-    # 현재는 선행 단계에서 처리되었다고 가정함.
-    if not images:
-        pass
-
     # 아이템 (옵션)
     # 현재는 단일 옵션 매핑 (Drop 01 범위)
     # 변형 상품(옵션)이 있다면 반복문 필요
@@ -2149,6 +2895,7 @@ def _map_product_to_coupang_payload(
             return f"{digits[:3]}-{digits[3:6]}-{digits[6:]}"
         return digits
 
+    # 상품고시정보(notices) 처리
     notices: list[dict[str, Any]] = []
     try:
         if isinstance(notice_meta, dict) and isinstance(notice_meta.get("noticeCategories"), list):
@@ -2188,6 +2935,170 @@ def _map_product_to_coupang_payload(
             for d in details
         ]
 
+    # 필수 attributes 처리 (2024년 10월 10일 규정 준수)
+    item_attributes: list[dict[str, Any]] = []
+    mandatory_attrs_missing = []
+    try:
+        if isinstance(notice_meta, dict) and isinstance(notice_meta.get("attributes"), list):
+            attrs = [a for a in notice_meta["attributes"] if isinstance(a, dict)]
+            # 필수이고 구매옵션(EXPOSED)인 항목만 처리
+            mandatory_attrs = [a for a in attrs if a.get("required") == "MANDATORY" and a.get("exposed") == "EXPOSED"]
+            
+            for attr in mandatory_attrs:
+                attr_type = attr.get("attributeTypeName")
+                if not attr_type:
+                    continue
+                
+                # 데이터 형식에 따른 기본값 설정
+                data_type = attr.get("dataType", "STRING")
+                basic_unit = attr.get("basicUnit", "")
+                usable_units = attr.get("usableUnits", [])
+                
+                # 기본값 설정: 수량/무게/부피는 1개/1g/1ml, 그 외는 "-"
+                attr_value = "-"
+                if data_type == "NUMBER":
+                    if "수량" in attr_type or "qty" in attr_type.lower():
+                        attr_value = "1개"
+                        if basic_unit and basic_unit != "없음":
+                            attr_value = f"1{basic_unit}"
+                    elif "무게" in attr_type or "중량" in attr_type or "weight" in attr_type.lower():
+                        attr_value = "1g"
+                        if basic_unit and basic_unit != "없음":
+                            attr_value = f"1{basic_unit}"
+                    elif "용량" in attr_type or "volume" in attr_type.lower():
+                        attr_value = "1ml"
+                        if basic_unit and basic_unit != "없음":
+                            attr_value = f"1{basic_unit}"
+                    else:
+                        attr_value = "1"
+                
+                # 필수 옵션에 추가
+                item_attributes.append({
+                    "attributeTypeName": attr_type,
+                    "attributeValueName": attr_value,
+                    "exposed": "EXPOSED"
+                })
+                logger.info(f"필수 attribute 추가: {attr_type}={attr_value} (type={data_type}, unit={basic_unit})")
+            
+            # 필수 속성이 있는 경우 로깅
+            if mandatory_attrs:
+                logger.info(f"필수 구매옵션 {len(mandatory_attrs)}개 처리됨 (카테고리: {predicted_category_code})")
+                mandatory_attrs_missing = [
+                    a.get("attributeTypeName") for a in mandatory_attrs 
+                    if not any(it.get("attributeTypeName") == a.get("attributeTypeName") for it in item_attributes)
+                ]
+    except Exception as e:
+        logger.warning(f"attributes 처리 중 오류 발생: {e}")
+
+    # 검색필터 옵션 추가 (선택사항)
+    try:
+        if isinstance(notice_meta, dict) and isinstance(notice_meta.get("attributes"), list):
+            attrs = [a for a in notice_meta["attributes"] if isinstance(a, dict)]
+            # 검색필터(NONE)인 항목 중 선택적인 항목 추가
+            filter_attrs = [a for a in attrs if a.get("exposed") == "NONE" and a.get("required") in ["OPTIONAL", "RECOMMEND"]]
+            
+            # 공통 검색필터 (예: 피부타입, 성별 등)
+            common_filters = ["피부타입", "성별", "사용자연령대", "사용부위"]
+            for attr in filter_attrs:
+                attr_type = attr.get("attributeTypeName")
+                if attr_type in common_filters:
+                    item_attributes.append({
+                        "attributeTypeName": attr_type,
+                        "attributeValueName": "모두",
+                        "exposed": "NONE"
+                    })
+                    break
+    except Exception as e:
+        logger.warning(f"검색필터 처리 중 오류 발생: {e}")
+
+    # 인증정보(certifications) 처리
+    item_certifications: list[dict[str, Any]] = []
+    try:
+        if isinstance(notice_meta, dict) and isinstance(notice_meta.get("certifications"), list):
+            certs = [c for c in notice_meta["certifications"] if isinstance(c, dict)]
+
+            # 필수/추천 인증 확인
+            mandatory_certs = [c for c in certs if c.get("required") in ["MANDATORY", "RECOMMEND"]]
+
+            if mandatory_certs:
+                cert_names = []
+                for cert in mandatory_certs:
+                    name = cert.get("name") or cert.get("certificationTypeName") or cert.get("certificationType")
+                    if name:
+                        cert_names.append(str(name))
+                cert_label = ", ".join(cert_names) if cert_names else "미상"
+                raise SkipCoupangRegistrationError(f"필수/추천 인증 정보 필요: {cert_label}")
+    except SkipCoupangRegistrationError:
+        raise
+    except Exception as e:
+        logger.warning(f"certifications 처리 중 오류 발생: {e}")
+
+    # 구비서류(requiredDocuments) 처리
+    required_documents: list[dict[str, Any]] = []
+    try:
+        docs = _extract_required_doc_templates(notice_meta)
+        if docs:
+            allowed_templates = _parse_env_list("COUPANG_ALLOWED_REQUIRED_DOCUMENTS") or DEFAULT_COUPANG_ALLOWED_REQUIRED_DOC_TEMPLATES
+            blocked_keywords = _parse_env_list("COUPANG_BLOCKED_REQUIRED_DOCUMENTS") or DEFAULT_COUPANG_BLOCKED_REQUIRED_DOC_KEYWORDS
+            never_templates = _parse_env_list("COUPANG_NEVER_REQUIRED_DOCUMENTS") or DEFAULT_COUPANG_NEVER_REQUIRED_DOC_TEMPLATES
+            allowed_tokens = _normalize_tokens(allowed_templates)
+            blocked_tokens = _normalize_tokens(blocked_keywords)
+            never_tokens = _normalize_tokens(never_templates)
+
+            required_templates: list[str] = []
+            for doc in docs:
+                required_flag = doc.get("required") or ""
+                if not _required_doc_applies(str(required_flag), product):
+                    continue
+                name = doc.get("templateName") or doc.get("documentName") or ""
+                if name:
+                    required_templates.append(str(name))
+
+            blocked_templates: list[str] = []
+            for name in required_templates:
+                if _match_any(name, blocked_tokens):
+                    blocked_templates.append(name)
+                elif allowed_tokens and not _match_any(name, allowed_tokens):
+                    blocked_templates.append(name)
+
+            never_hits = [name for name in required_templates if _match_any(name, never_tokens)]
+            if never_hits:
+                never_label = ", ".join(never_hits)
+                raise CoupangNeverEligibleError(f"NEVER: 구비서류 템플릿 포함 ({never_label})")
+
+            if blocked_templates:
+                blocked_label = ", ".join(blocked_templates)
+                raise SkipCoupangRegistrationError(f"필수 구비서류 금지 템플릿: {blocked_label}")
+
+            missing_templates: list[str] = []
+            for name in required_templates:
+                entry = _get_document_library_entry(session, product.brand, name)
+                if entry:
+                    required_documents.append(entry)
+                else:
+                    missing_templates.append(name)
+
+            if missing_templates:
+                missing_label = ", ".join(missing_templates)
+                raise CoupangDocumentPendingError(
+                    f"필수 구비서류 미보유: {missing_label}",
+                    missing_templates=missing_templates,
+                )
+    except SkipCoupangRegistrationError:
+        raise
+    except Exception as e:
+        logger.warning(f"requiredDocuments 처리 중 오류 발생: {e}")
+
+    # allowedOfferConditions 검증
+    offer_condition = "NEW"
+    try:
+        if isinstance(notice_meta, dict) and isinstance(notice_meta.get("allowedOfferConditions"), list):
+            allowed_conditions = notice_meta["allowedOfferConditions"]
+            if "NEW" not in allowed_conditions:
+                logger.warning(f"NEW 상태가 허용되지 않는 카테고리입니다. 허용 상태: {allowed_conditions}")
+    except Exception as e:
+        logger.warning(f"allowedOfferConditions 확인 중 오류 발생: {e}")
+
     # Return Center Fallbacks
     return_zip = (return_center_detail.get("returnZipCode") if return_center_detail else None) or "14598"
     return_addr = (return_center_detail.get("returnAddress") if return_center_detail else None) or "경기도 부천시 원미구 부일로199번길 21"
@@ -2195,35 +3106,78 @@ def _map_product_to_coupang_payload(
     return_phone = _normalize_phone((return_center_detail.get("companyContactNumber") if return_center_detail else None) or "070-4581-8906")
     return_name = (return_center_detail.get("shippingPlaceName") if return_center_detail else None) or "기본 반품지"
 
-    # DB의 selling_price는 이미 (원가+마진+배송비)/(1-수수료)가 계산된 최종 소비자가임 (100원 단위 올림)
-    total_price = int(product.selling_price or 0)
+    # 아이템 (옵션) 목록 구성
+    items_payload = []
+    parallel_imported = "PARALLEL_IMPORTED" if product.coupang_parallel_imported else "NOT_PARALLEL_IMPORTED"
+    overseas_purchased = "OVERSEAS_PURCHASED" if product.coupang_overseas_purchased else "NOT_OVERSEAS_PURCHASED"
+    pcc_needed = bool(product.coupang_overseas_purchased)
     
-    # 100원 단위 올림 재확인 (혹시 모를 구버전 데이터 대비)
-    if total_price < 3000:
-        total_price = 3000
-    total_price = ((total_price + 99) // 100) * 100
-
-    item_payload = {
-        "itemName": name_to_use[:150], # 최대 150자
-        "originalPrice": total_price, # 무료배송 정책: 배송비를 상품가에 포함
-        "salePrice": total_price,
-        "maximumBuyCount": 9999,
-        "maximumBuyForPerson": 0,
-        "maximumBuyForPersonPeriod": 1,
-        "outboundShippingTimeDay": 3,
-        "taxType": "TAX",
-        "adultOnly": "EVERYONE",
-        "parallelImported": "NOT_PARALLEL_IMPORTED",
-        "overseasPurchased": "NOT_OVERSEAS_PURCHASED",
-        "pccNeeded": False,
-        "unitCount": 1,
-        "images": images,
-        "attributes": [], # TODO: 카테고리 속성 매핑 필요 (예측된 카테고리에 따라 필수 속성이 다름)
-        "contents": (
-            contents_blocks + [{"contentsType": "HTML", "contentDetails": [{"content": description_html, "detailType": "TEXT"}]}]
-        ) if contents_blocks else [{"contentsType": "HTML", "contentDetails": [{"content": description_html, "detailType": "TEXT"}]}],
-        "notices": notices,
-    }
+    # DB에 옵션이 있으면 사용, 없으면 단일 아이템으로 처리
+    options = product.options if product.options else []
+    
+    if not options:
+        # Fallback: 옵션 정보가 없는 경우 기존 로직대로 단일 아이템 생성
+        total_price = int(product.selling_price or 0)
+        if total_price < 3000: total_price = 3000
+        total_price = ((total_price + 99) // 100) * 100
+        
+        items_payload.append({
+            "itemName": name_to_use[:150],
+            "originalPrice": total_price,
+            "salePrice": total_price,
+            "maximumBuyCount": 9999,
+            "maximumBuyForPerson": 0,
+            "maximumBuyForPersonPeriod": 1,
+            "outboundShippingTimeDay": 3,
+            "taxType": "TAX",
+            "adultOnly": "EVERYONE",
+            "parallelImported": parallel_imported,
+            "overseasPurchased": overseas_purchased,
+            "pccNeeded": pcc_needed,
+            "unitCount": 1,
+            "images": images,
+            "attributes": item_attributes,
+            "certifications": item_certifications,
+            "contents": (
+                contents_blocks + [{"contentsType": "HTML", "contentDetails": [{"content": description_html, "detailType": "TEXT"}]}]
+            ) if contents_blocks else [{"contentsType": "HTML", "contentDetails": [{"content": description_html, "detailType": "TEXT"}]}],
+            "notices": notices,
+            "offerCondition": offer_condition,
+        })
+    else:
+        for opt in options:
+            # 옵션별 가격 계산
+            opt_price = int(opt.selling_price or 0)
+            if opt_price < 3000: opt_price = 3000
+            opt_price = ((opt_price + 99) // 100) * 100
+            
+            # 옵션명을 상품명과 조합 (쿠팡 권장: [상품명] [옵션값])
+            full_item_name = f"{name_to_use} {opt.option_value}" if opt.option_value != "단품" else name_to_use
+            
+            items_payload.append({
+                "itemName": full_item_name[:150],
+                "originalPrice": opt_price,
+                "salePrice": opt_price,
+                "maximumBuyCount": 9999,
+                "maximumBuyForPerson": 0,
+                "maximumBuyForPersonPeriod": 1,
+                "outboundShippingTimeDay": 3,
+                "taxType": "TAX",
+                "adultOnly": "EVERYONE",
+                "parallelImported": parallel_imported,
+                "overseasPurchased": overseas_purchased,
+                "pccNeeded": pcc_needed,
+                "unitCount": 1,
+                "images": images,
+                "attributes": item_attributes, # TODO: 카테고리에 맞는 상세 옵션 속성 매핑 필요 시 보완
+                "certifications": item_certifications,
+                "contents": (
+                    contents_blocks + [{"contentsType": "HTML", "contentDetails": [{"content": description_html, "detailType": "TEXT"}]}]
+                ) if contents_blocks else [{"contentsType": "HTML", "contentDetails": [{"content": description_html, "detailType": "TEXT"}]}],
+                "notices": notices,
+                "offerCondition": offer_condition,
+                "sellerItemCode": opt.external_option_key or str(opt.id)
+            })
 
     now = datetime.now(timezone.utc)
     sale_started_at = now.strftime("%Y-%m-%dT%H:%M:%S")
@@ -2231,20 +3185,17 @@ def _map_product_to_coupang_payload(
 
     payload = {
         "displayCategoryCode": predicted_category_code, 
-        # 예측된 카테고리 코드를 사용.
-        # 주의: 일부 카테고리는 필수 속성(attributes)이 없으면 등록 실패할 수 있음.
-        # 향후 predict_category 응답에 포함된 attributes 메타데이터를 활용하여 자동 매핑 고도화 필요.
         "sellerProductName": name_to_use[:100],
         "vendorId": str(account.credentials.get("vendor_id") or "").strip(),
         "saleStartedAt": sale_started_at,
         "saleEndedAt": sale_ended_at,
         "displayProductName": name_to_use[:100],
         "brand": product.brand or "Detailed Page",
-        "generalProductName": name_to_use, # 보통 노출명과 동일
-        "productOrigin": "수입산", # 위탁판매 기본
-        "deliveryMethod": "SEQUENCIAL", # 일반 배송
+        "generalProductName": name_to_use,
+        "productOrigin": "수입산",
+        "deliveryMethod": "SEQUENCIAL",
         "deliveryCompanyCode": delivery_company_code,
-        "deliveryChargeType": "FREE", # 일단 무료배송으로 시작
+        "deliveryChargeType": "FREE",
         "deliveryCharge": 0,
         "freeShipOverAmount": 0,
         "unionDeliveryType": "NOT_UNION_DELIVERY",
@@ -2255,13 +3206,16 @@ def _map_product_to_coupang_payload(
         "returnZipCode": return_zip,
         "returnAddress": return_addr,
         "returnAddressDetail": return_addr_detail,
-        "returnCharge": 5000, # 기본 반품비
+        "returnCharge": 5000,
         "deliveryChargeOnReturn": 5000,
         "outboundShippingPlaceCode": outbound_center_code,
-        "vendorUserId": account.credentials.get("vendor_user_id", "user"), # Wing ID
-        "requested": True, # 자동 승인 요청
-        "items": [item_payload]
+        "vendorUserId": account.credentials.get("vendor_user_id", "user"),
+        "requested": True,
+        "items": items_payload
     }
+    
+    if required_documents:
+        payload["requiredDocuments"] = required_documents
     
     return payload
 
@@ -2280,8 +3234,27 @@ def _get_coupang_product_metadata(
 
     # 카테고리 예측
     predicted_category_code = 77800
+    predicted_from_ai = False
+    category_name = None
     try:
-        if os.getenv("COUPANG_ENABLE_CATEGORY_PREDICTION", "0") == "1":
+        from app.services.market_targeting import resolve_supplier_category_name
+        category_name = resolve_supplier_category_name(session, product)
+    except Exception:
+        category_name = None
+
+    def _is_unknown_category(name: str | None) -> bool:
+        if not name:
+            return True
+        normalized = str(name).strip().lower()
+        if not normalized:
+            return True
+        return normalized in {"unknown", "n/a", "na", "none", "-", "null"}
+
+    allow_prediction = os.getenv("COUPANG_ENABLE_CATEGORY_PREDICTION", "0") == "1"
+    if _is_unknown_category(category_name) and os.getenv("COUPANG_PREDICT_ON_UNKNOWN", "1") == "1":
+        allow_prediction = True
+    try:
+        if allow_prediction:
             agreed = False
             try:
                 agreed_http, agreed_data = client.check_auto_category_agreed(str(account.credentials.get("vendor_id") or "").strip())
@@ -2293,23 +3266,164 @@ def _get_coupang_product_metadata(
             if agreed:
                 pred_name = product.processed_name or product.name
                 code, pred_data = client.predict_category(pred_name)
-                if code == 200 and pred_data.get("code") == "SUCCESS":
+                if code == 200 and isinstance(pred_data, dict):
+                    resp_code = pred_data.get("code")
                     resp_data = pred_data.get("data")
-                    if isinstance(resp_data, dict) and "predictedCategoryCode" in resp_data:
-                        predicted_category_code = int(resp_data["predictedCategoryCode"])
-                    elif isinstance(resp_data, (str, int)):
-                        predicted_category_code = int(resp_data)
+                    if resp_code in ("SUCCESS", 200, None) and resp_data is not None:
+                        if isinstance(resp_data, dict) and "predictedCategoryCode" in resp_data:
+                            predicted_category_code = int(resp_data["predictedCategoryCode"])
+                            predicted_from_ai = True
+                        elif isinstance(resp_data, dict) and "predictedCategoryId" in resp_data:
+                            predicted_category_code = int(resp_data["predictedCategoryId"])
+                            predicted_from_ai = True
+                        elif isinstance(resp_data, (str, int)):
+                            predicted_category_code = int(resp_data)
+                            predicted_from_ai = True
+                    if predicted_from_ai:
+                        logger.info(
+                            "쿠팡 카테고리 예측 결과: product=%s name=%s predicted=%s",
+                            product.id,
+                            (product.processed_name or product.name)[:80],
+                            predicted_category_code,
+                        )
     except Exception as e:
         logger.info(f"카테고리 예측 스킵/실패: {e}")
 
+    if _is_unknown_category(category_name) and allow_prediction and not predicted_from_ai:
+        raise SkipCoupangRegistrationError("카테고리 예측 실패(unknown)")
+
+    allowed_category_codes = _parse_env_list("COUPANG_ALLOWED_CATEGORY_CODES")
+    blocked_category_codes = (
+        _parse_env_list("COUPANG_BLOCKED_CATEGORY_CODES")
+        or DEFAULT_COUPANG_BLOCKED_CATEGORY_CODES
+    )
+    if blocked_category_codes and str(predicted_category_code) in blocked_category_codes:
+        raise SkipCoupangRegistrationError(f"쿠팡 금지 카테고리 코드: {predicted_category_code}")
+    if allowed_category_codes and str(predicted_category_code) not in allowed_category_codes:
+        raise SkipCoupangRegistrationError(f"쿠팡 허용 카테고리 외: {predicted_category_code}")
+
     # 공시 메타
-    notice_meta = None
-    try:
-        meta_http, meta_data = client.get_category_meta(str(predicted_category_code))
-        if meta_http == 200 and isinstance(meta_data, dict) and isinstance(meta_data.get("data"), dict):
-            notice_meta = meta_data["data"]
-    except Exception:
-        pass
+    def _fetch_category_meta(category_code: int) -> dict[str, Any] | None:
+        now = datetime.now(timezone.utc)
+        ttl_hours = 24
+        try:
+            ttl_hours = int(os.getenv("COUPANG_CATEGORY_META_TTL_HOURS", "24"))
+        except Exception:
+            ttl_hours = 24
+
+        cached = (
+            session.query(CoupangCategoryMetaCache)
+            .filter(CoupangCategoryMetaCache.category_code == str(category_code))
+            .first()
+        )
+        if cached and cached.expires_at and cached.expires_at > now:
+            if isinstance(cached.meta, dict):
+                return cached.meta
+
+        meta_data_obj: dict[str, Any] | None = None
+        try:
+            meta_http, meta_data = client.get_category_meta(str(category_code))
+            if meta_http == 200 and isinstance(meta_data, dict) and isinstance(meta_data.get("data"), dict):
+                meta_data_obj = meta_data["data"]
+        except Exception:
+            meta_data_obj = None
+
+        if meta_data_obj is not None:
+            expires_at = now + timedelta(hours=max(1, ttl_hours))
+            if cached:
+                cached.meta = meta_data_obj
+                cached.fetched_at = now
+                cached.expires_at = expires_at
+            else:
+                session.add(
+                    CoupangCategoryMetaCache(
+                        category_code=str(category_code),
+                        meta=meta_data_obj,
+                        fetched_at=now,
+                        expires_at=expires_at,
+                    )
+                )
+            session.commit()
+            return meta_data_obj
+
+        if cached and isinstance(cached.meta, dict):
+            return cached.meta
+        return None
+
+    def _has_mandatory_required_docs(meta: dict[str, Any] | None, product: Product) -> bool:
+        if not isinstance(meta, dict):
+            return False
+        docs = meta.get("requiredDocumentNames")
+        if not isinstance(docs, list):
+            return False
+        for doc in docs:
+            if not isinstance(doc, dict):
+                continue
+            required = doc.get("required") or ""
+            if _required_doc_applies(str(required), product):
+                return True
+        return False
+
+    notice_meta = _fetch_category_meta(predicted_category_code)
+    unsafe_predicted = False
+    safety_reasons: list[str] = []
+    if predicted_from_ai:
+        safety_score, safety_reasons = _score_category_safety(notice_meta, product)
+        unsafe_predicted = safety_score < 0
+        logger.info(
+            "쿠팡 예측 카테고리 안전 점수: product=%s category=%s score=%s reasons=%s",
+            product.id,
+            predicted_category_code,
+            safety_score,
+            ",".join(safety_reasons) if safety_reasons else "-",
+        )
+    if _has_mandatory_required_docs(notice_meta, product) or unsafe_predicted:
+        fallback_raw = (
+            os.getenv("COUPANG_FALLBACK_CATEGORY_CODES", "")
+            or os.getenv("COUPANG_FALLBACK_CATEGORY_CODE", "")
+        )
+        fallback_codes: list[int] = []
+        if fallback_raw:
+            for part in fallback_raw.split(","):
+                s = part.strip()
+                if not s:
+                    continue
+                try:
+                    fallback_codes.append(int(s))
+                except ValueError:
+                    continue
+
+        for fallback_code in fallback_codes:
+            if fallback_code == predicted_category_code:
+                continue
+            fallback_meta = _fetch_category_meta(fallback_code)
+            fallback_score, _ = _score_category_safety(fallback_meta, product)
+            if not _has_mandatory_required_docs(fallback_meta, product) and fallback_score >= 0:
+                logger.info(
+                    "쿠팡 카테고리 구비서류 요구로 대체 카테고리 사용: %s -> %s",
+                    predicted_category_code,
+                    fallback_code,
+                )
+                predicted_category_code = fallback_code
+                notice_meta = fallback_meta
+                break
+        else:
+            logger.warning(
+                "쿠팡 카테고리 구비서류 필요: %s (fallbacks=%s)",
+                predicted_category_code,
+                fallback_codes,
+            )
+            if unsafe_predicted:
+                label = ", ".join(safety_reasons) if safety_reasons else "unsafe_prediction"
+                raise SkipCoupangRegistrationError(
+                    f"쿠팡 예측 카테고리 안전 점수 미달: {predicted_category_code} ({label})"
+                )
+
+    if isinstance(notice_meta, dict):
+        category_name = notice_meta.get("displayCategoryName") or notice_meta.get("name") or ""
+        blocked_keywords = _parse_env_list("COUPANG_BLOCKED_CATEGORY_KEYWORDS") or DEFAULT_COUPANG_BLOCKED_CATEGORY_KEYWORDS
+        if _match_any(category_name, _normalize_tokens(blocked_keywords)):
+            raise SkipCoupangRegistrationError(f"쿠팡 금지 카테고리 키워드: {category_name}")
 
     # 반품지 상세
     return_center_detail = None
@@ -2357,3 +3471,287 @@ def _get_coupang_product_metadata(
         "return_center_detail": return_center_detail,
         "shipping_fee": shipping_fee,
     }
+
+
+def sync_coupang_inquiries(session: Session, account_id: uuid.UUID, days: int = 7) -> int:
+    """
+    쿠팡 고객문의(상품/고객센터) 동기화
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account or account.market_code != "COUPANG":
+        return 0
+    client = _get_client_for_account(account)
+
+    end_date = datetime.now(timezone.utc)
+    start_date = end_date - timedelta(days=min(days, 7))  # 쿠팡 API 7일 제한
+    
+    start_str = start_date.strftime("%Y-%m-%d")
+    end_str = end_date.strftime("%Y-%m-%d")
+
+    total = 0
+    # 1. 상품별 온라인 문의
+    for page in range(1, 10):
+        code, data = client.get_customer_inquiries(
+            inquiry_start_at=start_str,
+            inquiry_end_at=end_str,
+            page_num=page,
+            page_size=50
+        )
+        _log_fetch(session, account, "get_customer_inquiries", {"page": page}, code, data)
+        if code != 200: break
+        
+        items = data.get("data", []) if isinstance(data, dict) else []
+        if not items: break
+
+        for item in items:
+            inquiry_id = str(item.get("inquiryId"))
+            stmt = insert(MarketInquiryRaw).values(
+                market_code="COUPANG",
+                account_id=account.id,
+                inquiry_id=inquiry_id,
+                raw=item,
+                fetched_at=datetime.now(timezone.utc)
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["market_code", "account_id", "inquiry_id"],
+                set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at}
+            )
+            session.execute(stmt)
+            total += 1
+        session.commit()
+    
+    # 2. 고객센터 이관 문의
+    for page in range(1, 10):
+        code, data = client.get_call_center_inquiries(
+            inquiry_start_at=start_str,
+            inquiry_end_at=end_str,
+            page_num=page,
+            page_size=30
+        )
+        _log_fetch(session, account, "get_call_center_inquiries", {"page": page}, code, data)
+        if code != 200: break
+        items = data.get("data", []) if isinstance(data, dict) else []
+        if not items: break
+
+        for item in items:
+            inquiry_id = str(item.get("inquiryId"))
+            stmt = insert(MarketInquiryRaw).values(
+                market_code="COUPANG",
+                account_id=account.id,
+                inquiry_id=inquiry_id,
+                raw=item,
+                fetched_at=datetime.now(timezone.utc)
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["market_code", "account_id", "inquiry_id"],
+                set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at}
+            )
+            session.execute(stmt)
+            total += 1
+        session.commit()
+
+    return total
+
+
+def sync_coupang_revenue(session: Session, account_id: uuid.UUID, days: int = 30) -> int:
+    """
+    쿠팡 매출내역 동기화
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account or account.market_code != "COUPANG":
+        return 0
+    client = _get_client_for_account(account)
+
+    end_date = datetime.now(timezone.utc) - timedelta(days=1)  # 전일까지만 조회 가능
+    start_date = end_date - timedelta(days=min(days, 31))  # 최대 31일
+    
+    start_str = start_date.strftime("%Y-%m-%d")
+    end_str = end_date.strftime("%Y-%m-%d")
+
+    total = 0
+    token = ""
+    while True:
+        code, data = client.get_revenue_history(
+            recognition_date_from=start_str,
+            recognition_date_to=end_str,
+            token=token,
+            max_per_page=50
+        )
+        _log_fetch(session, account, "get_revenue_history", {"token": token}, code, data)
+        if code != 200: break
+        
+        items = data.get("data", []) if isinstance(data, dict) else []
+        if not items: break
+
+        for item in items:
+            order_id = str(item.get("orderId"))
+            sale_type = str(item.get("saleType", "SALE"))
+            stmt = insert(MarketRevenueRaw).values(
+                market_code="COUPANG",
+                account_id=account.id,
+                order_id=order_id,
+                sale_type=sale_type,
+                raw=item,
+                fetched_at=datetime.now(timezone.utc)
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["market_code", "account_id", "order_id", "sale_type"],
+                set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at}
+            )
+            session.execute(stmt)
+            total += 1
+        session.commit()
+        
+        token = data.get("nextToken") if isinstance(data, dict) else ""
+        if not token: break
+
+    return total
+
+
+def sync_coupang_settlements(session: Session, account_id: uuid.UUID) -> int:
+    """
+    쿠팡 지급내역 동기화 (최근 3개월)
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account or account.market_code != "COUPANG":
+        return 0
+    client = _get_client_for_account(account)
+
+    now = datetime.now(timezone.utc)
+    total = 0
+    # 최근 3개월치 조회
+    for i in range(3):
+        target_month = (now - timedelta(days=i*30)).strftime("%Y-%m")
+        code, data = client.get_settlement_histories(target_month)
+        _log_fetch(session, account, "get_settlement_histories", {"month": target_month}, code, data)
+        if code != 200: continue
+        
+        # 지급내역은 리스트 형태로 오거나 단건일 수 있음 (문서 확인 필요하나 보통 data에 리스트)
+        items = data.get("data", []) if isinstance(data, dict) else []
+        if not isinstance(items, list): items = [items]
+
+        for item in items:
+            stmt = insert(MarketSettlementRaw).values(
+                market_code="COUPANG",
+                account_id=account.id,
+                recognition_year_month=target_month,
+                raw=item,
+                fetched_at=datetime.now(timezone.utc)
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["market_code", "account_id", "recognition_year_month"],
+                set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at}
+            )
+            session.execute(stmt)
+            total += 1
+        session.commit()
+
+    return total
+
+
+def sync_coupang_returns(session: Session, account_id: uuid.UUID, days: int = 30) -> int:
+    """
+    쿠팡 반품요청 동기화
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account or account.market_code != "COUPANG":
+        return 0
+    client = _get_client_for_account(account)
+
+    end_date = datetime.now(timezone.utc)
+    start_date = end_date - timedelta(days=days)
+    
+    # v6 API: yyyy-MM-ddTHH:mm
+    start_str = start_date.strftime("%Y-%m-%dT%H:%M")
+    end_str = end_date.strftime("%Y-%m-%dT%H:%M")
+
+    total = 0
+    next_token = None
+    while True:
+        code, data = client.get_return_requests(
+            created_at_from=start_str,
+            created_at_to=end_str,
+            next_token=next_token,
+            max_per_page=50
+        )
+        _log_fetch(session, account, "get_return_requests", {"nextToken": next_token}, code, data)
+        if code != 200: break
+        
+        items = data.get("data", []) if isinstance(data, dict) else []
+        if not items: break
+
+        for item in items:
+            receipt_id = str(item.get("receiptId"))
+            stmt = insert(MarketReturnRaw).values(
+                market_code="COUPANG",
+                account_id=account.id,
+                receipt_id=receipt_id,
+                raw=item,
+                fetched_at=datetime.now(timezone.utc)
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["market_code", "account_id", "receipt_id"],
+                set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at}
+            )
+            session.execute(stmt)
+            total += 1
+        session.commit()
+        
+        next_token = data.get("nextToken") if isinstance(data, dict) else None
+        if not next_token: break
+
+    return total
+
+
+def sync_coupang_exchanges(session: Session, account_id: uuid.UUID, days: int = 30) -> int:
+    """
+    쿠팡 교환요청 동기화
+    """
+    account = session.get(MarketAccount, account_id)
+    if not account or account.market_code != "COUPANG":
+        return 0
+    client = _get_client_for_account(account)
+
+    end_date = datetime.now(timezone.utc)
+    start_date = end_date - timedelta(days=days)
+    
+    # v4 API: yyyy-MM-ddTHH:mm:ss
+    start_str = start_date.strftime("%Y-%m-%dT%H:%M:%S")
+    end_str = end_date.strftime("%Y-%m-%dT%H:%M:%S")
+
+    total = 0
+    next_token = None
+    while True:
+        code, data = client.get_exchange_requests(
+            created_at_from=start_str,
+            created_at_to=end_str,
+            next_token=next_token,
+            max_per_page=50
+        )
+        _log_fetch(session, account, "get_exchange_requests", {"nextToken": next_token}, code, data)
+        if code != 200: break
+        
+        items = data.get("data", []) if isinstance(data, dict) else []
+        if not items: break
+
+        for item in items:
+            exchange_id = str(item.get("exchangeId"))
+            stmt = insert(MarketExchangeRaw).values(
+                market_code="COUPANG",
+                account_id=account.id,
+                exchange_id=exchange_id,
+                raw=item,
+                fetched_at=datetime.now(timezone.utc)
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["market_code", "account_id", "exchange_id"],
+                set_={"raw": stmt.excluded.raw, "fetched_at": stmt.excluded.fetched_at}
+            )
+            session.execute(stmt)
+            total += 1
+        session.commit()
+        
+        next_token = data.get("nextToken") if isinstance(data, dict) else None
+        if not next_token: break
+
+    return total

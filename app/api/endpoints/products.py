@@ -154,6 +154,29 @@ def list_products(
     products = session.scalars(stmt).all()
     return _build_product_responses(session, products)
 
+@router.get("/image-validation-report", status_code=200, response_model=ImageValidationReportOut)
+def get_image_validation_report():
+    log_path = Path("api.log")
+    if not log_path.exists():
+        return ImageValidationReportOut(counts={})
+
+    lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    counts = parse_validation_failures_from_logs(lines)
+    return ImageValidationReportOut(counts=counts)
+
+
+@router.get("/image-validation-failures", status_code=200, response_model=list[ImageValidationFailureOut])
+def get_image_validation_failures(limit: int = Query(default=100, ge=1, le=500)):
+    log_path = Path("api.log")
+    if not log_path.exists():
+        return []
+
+    lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    failures = parse_validation_failures(lines)
+    return failures[:limit]
+
+
+
 @router.get("/{product_id}", response_model=ProductResponse)
 def get_product(product_id: uuid.UUID, session: Session = Depends(get_session)):
     """단일 상품 정보를 조회합니다."""
@@ -236,6 +259,9 @@ def create_product_from_ownerclan_raw(payload: ProductFromOwnerClanRawIn, sessio
         market_fee_rate=float(settings.pricing_market_fee_rate or 0.13)
     )
 
+    from app.services.market_targeting import resolve_trade_flags_from_raw
+    parallel_imported, overseas_purchased = resolve_trade_flags_from_raw(raw_item.raw if raw_item else None)
+
     product = Product(
         supplier_item_id=raw_item.id,
         name=str(item_name),
@@ -244,6 +270,8 @@ def create_product_from_ownerclan_raw(payload: ProductFromOwnerClanRawIn, sessio
         cost_price=cost,
         selling_price=selling_price,
         status="DRAFT",
+        coupang_parallel_imported=parallel_imported,
+        coupang_overseas_purchased=overseas_purchased,
     )
     session.add(product)
     session.flush()
@@ -266,28 +294,6 @@ def get_product_html_warnings(
         tags = find_forbidden_tags(product.description)
         results.append(ProductHtmlWarningOut(productId=product.id, tags=tags))
     return results
-
-
-@router.get("/image-validation-report", status_code=200, response_model=ImageValidationReportOut)
-def get_image_validation_report():
-    log_path = Path("api.log")
-    if not log_path.exists():
-        return ImageValidationReportOut(counts={})
-
-    lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
-    counts = parse_validation_failures_from_logs(lines)
-    return ImageValidationReportOut(counts=counts)
-
-
-@router.get("/image-validation-failures", status_code=200, response_model=list[ImageValidationFailureOut])
-def get_image_validation_failures(limit: int = Query(default=100, ge=1, le=500)):
-    log_path = Path("api.log")
-    if not log_path.exists():
-        return []
-
-    lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
-    failures = parse_validation_failures(lines)
-    return failures[:limit]
 
 
 def _refresh_ownerclan_raw_if_needed(session: Session, product: Product) -> bool:

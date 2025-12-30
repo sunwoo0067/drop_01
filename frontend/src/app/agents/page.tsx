@@ -62,13 +62,19 @@ export default function AgentsPage() {
 
     const handleToggleAgent = async (agentType: string) => {
         // 에이전트 시작/중지 로직 (백엔드 API 필요)
+        void agentType;
         setIsRunning(!isRunning);
     };
 
     useEffect(() => {
-        fetchAgentStatus();
+        const timeout = setTimeout(() => {
+            void fetchAgentStatus();
+        }, 0);
         const interval = setInterval(fetchAgentStatus, 5000);
-        return () => clearInterval(interval);
+        return () => {
+            clearTimeout(timeout);
+            clearInterval(interval);
+        };
     }, []);
 
     const getStatusColor = (status: string) => {

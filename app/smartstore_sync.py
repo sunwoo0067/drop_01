@@ -6,7 +6,7 @@ from sqlalchemy import select, func, and_, or_
 
 from app.db import get_session
 from app.session_factory import session_factory
-from app.models import MarketAccount, MarketListing, Product, SupplierItemRaw
+from app.models import MarketAccount, MarketListing, Product, ProductOption, SupplierItemRaw, MarketOrderRaw, Order, OrderItem
 from app.smartstore_client import SmartStoreClient
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ def _coerce_category_no(value: object) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
-    if not text:
+    if text == "0" or not text:
         return None
     return text
 
@@ -41,19 +41,27 @@ def _coerce_category_no(value: object) -> str | None:
 def _extract_category_no_from_raw(raw: dict) -> str | None:
     if not isinstance(raw, dict):
         return None
+    
+    # 1. 탑색형 카테고리 정보 우선 (상세한 키들 먼저 확인)
     for key in _CATEGORY_KEYS:
         if raw.get(key):
             return _coerce_category_no(raw.get(key))
+            
+    # 2. 'category' 객체 내부 확인 (OwnerClan 등)
+    # 여기서 'key'를 확인하되, 최상위 'key'가 상품코드인 경우를 대비해 여기서만 확인
     category = raw.get("category")
     if isinstance(category, dict):
-        for key in _CATEGORY_KEYS:
+        for key in list(_CATEGORY_KEYS) + ["key"]:
             if category.get(key):
                 return _coerce_category_no(category.get(key))
+                
+    # 3. 'metadata' 객체 내부 확인
     metadata = raw.get("metadata")
     if isinstance(metadata, dict):
-        for key in _CATEGORY_KEYS:
+        for key in list(_CATEGORY_KEYS) + ["key"]:
             if metadata.get(key):
                 return _coerce_category_no(metadata.get(key))
+                
     return None
 
 
@@ -66,6 +74,7 @@ def _build_smartstore_payload(
     stock_quantity: int,
     detail_attribute: dict | None = None,
     image_urls: list[str] | None = None,
+    options: list | None = None,
 ) -> dict:
     images_list = []
     for url in (image_urls or []):
@@ -79,6 +88,8 @@ def _build_smartstore_payload(
             "representativeImage": images_list[0],
             "optionalImages": images_list[1:],
         }
+
+    # 기본 상품 정보 구성
     origin_product = {
         "statusType": "SALE",
         "categoryNo": category_no,
@@ -88,10 +99,65 @@ def _build_smartstore_payload(
         "salePrice": sale_price,
         "stockQuantity": stock_quantity,
     }
+
+    # 옵션 정보가 있는 경우 처리
+    if options:
+        # 1. 옵션 그룹명 추출 (예: "색상/사이즈" -> ["색상", "사이즈"])
+        # 모든 옵션이 동일한 명칭 구조를 가진다고 가정
+        first_opt_name = options[0].option_name if hasattr(options[0], "option_name") else "옵션"
+        group_names = [gn.strip() for gn in first_opt_name.split("/") if gn.strip()]
+        
+        # 2. 조합형 옵션 생성
+        combinations = []
+        min_opt_price = sale_price # 원가 기준 최소가 계산용
+        total_stock = 0
+        
+        for idx, opt in enumerate(options):
+            opt_val = opt.option_value if hasattr(opt, "option_value") else "단품"
+            opt_vals = [v.strip() for v in opt_val.split("/") if v.strip()]
+            
+            # 그룹 개수와 값 개수 맞춤
+            while len(opt_vals) < len(group_names):
+                opt_vals.append("-")
+            opt_vals = opt_vals[:len(group_names)]
+            
+            opt_selling_price = int(opt.selling_price or 0)
+            if opt_selling_price > 0 and opt_selling_price < min_opt_price:
+                min_opt_price = opt_selling_price
+                
+            combinations.append({
+                "optionName1": opt_vals[0],
+                "optionName2": opt_vals[1] if len(opt_vals) > 1 else None,
+                "optionName3": opt_vals[2] if len(opt_vals) > 2 else None,
+                "optionName4": opt_vals[3] if len(opt_vals) > 3 else None,
+                "stockQuantity": max(int(opt.stock_quantity or 0), 999), # 최소 수량 보장
+                "price": opt_selling_price - sale_price, # 기준가(salePrice)와의 차액
+                "sellerManagerCode": opt.external_option_key or str(getattr(opt, "id", idx)),
+                "usable": True
+            })
+            total_stock += max(int(opt.stock_quantity or 0), 999)
+
+        # 기준가를 최소가로 조정할 경우 차액(price) 재계산 필요
+        # 단, 여기서는 단순화를 위해 최초 입력된 sale_price를 기준가로 사용
+        
+        origin_product["optionInfo"] = {
+            "optionCombinationSortType": "CREATE_DATE_DESC",
+            "optionCombinationGroupNames": {
+                "optionGroupName1": group_names[0],
+                "optionGroupName2": group_names[1] if len(group_names) > 1 else None,
+                "optionGroupName3": group_names[2] if len(group_names) > 2 else None,
+                "optionGroupName4": group_names[3] if len(group_names) > 3 else None,
+            },
+            "optionCombinations": combinations
+        }
+        # 조합형 옵션 사용 시 원상품 재고는 옵션 총합 또는 최소 1로 설정 (네이버 정책에 따라 0이 안 될 수도 있음)
+        origin_product["stockQuantity"] = max(total_stock, 1)
+
     if images:
         origin_product["images"] = images
     if detail_attribute:
         origin_product["detailAttribute"] = detail_attribute
+        
     smartstore_channel_product = {
         "channelProductDisplayStatusType": "ON",
         "channelProductSaleStatusType": "ON",
@@ -100,6 +166,7 @@ def _build_smartstore_payload(
         "channelProductSalePrice": sale_price,
         "naverShoppingRegistration": False,
     }
+    
     return {
         "originProduct": origin_product,
         "smartstoreChannelProduct": smartstore_channel_product,
@@ -212,6 +279,102 @@ def _pick_notice_type(notice_items: list[dict]) -> str:
         if value:
             return value
     return "ETC"
+
+
+def _extract_smartstore_order_items(raw: dict) -> list[dict]:
+    if not isinstance(raw, dict):
+        return []
+    for key in ("productOrderList", "productOrders", "productOrder", "orderItems", "items", "orderItem"):
+        value = raw.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+        if isinstance(value, dict):
+            return [value]
+    data = raw.get("data")
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
+    if isinstance(data, dict):
+        for key in ("productOrderList", "productOrders", "productOrder", "items"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+            if isinstance(value, dict):
+                return [value]
+    return []
+
+
+def _extract_smartstore_order_id(raw: dict, item: dict | None = None) -> str | None:
+    candidates = []
+    if isinstance(raw, dict):
+        candidates.extend([
+            raw.get("orderId"),
+            raw.get("order_id"),
+            raw.get("orderNumber"),
+            raw.get("orderNo"),
+            raw.get("orderSeq"),
+        ])
+    if isinstance(item, dict):
+        candidates.extend([
+            item.get("orderId"),
+            item.get("order_id"),
+            item.get("orderNumber"),
+            item.get("orderNo"),
+            item.get("orderSeq"),
+            item.get("productOrderId"),
+        ])
+    for value in candidates:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def _extract_smartstore_product_id(raw: dict, item: dict) -> str | None:
+    candidates = [
+        item.get("sellerProductId"),
+        item.get("productId"),
+        item.get("productNo"),
+        item.get("originProductNo"),
+        item.get("sellerProductNo"),
+        raw.get("sellerProductId"),
+        raw.get("productId"),
+        raw.get("productNo"),
+        raw.get("originProductNo"),
+    ]
+    for value in candidates:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def _extract_smartstore_option_key(item: dict) -> str | None:
+    candidates = [
+        item.get("optionManagementCode"),
+        item.get("optionCode"),
+        item.get("optionId"),
+        item.get("sellerProductItemId"),
+        item.get("sellerItemId"),
+        item.get("optionNo"),
+    ]
+    for value in candidates:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def _safe_int(value: object, fallback: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return fallback
 
 
 class SmartStoreSync:
@@ -457,6 +620,216 @@ class SmartStoreSync:
             logger.error(f"Error syncing SmartStore products: {e}", exc_info=True)
             return 0
 
+    def sync_orders(
+        self,
+        market_code: str,
+        account_id: uuid.UUID,
+        limit: int | None = None,
+    ) -> Dict[str, Any]:
+        """
+        SmartStore 주문 raw 데이터를 기반으로 Order/OrderItem을 생성합니다.
+        """
+        if market_code != "SMARTSTORE":
+            logger.warning(f"Unsupported market code: {market_code}")
+            return {"processed": 0, "created": 0, "skipped": 0, "failed": 0, "failures": []}
+
+        processed = 0
+        created = 0
+        skipped = 0
+        failed = 0
+        failures: list[dict[str, Any]] = []
+
+        q = (
+            self.db.query(MarketOrderRaw)
+            .filter(MarketOrderRaw.market_code == "SMARTSTORE")
+            .filter(MarketOrderRaw.account_id == account_id)
+            .order_by(MarketOrderRaw.fetched_at.desc())
+        )
+        if limit and limit > 0:
+            q = q.limit(limit)
+
+        rows = q.all()
+        for row in rows:
+            processed += 1
+            raw = row.raw if isinstance(row.raw, dict) else {}
+            if not raw:
+                skipped += 1
+                continue
+
+            existing_order = self.db.query(Order).filter(Order.market_order_id == row.id).one_or_none()
+            if existing_order:
+                skipped += 1
+                continue
+
+            order_items = _extract_smartstore_order_items(raw)
+            if not order_items:
+                skipped += 1
+                continue
+
+            order_id = _extract_smartstore_order_id(raw, order_items[0]) or str(row.order_id)
+            if not order_id:
+                failed += 1
+                failures.append({"orderId": row.order_id, "reason": "주문 ID를 찾을 수 없습니다"})
+                continue
+
+            recipient_name = (raw.get("receiverName") or raw.get("recipientName") or raw.get("receiver") or "").strip()
+            recipient_phone = (
+                raw.get("receiverPhoneNumber")
+                or raw.get("receiverMobileNumber")
+                or raw.get("recipientPhone")
+                or raw.get("receiverPhone")
+                or ""
+            )
+            recipient_phone = str(recipient_phone).strip()
+            addr1 = (raw.get("receiverAddress1") or raw.get("address1") or raw.get("shippingAddress1") or "").strip()
+            addr2 = (raw.get("receiverAddress2") or raw.get("address2") or raw.get("shippingAddress2") or "").strip()
+            zipcode = (raw.get("receiverZipCode") or raw.get("zipCode") or raw.get("postalCode") or "").strip()
+            recipient_address = addr1 if not addr2 else f"{addr1} {addr2}"
+
+            order = Order(
+                market_order_id=row.id,
+                order_number=f"SS-{order_id}",
+                status=raw.get("orderStatus") or raw.get("status") or "PAYMENT_COMPLETED",
+                recipient_name=recipient_name or None,
+                recipient_phone=recipient_phone or None,
+                address=recipient_address or None,
+                total_amount=0,
+            )
+            self.db.add(order)
+            self.db.flush()
+
+            # OrderItem 생성 (중복 방지)
+            self.db.query(OrderItem).filter(OrderItem.order_id == order.id).delete()
+
+            total_amount = 0
+            for item in order_items:
+                product_id = _extract_smartstore_product_id(raw, item)
+                if not product_id:
+                    failed += 1
+                    failures.append({"orderId": order_id, "reason": "상품 식별자를 찾을 수 없습니다"})
+                    continue
+
+                listing = (
+                    self.db.query(MarketListing)
+                    .filter(MarketListing.market_account_id == account_id)
+                    .filter(MarketListing.market_item_id == str(product_id))
+                    .one_or_none()
+                )
+                product = None
+                market_listing_id = None
+                if listing:
+                    market_listing_id = listing.id
+                    product = self.db.get(Product, listing.product_id)
+                else:
+                    product = (
+                        self.db.query(Product)
+                        .filter(Product.source == "smartstore")
+                        .filter(Product.external_product_id == str(product_id))
+                        .one_or_none()
+                    )
+
+                if not product:
+                    skipped += 1
+                    failures.append({"orderId": order_id, "reason": f"Product 매핑 실패(product_id={product_id})"})
+                    continue
+
+                option_key = _extract_smartstore_option_key(item)
+                option_name = item.get("optionName") or item.get("option") or item.get("optionValue")
+                option_value = item.get("optionValue") or item.get("optionName") or item.get("option")
+                option_match = None
+                if option_key:
+                    try:
+                        option_uuid = uuid.UUID(option_key) if len(option_key) == 36 else None
+                    except Exception:
+                        option_uuid = None
+                    option_match = (
+                        self.db.query(ProductOption)
+                        .filter(ProductOption.product_id == product.id)
+                        .filter(
+                            (ProductOption.external_option_key == option_key)
+                            | (ProductOption.id == option_uuid if option_uuid else False)
+                        )
+                        .one_or_none()
+                    )
+                if not option_match and option_name and option_value:
+                    # 1. Exact match attempt
+                    option_match = (
+                        self.db.query(ProductOption)
+                        .filter(ProductOption.product_id == product.id)
+                        .filter(ProductOption.option_name == str(option_name))
+                        .filter(ProductOption.option_value == str(option_value))
+                        .one_or_none()
+                    )
+                    
+                    # 2. Normalized match fallback (ignore spaces/special chars)
+                    if not option_match:
+                        import re
+                        def _norm(s): return re.sub(r'[^a-zA-Z0-9가-힣]', '', str(s or ""))
+                        
+                        norm_name = _norm(option_name)
+                        norm_value = _norm(option_value)
+                        
+                        all_options = self.db.query(ProductOption).filter(ProductOption.product_id == product.id).all()
+                        for opt in all_options:
+                            if _norm(opt.option_name) == norm_name and _norm(opt.option_value) == norm_value:
+                                option_match = opt
+                                break
+                                
+                        # 3. Value-only match fallback (if name is missing or slightly different)
+                        if not option_match:
+                            for opt in all_options:
+                                if _norm(opt.option_value) == norm_value:
+                                    option_match = opt
+                                    break
+
+                quantity = _safe_int(item.get("quantity") or item.get("orderQuantity") or item.get("itemQuantity"), 1)
+                unit_price = _safe_int(
+                    item.get("unitPrice")
+                    or item.get("salePrice")
+                    or item.get("productPrice")
+                    or item.get("price"),
+                    0,
+                )
+                total_price = _safe_int(
+                    item.get("totalPaymentAmount")
+                    or item.get("totalPrice")
+                    or item.get("paymentAmount"),
+                    unit_price * quantity,
+                )
+                if total_price == 0:
+                    total_price = unit_price * quantity
+                total_amount += total_price
+
+                order_item = OrderItem(
+                    order_id=order.id,
+                    product_id=product.id,
+                    market_listing_id=market_listing_id,
+                    product_option_id=option_match.id if option_match else None,
+                    external_item_id=str(
+                        item.get("productOrderId")
+                        or item.get("orderItemId")
+                        or item.get("sellerProductItemId")
+                        or ""
+                    ),
+                    product_name=str(item.get("productName") or item.get("name") or product.name),
+                    quantity=quantity,
+                    unit_price=unit_price,
+                    total_price=total_price,
+                )
+                self.db.add(order_item)
+
+            order.total_amount = total_amount
+            self.db.commit()
+            created += 1
+
+        return {
+            "processed": processed,
+            "created": created,
+            "skipped": skipped,
+            "failed": failed,
+            "failures": failures[:50],
+        }
+
     def register_product(
         self,
         market_code: str,
@@ -484,9 +857,19 @@ class SmartStoreSync:
             if not product:
                 return {"status": "error", "message": f"Product not found: {product_id}"}
 
+            # 옵션 정보 조회
+            options = product.options if product.options else []
+            
             # 네이버 API 등록 요청 준비
             name = product.processed_name or product.name or f"상품 {product.id}"
             sale_price = int(product.selling_price or 0)
+            
+            # 옵션이 있는 경우 기준가(salePrice)를 옵션 최소가로 조정 (네이버 권장/필수)
+            if options:
+                opt_prices = [int(opt.selling_price) for opt in options if opt.selling_price]
+                if opt_prices:
+                    sale_price = min(opt_prices)
+            
             stock_quantity = int(getattr(product, "stock_quantity", 0) or 0)
             if stock_quantity <= 0:
                 stock_quantity = 9999
@@ -571,6 +954,7 @@ class SmartStoreSync:
                         certification_infos=certification_infos,
                     ),
                     image_urls=image_urls,
+                    options=options,
                 )
 
             try:
@@ -589,29 +973,49 @@ class SmartStoreSync:
                 status_code, response_data = self.client.create_product(payload)
 
                 if status_code not in (200, 201):
+                    msg = response_data.get("message", "Registration failed")
+                    if "invalidInputs" in response_data:
+                        msg += f" (invalidInputs: {response_data['invalidInputs']})"
+                    
                     logger.error(
-                        "SmartStore registration failed (status=%s, message=%s, productId=%s)",
+                        "SmartStore registration failed (status=%s, message=%s, productId=%s, response=%s)",
                         status_code,
-                        response_data.get("message", "Unknown error"),
+                        msg,
                         product.id,
+                        response_data
                     )
                     return {
                         "status": "error",
-                        "message": response_data.get("message", "Registration failed"),
+                        "message": msg,
                         "details": response_data,
                     }
 
-                # 성공 시 Product 상태 업데이트
-                product.smartstore_status = "REGISTERED"
-                external_id = (
+                # 성공 시 MarketListing 생성 또는 업데이트
+                external_id = str(
                     response_data.get("originProductNo")
                     or response_data.get("productNo")
                     or response_data.get("data")
-                    or product.external_product_id
                 )
-                if external_id:
-                    product.external_product_id = str(external_id)
-                product.smartstore_raw_data = response_data
+                
+                # MarketListing 객체 생성/업데이트
+                listing = tmp_db.query(MarketListing).filter(
+                    MarketListing.market_account_id == account_id,
+                    MarketListing.product_id == product_id
+                ).first()
+                
+                if not listing:
+                    listing = MarketListing(
+                        product_id=product_id,
+                        market_account_id=account_id,
+                        market_item_id=external_id,
+                        status="ACTIVE",
+                        store_url=f"https://smartstore.naver.com/{account.name}/products/{external_id}"
+                    )
+                    tmp_db.add(listing)
+                else:
+                    listing.market_item_id = external_id
+                    listing.status = "ACTIVE"
+                
                 tmp_db.commit()
 
                 logger.info(f"Successfully registered product to SmartStore: {product.name}")
@@ -642,6 +1046,18 @@ def sync_smartstore_products(db: Session, account_id: uuid.UUID) -> int:
     return sync_service.sync_products("SMARTSTORE", account_id)
 
 
+def sync_smartstore_orders(
+    db: Session,
+    account_id: uuid.UUID,
+    limit: int | None = None,
+) -> Dict[str, Any]:
+    """
+    네이버 주문 동기화 함수 (호환용)
+    """
+    sync_service = SmartStoreSync(db)
+    return sync_service.sync_orders("SMARTSTORE", account_id, limit=limit)
+
+
 def register_smartstore_product(
     db: Session,
     account_id: uuid.UUID,
@@ -666,3 +1082,44 @@ def delete_smartstore_listing(db: Session, account_id: uuid.UUID, market_item_id
     """
     sync_service = SmartStoreSync(db)
     return sync_service.delete_market_listing("SMARTSTORE", account_id, market_item_id)
+
+
+def update_smartstore_price(db: Session, account_id: uuid.UUID, market_item_id: str, price: int) -> Tuple[bool, str | None]:
+    """
+    네이버 상품 가격을 수정합니다.
+    """
+    sync_service = SmartStoreSync(db)
+    client = sync_service._get_client(account_id)
+    if not client:
+        return False, "Failed to initialize SmartStore client"
+
+    # 스마트스토어는 1원 단위 가능하지만, 보통 10원 단위 권장
+    target_price = ((price + 9) // 10) * 10
+
+    payload = {
+        "originProduct": {
+            "salePrice": target_price
+        }
+    }
+
+    code, data = client.update_product(market_item_id, payload)
+    if code != 200:
+        msg = data.get("message", "Unknown error")
+        if "invalidInputs" in data:
+            msg += f" ({data['invalidInputs']})"
+        return False, f"가격 수정 실패: {msg}"
+
+    # DB 업데이트
+    listing = db.execute(
+        select(MarketListing)
+        .where(MarketListing.market_account_id == account_id)
+        .where(MarketListing.market_item_id == market_item_id)
+    ).scalars().first()
+    
+    if listing:
+        product = db.get(Product, listing.product_id)
+        if product:
+            product.selling_price = price
+            db.commit()
+
+    return True, "가격 수정 완료"

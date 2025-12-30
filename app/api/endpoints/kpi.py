@@ -547,3 +547,4 @@ async def _process_orders_kpi(order_data_list: List[dict]):
         
     except Exception as e:
         logger.error(f"Background order KPI processing failed: {e}", exc_info=True)
+

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import {
     Loader2,
     Search,
@@ -15,7 +16,7 @@ import {
     RefreshCcw,
     AlertTriangle
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/Card";
+import { Card, CardContent, CardFooter } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
@@ -60,6 +61,19 @@ function normalizeCoupangStatus(status?: string | null): string | null {
     if (s.includes("삭제") || s === "상품삭제") return "DELETED";
 
     return s;
+}
+
+function isRegistrationSkipped(reason?: any): boolean {
+    if (!reason) return false;
+    const ctx = String(reason?.context || "").toLowerCase();
+    if (ctx === "registration_skip") return true;
+    const msg = String(reason?.message || reason?.reason || "");
+    return msg.startsWith("SKIPPED:");
+}
+
+function formatSkipReason(reason?: any): string {
+    const msg = String(reason?.message || reason?.reason || "");
+    return msg.replace(/^SKIPPED:\s*/i, "").trim() || "상세 사유 없음";
 }
 
 export default function RegistrationPage() {
@@ -425,10 +439,12 @@ export default function RegistrationPage() {
                                 {/* Image Preview */}
                                 <div className="aspect-[4/3] relative overflow-hidden bg-muted">
                                     {item.processed_image_urls && item.processed_image_urls.length > 0 ? (
-                                        <img
+                                        <Image
                                             src={item.processed_image_urls[0]}
-                                            alt={item.name}
-                                            className="object-cover w-full h-full transition-transform duration-700 group-hover:scale-110"
+                                            alt={item.name || "상품 이미지"}
+                                            fill
+                                            sizes="(min-width: 1024px) 25vw, (min-width: 768px) 33vw, 100vw"
+                                            className="object-cover transition-transform duration-700 group-hover:scale-110"
                                         />
                                     ) : (
                                         <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground/30 space-y-2">
@@ -493,10 +509,14 @@ export default function RegistrationPage() {
                                         </div>
                                         <div className="flex flex-col items-end">
                                             <span className="text-muted-foreground text-[10px] uppercase font-bold tracking-tighter">마켓 상태</span>
-                                            {normalizeCoupangStatus(item.coupangStatus) === 'DENIED' ? (
-                                                <Badge variant="destructive" className="text-[10px] animate-pulse">
-                                                    승인 반려
-                                                </Badge>
+                                    {isRegistrationSkipped(item.rejectionReason) ? (
+                                        <Badge variant="warning" className="text-[10px]">
+                                            등록 제외
+                                        </Badge>
+                                    ) : normalizeCoupangStatus(item.coupangStatus) === 'DENIED' ? (
+                                        <Badge variant="destructive" className="text-[10px] animate-pulse">
+                                            승인 반려
+                                        </Badge>
                                             ) : normalizeCoupangStatus(item.coupangStatus) === 'IN_REVIEW' ? (
                                                 <Badge variant="secondary" className="text-[10px] bg-blue-100 text-blue-700">
                                                     심사 중
@@ -520,6 +540,18 @@ export default function RegistrationPage() {
                                             )}
                                         </div>
                                     </div>
+
+                                    {isRegistrationSkipped(item.rejectionReason) && (
+                                        <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 space-y-2">
+                                            <div className="flex items-center gap-2 text-amber-700">
+                                                <AlertTriangle className="h-4 w-4" />
+                                                <span className="text-xs font-bold">등록 제외 사유</span>
+                                            </div>
+                                            <p className="text-xs text-amber-700/90 leading-relaxed line-clamp-3">
+                                                {formatSkipReason(item.rejectionReason)}
+                                            </p>
+                                        </div>
+                                    )}
 
                                     {normalizeCoupangStatus(item.coupangStatus) === 'DENIED' && item.rejectionReason && (
                                         <div className="p-3 rounded-xl bg-destructive/5 border border-destructive/10 space-y-2">

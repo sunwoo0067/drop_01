@@ -605,3 +605,4 @@ async def compare_processing_methods(
     except Exception as e:
         logger.error(f"가공 방법 비교 실패: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"비교 실패: {str(e)}")
+

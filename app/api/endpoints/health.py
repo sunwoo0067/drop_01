@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import text, func
 import logging
+import httpx
 
 from app.db import get_session
 from app.models import MarketAccount
@@ -11,7 +12,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 @router.get("/system")
-async def get_system_health(session: Session = Depends(get_session)):
+def get_system_health(session: Session = Depends(get_session)):
     """
     백엔드 서버 및 데이터베이스 연결 상태를 확인합니다.
     """
@@ -31,7 +32,7 @@ async def get_system_health(session: Session = Depends(get_session)):
     }
 
 @router.get("/accounts")
-async def get_accounts_health(session: Session = Depends(get_session)):
+def get_accounts_health(session: Session = Depends(get_session)):
     """
     각 마켓 계정의 API 연결 상태를 가볍게 체크합니다.
     """
@@ -48,7 +49,8 @@ async def get_accounts_health(session: Session = Depends(get_session)):
                 client = CoupangClient(
                     access_key=creds.get("access_key", ""),
                     secret_key=creds.get("secret_key", ""),
-                    vendor_id=creds.get("vendor_id", "")
+                    vendor_id=creds.get("vendor_id", ""),
+                    timeout=httpx.Timeout(5.0, connect=3.0),
                 )
                 # 가벼운 API 호출로 토큰/인증 유효성 확인
                 code, data = client.check_auto_category_agreed()

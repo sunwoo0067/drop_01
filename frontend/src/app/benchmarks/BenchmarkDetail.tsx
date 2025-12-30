@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect } from "react";
+import Image from "next/image";
 import api from "@/lib/api";
-import { BenchmarkProduct } from "@/lib/types/benchmark";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Loader2, ExternalLink, Star, MessageSquare, Info, ChevronRight } from "lucide-react";
@@ -74,9 +74,15 @@ export default function BenchmarkDetail({ id, onClose }: DetailProps) {
                     <div className="p-4 space-y-6">
                         {/* ... existing content ... */}
                         <div className="space-y-4">
-                            <div className="aspect-video bg-muted rounded-md overflow-hidden border">
+                            <div className="aspect-video bg-muted rounded-md overflow-hidden border relative">
                                 {item.imageUrls?.[0] ? (
-                                    <img src={item.imageUrls[0]} alt="" className="h-full w-full object-contain" />
+                                    <Image
+                                        src={item.imageUrls[0]}
+                                        alt={item.name || "상품 이미지"}
+                                        fill
+                                        sizes="(min-width: 768px) 50vw, 100vw"
+                                        className="object-contain"
+                                    />
                                 ) : (
                                     <div className="flex items-center justify-center h-full text-muted-foreground">이미지 없음</div>
                                 )}

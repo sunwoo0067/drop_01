@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { BarChart3, RefreshCw, TrendingUp, TrendingDown } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
@@ -33,7 +33,7 @@ export default function SalesTrendChart({ periodType = "weekly", periods = 12 }:
     const [isLoading, setIsLoading] = useState(true);
     const [showPrediction, setShowPrediction] = useState(true);
 
-    const fetchTrend = async () => {
+    const fetchTrend = useCallback(async () => {
         try {
             setIsLoading(true);
             const data = await analyticsAPI.getTrend(periodType, periods);
@@ -43,20 +43,11 @@ export default function SalesTrendChart({ periodType = "weekly", periods = 12 }:
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [periodType, periods]);
 
     useEffect(() => {
         fetchTrend();
-    }, [periodType, periods]);
-
-    const formatCurrency = (value: number) => {
-        return new Intl.NumberFormat("ko-KR", {
-            style: "currency",
-            currency: "KRW",
-            minimumFractionDigits: 0,
-            maximumFractionDigits: 0,
-        }).format(value);
-    };
+    }, [fetchTrend]);
 
     const formatCompactCurrency = (value: number) => {
         if (value >= 100000000) {

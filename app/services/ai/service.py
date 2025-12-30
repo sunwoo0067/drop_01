@@ -8,6 +8,7 @@ from app.services.ai.base import AIProvider
 from app.services.ai.providers.gemini import GeminiProvider
 from app.services.ai.providers.ollama import OllamaProvider
 from app.services.ai.providers.openai import OpenAIProvider
+from app.services.ai.providers.stablediffusion import StableDiffusionProvider
 from app.services.ai.exceptions import (
     AIError,
     APIError,
@@ -18,7 +19,7 @@ from app.services.ai.exceptions import (
 
 logger = logging.getLogger(__name__)
 
-ProviderType = Literal["gemini", "ollama", "openai", "auto"]
+ProviderType = Literal["gemini", "ollama", "openai", "sd", "auto"]
 
 # API 키 캐시 (TTL 10분)
 _api_key_cache = {"data": None, "timestamp": 0}
@@ -94,6 +95,7 @@ class AIService:
             logic_model_name=settings.ollama_logic_model
         )
         self.openai = OpenAIProvider(api_keys=openai_keys, model_name=settings.openai_model)
+        self.sd = StableDiffusionProvider(base_url=settings.sd_api_url, model_name=settings.sd_model_name)
         
         self.default_provider_name = settings.default_ai_provider
 
@@ -112,6 +114,8 @@ class AIService:
             return self.ollama
         elif provider_type == "openai":
             return self.openai
+        elif provider_type == "sd":
+            return self.sd
         else:
             return self.openai
 
@@ -333,6 +337,43 @@ class AIService:
         except Exception as e:
             wrapped_error = wrap_exception(e, AIError, provider=provider, prompt="generate_json")
             logger.error(f"generate_json failed: {wrapped_error}")
+            raise wrapped_error
+
+    async def generate_image(
+        self,
+        prompt: str,
+        negative_prompt: str = "",
+        width: int = 1024,
+        height: int = 1024,
+        model: Optional[str] = None,
+        provider: ProviderType = "sd"
+    ) -> bytes:
+        """
+        Generates an image from a prompt. 
+        Defaults to Stable Diffusion (sd) for premium asset generation.
+        """
+        try:
+            target_provider = self._get_provider(provider)
+            return await target_provider.generate_image(
+                prompt,
+                negative_prompt=negative_prompt,
+                width=width,
+                height=height,
+                model=model
+            )
+        except Exception as e:
+            wrapped_error = wrap_exception(e, AIError, provider=provider, prompt="generate_image")
+            logger.error(f"generate_image failed: {wrapped_error}")
+            return b""
+
+    async def generate_text(self, prompt: str, model: Optional[str] = None, provider: ProviderType = "auto") -> str:
+        """Generic text generation method"""
+        try:
+            target_provider = self._get_provider(provider)
+            return await target_provider.generate_text(prompt, model=model)
+        except Exception as e:
+            wrapped_error = wrap_exception(e, AIError, provider=provider, prompt="generate_text")
+            logger.error(f"generate_text failed: {wrapped_error}")
             raise wrapped_error
 
     async def describe_image(self, image_data: bytes, prompt: str = "이 이미지를 상세히 설명해주세요. 특히 상품의 특징, 색상, 디자인, 재질 등을 중심으로 설명해주세요.", provider: ProviderType = "auto") -> str:

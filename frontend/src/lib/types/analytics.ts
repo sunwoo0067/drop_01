@@ -6,6 +6,17 @@
 // 매출 분석 타입
 // ============================================================================
 
+export interface OptionPerformance {
+    option_id: string;
+    option_name: string;
+    option_value: string;
+    total_quantity: number;
+    total_revenue: number;
+    total_cost: number;
+    total_profit: number;
+    avg_margin_rate: number;
+}
+
 export interface SalesAnalytics {
     id: string;
     product_id: string;
@@ -28,6 +39,47 @@ export interface SalesAnalytics {
     insights?: string[];
     recommendations?: string[];
     created_at: string;
+    option_performance?: OptionPerformance[];
+    // 추가된 정밀 재무 지표
+    actual_fees?: number;
+    actual_vat?: number;
+    net_settlement?: number;
+}
+
+export interface StrategicReport {
+    market_position: string;
+    swot_analysis: {
+        strengths: string[];
+        weaknesses: string[];
+        opportunities: string[];
+        threats: string[];
+    };
+    pricing_strategy: string;
+    action_plan: string[];
+    expected_impact: string;
+}
+
+export interface OptimalPricePrediction {
+    optimal_price: number;
+    strategy: string;
+    reason: string;
+    expected_margin_rate: number;
+    impact: string;
+    market_code?: string | null;
+    account_id?: string | null;
+    market_item_id?: string | null;
+}
+
+export interface UpdatePriceRequest {
+    market_code: string;
+    account_id: string;
+    market_item_id: string;
+    price: number;
+}
+
+export interface UpdatePriceResponse {
+    success: boolean;
+    message?: string;
 }
 
 export interface ProductPerformance {
@@ -52,6 +104,10 @@ export interface SalesSummary {
     period_type: string;
     period_start: string;
     period_end: string;
+    // 추가된 정밀 재무 지표
+    actual_fees?: number;
+    actual_vat?: number;
+    net_settlement?: number;
 }
 
 export interface SalesTrendDataPoint {
@@ -73,6 +129,18 @@ export interface SalesTrend {
 // ============================================================================
 // 소싱 추천 타입
 // ============================================================================
+
+export interface OptionRecommendation {
+    option_id?: string;
+    option_name: string;
+    option_value: string;
+    total_quantity: number;
+    total_revenue: number;
+    total_profit: number;
+    avg_margin_rate: number;
+    recommended_quantity: number;
+    score: number;
+}
 
 export interface SourcingRecommendation {
     id: string;
@@ -96,6 +164,7 @@ export interface SourcingRecommendation {
     stock_days_left?: number;
     reorder_point: number;
     reasoning?: string;
+    option_recommendations?: OptionRecommendation[];
     risk_factors?: string[];
     opportunity_factors?: string[];
     status: string;
@@ -119,6 +188,18 @@ export interface ReorderAlert {
     stock_days_left: number;
     recommended_quantity: number;
     overall_score: number;
+}
+
+export interface ScalingRecommendation {
+    product_id: string;
+    product_name: string;
+    current_orders: number;
+    source_market: string;
+    target_market: string;
+    expected_impact: 'High' | 'Medium' | 'Low';
+    difficulty_score: 'High' | 'Medium' | 'Low';
+    potential_revenue: number;
+    reason: string;
 }
 
 // ============================================================================

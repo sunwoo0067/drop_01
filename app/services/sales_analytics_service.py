@@ -12,9 +12,11 @@ from sqlalchemy import select, func, and_, or_
 from sqlalchemy.orm import Session
 
 from app.models import (
-    SalesAnalytics, Order, OrderItem, Product, 
+    SalesAnalytics, Order, OrderItem, Product, ProductOption,
     SourcingRecommendation, SupplierPerformance,
-    SourcingCandidate, BenchmarkProduct
+    SourcingCandidate, BenchmarkProduct,
+    MarketRevenueRaw, MarketSettlementRaw,
+    MarketAccount, MarketFeePolicy, MarketListing
 )
 from app.services.ai import AIService
 from app.services.ai.exceptions import wrap_exception, AIError
@@ -74,6 +76,14 @@ class SalesAnalyticsService:
         
         # 주문 데이터 수집
         order_stats = self._collect_order_stats(product_id, period_start, period_end)
+        
+        # 실제 마켓 데이터 수집 (쿠팡 등 정산 데이터 반영)
+        actual_stats = self._collect_actual_market_stats(product_id, period_start, period_end)
+        if actual_stats["actual_revenue"] > 0:
+            logger.info(f"Using actual market revenue for product {product_id}")
+            order_stats["total_revenue"] = actual_stats["actual_revenue"]
+            order_stats["total_profit"] = actual_stats["actual_profit"]
+            order_stats["avg_margin_rate"] = (actual_stats["actual_profit"] / actual_stats["actual_revenue"]) if actual_stats["actual_revenue"] > 0 else 0.0
         
         # 전 대비 성장률 계산
         growth_stats = self._calculate_growth_rate(
@@ -166,14 +176,28 @@ class SalesAnalyticsService:
             .all()
         )
         
+        # 옵션 정보 수동 조회 (교차 DB 관계 미지원 대응)
+        option_ids = [oi.product_option_id for oi in order_items if oi.product_option_id]
+        options_map = {}
+        if option_ids:
+            options = self.db.execute(
+                select(ProductOption).where(ProductOption.id.in_(option_ids))
+            ).scalars().all()
+            options_map = {opt.id: opt for opt in options}
+        
         total_orders = len(set(oi.order_id for oi in order_items))
         total_quantity = sum(oi.quantity for oi in order_items)
         total_revenue = sum(oi.total_price for oi in order_items)
         
-        # 이익률 계산
+        # 이익률 계산 (메모리 내 옵션 맵 활용)
         product = self.db.get(Product, product_id)
         if product:
-            total_cost = product.cost_price * total_quantity
+            total_cost = 0
+            for oi in order_items:
+                opt = options_map.get(oi.product_option_id)
+                cost_per_unit = opt.cost_price if opt else product.cost_price
+                total_cost += cost_per_unit * oi.quantity
+            
             total_profit = total_revenue - total_cost
             avg_margin_rate = (total_profit / total_revenue) if total_revenue > 0 else 0.0
         else:
@@ -187,6 +211,210 @@ class SalesAnalyticsService:
             "total_profit": total_profit,
             "avg_margin_rate": avg_margin_rate
         }
+
+    def _get_market_fee_rate(self, market_code: str, category_id: str | None = None) -> float:
+        """
+        MarketFeePolicy 테이블에서 수수료율을 조회합니다.
+        """
+        # 1. 특정 카테고리 수수료 조회
+        if category_id:
+            policy = self.db.execute(
+                select(MarketFeePolicy)
+                .where(MarketFeePolicy.market_code == market_code)
+                .where(MarketFeePolicy.category_id == category_id)
+            ).scalars().first()
+            if policy:
+                return policy.fee_rate
+        
+        # 2. 마켓 기본 수수료 조회 (category_id IS NULL)
+        policy = self.db.execute(
+            select(MarketFeePolicy)
+            .where(MarketFeePolicy.market_code == market_code)
+            .where(MarketFeePolicy.category_id == None)
+        ).scalars().first()
+        if policy:
+            return policy.fee_rate
+            
+        # 3. 기본값 (정책 데이터가 없는 경우)
+        return 0.108 if market_code == "COUPANG" else 0.06
+
+    def _collect_actual_market_stats(
+        self,
+        product_id: uuid.UUID,
+        period_start: datetime,
+        period_end: datetime
+    ) -> Dict[str, Any]:
+        """
+        MarketRevenueRaw 데이터를 기반으로 실제 매출 및 비용(수수료 등)을 집계합니다.
+        데이터가 없는 경우 마켓별 예상 수수료를 적용하여 추정합니다.
+        """
+        # 해당 상품의 마켓 정보 조회
+        market_code = "COUPANG" # 기본값
+        product = self.db.get(Product, product_id)
+        
+        # 1. 실제 정산/매출 데이터 조회 시도
+        order_numbers = (
+            self.db.execute(
+                select(Order.order_number)
+                .join(OrderItem, Order.id == OrderItem.order_id)
+                .where(OrderItem.product_id == product_id)
+                .where(Order.created_at >= period_start)
+                .where(Order.created_at <= period_end)
+            )
+            .scalars()
+            .all()
+        )
+        
+        revenue_items = []
+        if order_numbers:
+            revenue_items = (
+                self.db.execute(
+                    select(MarketRevenueRaw)
+                    .where(MarketRevenueRaw.order_id.in_(order_numbers))
+                )
+                .scalars()
+                .all()
+            )
+        
+        total_actual_revenue = 0
+        total_fees = 0
+        
+        if revenue_items:
+            for item in revenue_items:
+                raw = item.raw
+                sale_amount = raw.get("saleAmount", 0)
+                settlement_amount = raw.get("settlementTargetAmount", 0)
+                total_actual_revenue += sale_amount
+                total_fees += (sale_amount - settlement_amount)
+        else:
+            # 실 데이터가 없으면 주문 테이블 기반으로 추정
+            # 해당 상품이 등록된 마켓 정보 확인
+            listing = self.db.execute(
+                select(MarketListing).where(MarketListing.product_id == product_id).limit(1)
+            ).scalars().first()
+            
+            market_code = listing.market_code if listing else "COUPANG"
+            
+            # TODO: 카테고리 ID 연동 로직 추가 가능
+            fee_rate = self._get_market_fee_rate(market_code)
+            
+            order_items = (
+                self.db.execute(
+                    select(OrderItem)
+                    .join(Order, Order.id == OrderItem.order_id)
+                    .where(OrderItem.product_id == product_id)
+                    .where(Order.created_at >= period_start)
+                    .where(Order.created_at <= period_end)
+                )
+                .scalars()
+                .all()
+            )
+            
+            for oi in order_items:
+                total_actual_revenue += oi.total_price
+                total_fees += oi.total_price * fee_rate
+        
+        # 2. 상품 구매 원가 계산 (옵션별 상세 원가 반영)
+        order_items_for_cost = (
+            self.db.execute(
+                select(OrderItem)
+                .join(Order, Order.id == OrderItem.order_id)
+                .where(OrderItem.product_id == product_id)
+                .where(Order.created_at >= period_start)
+                .where(Order.created_at <= period_end)
+            )
+            .scalars()
+            .all()
+        )
+
+        option_ids = [oi.product_option_id for oi in order_items_for_cost if oi.product_option_id]
+        options_map = {}
+        if option_ids:
+            options = self.db.execute(
+                select(ProductOption).where(ProductOption.id.in_(option_ids))
+            ).scalars().all()
+            options_map = {opt.id: opt for opt in options}
+        
+        total_cost = 0
+        for oi in order_items_for_cost:
+            opt = options_map.get(oi.product_option_id)
+            cost_per_unit = opt.cost_price if opt else (product.cost_price if product else 0)
+            total_cost += cost_per_unit * oi.quantity
+            
+        # 3. 부가세 계산 (매출의 10% 가정, 매입 부가세 공제 고려)
+        vat_sales = total_actual_revenue * 0.1 / 1.1 # 포함 부가세
+        vat_purchases = total_cost * 0.1
+        net_vat = max(0, vat_sales - vat_purchases)
+            
+        actual_profit = total_actual_revenue - total_fees - total_cost - net_vat
+        
+        return {
+            "actual_revenue": total_actual_revenue,
+            "actual_fees": total_fees,
+            "actual_vat": net_vat,
+            "actual_profit": actual_profit,
+            "net_settlement": total_actual_revenue - total_fees - net_vat
+        }
+
+    async def generate_strategic_insight(self, product_id: uuid.UUID) -> Dict[str, Any]:
+        """
+        AI 기반 제품 판매 전략 보고서를 생성합니다.
+        """
+        product = self.db.get(Product, product_id)
+        if not product:
+            raise ValueError(f"Product {product_id} not found")
+
+        # 최근 4주 분석 데이터 가져오기
+        analytics = (
+            self.db.execute(
+                select(SalesAnalytics)
+                .where(SalesAnalytics.product_id == product_id)
+                .order_by(SalesAnalytics.created_at.desc())
+                .limit(4)
+            )
+            .scalars()
+            .all()
+        )
+
+        if not analytics:
+            # 분석 데이터가 없으면 즉시 분석 실행
+            analytics_obj = await self.analyze_product_sales(product_id, period_type="weekly", period_count=4)
+            analytics = [analytics_obj]
+
+        # 성 성과 요약 구성
+        latest = analytics[0]
+        history_summary = "\n".join([
+            f"- {a.period_start.date() if a.period_start else 'N/A'}: 주문 {a.total_orders}건, 매출 {a.total_revenue}원, 이익률 {a.avg_margin_rate:.1%}"
+            for a in analytics
+        ])
+
+        prompt = f"""
+        당신은 이커머스 매출 최적화 전문가입니다. 다음 상품의 최근 4주 성과를 분석하고 전략적 보고서를 작성하세요.
+
+        상품명: {product.name}
+        현재 상태: {product.status}
+        
+        최근 성과 이력:
+        {history_summary}
+        
+        예상 다음 주 매출: {latest.predicted_revenue or '데이터 부족'}원
+        성장률: {latest.revenue_growth_rate:.1%}
+        시장 수요 점수: {latest.market_demand_score}/1.0
+
+        반드시 다음 항목을 포함한 JSON 형식으로 응답하세요:
+        1. "market_position": 현재 상품의 시장 위치 (라이징스타, 캐시카우, 골칫덩이, 개 등)
+        2. "swot_analysis": {{ "strengths": [], "weaknesses": [], "opportunities": [], "threats": [] }}
+        3. "pricing_strategy": 구체적인 가격 조정 제안 및 근거
+        4. "action_plan": 향후 2주간 실행해야 할 우선순위 조치 3가지
+        5. "expected_impact": 조치 실행 시 예상되는 매출 변화 (텍스트)
+        """
+
+        try:
+            report = await self.ai_service.generate_json(prompt, provider="auto")
+            return report
+        except Exception as e:
+            logger.error(f"Failed to generate strategic insight for {product_id}: {e}")
+            raise
     
     def _calculate_growth_rate(
         self,
@@ -546,6 +774,84 @@ class SalesAnalyticsService:
                 "revenue_growth_rate": a.revenue_growth_rate
             })
         
+        return results
+
+    async def get_option_performance(
+        self,
+        product_id: uuid.UUID,
+        period_start: Optional[datetime] = None,
+        period_end: Optional[datetime] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        특정 상품의 옵션별 판매 성과를 분석합니다.
+        
+        Args:
+            product_id: 제품 ID
+            period_start: 시작일 (None일 경우 전체 기간)
+            period_end: 종료일 (None일 경우 현재)
+        
+        Returns:
+            옵션별 성과 목록
+        """
+        query = (
+            select(OrderItem)
+            .where(OrderItem.product_id == product_id)
+        )
+        
+        if period_start:
+            query = query.join(Order).where(Order.created_at >= period_start)
+        if period_end:
+            if not period_start:
+                query = query.join(Order)
+            query = query.where(Order.created_at <= period_end)
+            
+        items = self.db.execute(query).scalars().all()
+
+        option_ids = [oi.product_option_id for oi in items if oi.product_option_id]
+        options_map = {}
+        if option_ids:
+            options = self.db.execute(
+                select(ProductOption).where(ProductOption.id.in_(option_ids))
+            ).scalars().all()
+            options_map = {opt.id: opt for opt in options}
+        
+        # 상품 정보 (백업 원가용)
+        product = self.db.get(Product, product_id)
+        base_cost = product.cost_price if product else 0
+        
+        performance = {}
+        
+        for oi in items:
+            option_id = str(oi.product_option_id) if oi.product_option_id else "No Option"
+            opt = options_map.get(oi.product_option_id)
+            if option_id not in performance:
+                performance[option_id] = {
+                    "option_id": option_id,
+                    "option_name": opt.option_name if opt else "Unknown",
+                    "option_value": opt.option_value if opt else "단품",
+                    "total_quantity": 0,
+                    "total_revenue": 0,
+                    "total_cost": 0,
+                    "total_profit": 0,
+                    "avg_margin_rate": 0.0
+                }
+            
+            p = performance[option_id]
+            p["total_quantity"] += oi.quantity
+            p["total_revenue"] += oi.total_price
+            
+            cost_per_unit = opt.cost_price if opt else base_cost
+            p["total_cost"] += cost_per_unit * oi.quantity
+            
+        # 후처리 (이익 및 이익률 계산)
+        results = []
+        for p in performance.values():
+            p["total_profit"] = p["total_revenue"] - p["total_cost"]
+            p["avg_margin_rate"] = (p["total_profit"] / p["total_revenue"]) if p["total_revenue"] > 0 else 0.0
+            results.append(p)
+            
+        # 판매량 순으로 정렬
+        results.sort(key=lambda x: x["total_quantity"], reverse=True)
         return results
 
 

@@ -16,6 +16,7 @@ const nextConfig: NextConfig = {
       { protocol: 'https', hostname: '*.coupangcdn.com' },
       { protocol: 'https', hostname: '*.supabase.co' },
       { protocol: 'https', hostname: '*.ownerclan.com' },
+      { protocol: 'http', hostname: 'cdn.ownerclan.com' },
       { protocol: 'https', hostname: '*.naver.net' },
       { protocol: 'https', hostname: '*.naver.com' },
       { protocol: 'https', hostname: 'localhost' },

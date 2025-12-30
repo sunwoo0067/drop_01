@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Lightbulb, AlertTriangle, TrendingUp, CheckCircle, XCircle, RefreshCw, Hourglass } from "lucide-react";
+import { Lightbulb, AlertTriangle, TrendingUp, CheckCircle, XCircle, RefreshCw, Hourglass, ChevronDown, ChevronUp, Star, Gauge } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { recommendationsAPI } from "@/lib/analytics-api";
@@ -28,6 +28,7 @@ export default function SourcingRecommendationDashboard() {
     const [summary, setSummary] = useState<RecommendationSummary | null>(null);
     const [reorderAlerts, setReorderAlerts] = useState<ReorderAlert[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [expandedId, setExpandedId] = useState<string | null>(null);
 
     const fetchData = async () => {
         try {
@@ -224,44 +225,132 @@ export default function SourcingRecommendationDashboard() {
                                     <motion.div
                                         key={rec.id}
                                         variants={item}
-                                        className="p-4 rounded-xl bg-accent/30 border border-border hover:border-primary/50 transition-colors"
+                                        layout
+                                        className={`rounded-xl border border-border transition-all overflow-hidden ${expandedId === rec.id ? "bg-accent/40 border-primary/40 shadow-lg" : "bg-accent/20 hover:border-primary/50"
+                                            }`}
                                     >
-                                        <div className="flex items-start justify-between gap-4">
-                                            <div className="flex-1 min-w-0">
-                                                <div className="font-semibold text-sm mb-1">
-                                                    {rec.product_name || "Unknown Product"}
-                                                </div>
-                                                <div className="text-xs text-muted-foreground mb-2">
-                                                    {rec.recommendation_type} · {rec.recommended_quantity}개
-                                                </div>
-                                                <div className="flex items-center gap-2 text-xs">
-                                                    <div className={`px-2 py-0.5 rounded-full font-bold ${getScoreColor(rec.overall_score)}`}>
-                                                        {rec.overall_score.toFixed(0)}점
+                                        <div
+                                            className="p-4 cursor-pointer"
+                                            onClick={() => setExpandedId(expandedId === rec.id ? null : rec.id)}
+                                        >
+                                            <div className="flex items-start justify-between gap-4">
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <div className="font-bold text-sm truncate">
+                                                            {rec.product_name || "Unknown Product"}
+                                                        </div>
+                                                        {rec.overall_score >= 80 && (
+                                                            <Star className="h-3 w-3 text-amber-500 fill-amber-500" />
+                                                        )}
                                                     </div>
-                                                    <span className="text-muted-foreground">
-                                                        예상 이익: {formatCurrency(rec.expected_margin)}
-                                                    </span>
+                                                    <div className="text-xs text-muted-foreground mb-3 flex items-center gap-2">
+                                                        <span className="px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium text-[10px]">
+                                                            {rec.recommendation_type}
+                                                        </span>
+                                                        <span>{rec.recommended_quantity}개 추천</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-3 text-xs">
+                                                        <div className={`px-2 py-0.5 rounded-full font-black flex items-center gap-1 ${getScoreColor(rec.overall_score)}`}>
+                                                            <Gauge className="h-3 w-3" />
+                                                            {rec.overall_score.toFixed(0)}
+                                                        </div>
+                                                        <span className="text-muted-foreground/80 font-medium">
+                                                            예상 이익: <span className="text-foreground">{formatCurrency(rec.expected_margin)}</span>
+                                                        </span>
+                                                    </div>
                                                 </div>
-                                            </div>
-                                            <div className="flex gap-2 shrink-0">
-                                                <Button
-                                                    variant="ghost"
-                                                    size="sm"
-                                                    onClick={() => handleReject(rec.id)}
-                                                    className="h-8 w-8 p-0 text-red-500 hover:text-red-600 hover:bg-red-500/10"
-                                                >
-                                                    <XCircle className="h-4 w-4" />
-                                                </Button>
-                                                <Button
-                                                    variant="ghost"
-                                                    size="sm"
-                                                    onClick={() => handleAccept(rec.id)}
-                                                    className="h-8 w-8 p-0 text-emerald-500 hover:text-emerald-600 hover:bg-emerald-500/10"
-                                                >
-                                                    <CheckCircle className="h-4 w-4" />
-                                                </Button>
+                                                <div className="flex flex-col items-end gap-3 shrink-0">
+                                                    <div className="flex gap-1">
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleReject(rec.id);
+                                                            }}
+                                                            className="h-8 w-8 p-0 text-muted-foreground hover:text-red-500 hover:bg-red-500/10"
+                                                        >
+                                                            <XCircle className="h-4 w-4" />
+                                                        </Button>
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleAccept(rec.id);
+                                                            }}
+                                                            className="h-8 w-8 p-0 text-muted-foreground hover:text-emerald-500 hover:bg-emerald-500/10"
+                                                        >
+                                                            <CheckCircle className="h-4 w-4" />
+                                                        </Button>
+                                                    </div>
+                                                    {expandedId === rec.id ? (
+                                                        <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                                                    ) : (
+                                                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
+
+                                        {/* Expanded Content */}
+                                        {expandedId === rec.id && (
+                                            <motion.div
+                                                initial={{ height: 0, opacity: 0 }}
+                                                animate={{ height: "auto", opacity: 1 }}
+                                                className="px-4 pb-4 border-t border-border/50 bg-background/20"
+                                            >
+                                                {/* Reasoning */}
+                                                <div className="mt-4 p-3 rounded-lg bg-primary/5 border border-primary/10 text-xs leading-relaxed italic text-muted-foreground">
+                                                    <span className="font-bold text-primary not-italic mr-1">AI 인사이트:</span>
+                                                    "{rec.reasoning || "추천 사유가 없습니다."}"
+                                                </div>
+
+                                                {/* Option Recommendations */}
+                                                {rec.option_recommendations && rec.option_recommendations.length > 0 && (
+                                                    <div className="mt-4">
+                                                        <div className="text-[10px] uppercase font-bold text-muted-foreground mb-2 flex items-center gap-1.5 px-1">
+                                                            <RefreshCw className="h-3 w-3" />
+                                                            옵션별 정밀 추천
+                                                        </div>
+                                                        <div className="space-y-1.5">
+                                                            {rec.option_recommendations.map((opt, i) => (
+                                                                <div key={i} className="flex items-center justify-between p-2 rounded-lg bg-background/50 border border-border/50 text-[11px]">
+                                                                    <div className="flex-1">
+                                                                        <span className="text-muted-foreground">{opt.option_name}:</span>
+                                                                        <span className="font-bold ml-1 text-foreground">{opt.option_value}</span>
+                                                                    </div>
+                                                                    <div className="flex items-center gap-4">
+                                                                        <div className="text-right">
+                                                                            <div className="text-muted-foreground text-[9px] uppercase tracking-tighter">추천</div>
+                                                                            <div className="font-bold text-primary">{opt.recommended_quantity}개</div>
+                                                                        </div>
+                                                                        <div className="text-right min-w-[40px]">
+                                                                            <div className="text-muted-foreground text-[9px] uppercase tracking-tighter">마진</div>
+                                                                            <div className="font-bold text-emerald-500">{(opt.avg_margin_rate * 100).toFixed(0)}%</div>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                <div className="mt-4 pt-4 border-t border-border/50 flex justify-end gap-2">
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="h-8 text-xs font-bold"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleAccept(rec.id);
+                                                        }}
+                                                    >
+                                                        추천 수락 적용
+                                                    </Button>
+                                                </div>
+                                            </motion.div>
+                                        )}
                                     </motion.div>
                                 ))}
                             </motion.div>

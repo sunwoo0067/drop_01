@@ -4,20 +4,25 @@
 import api from './api';
 import type {
     SalesAnalytics,
+    OptionPerformance,
     ProductPerformance,
     SalesSummary,
     SalesTrend,
     SourcingRecommendation,
     RecommendationSummary,
-    ReorderAlert,
     AnalyzeProductSalesRequest,
     GenerateRecommendationRequest,
     RecommendationActionRequest,
-    BulkAnalyticsResponse,
     BulkRecommendationsResponse,
     ProductAnalyticsHistoryResponse,
     ProductRecommendationsResponse,
     ReorderAlertsResponse,
+    StrategicReport,
+    OptimalPricePrediction,
+    UpdatePriceRequest,
+    UpdatePriceResponse,
+    ScalingRecommendation,
+    BulkAnalyticsResponse,
 } from './types/analytics';
 
 // ============================================================================
@@ -90,6 +95,20 @@ export const analyticsAPI = {
     },
 
     /**
+     * 제품별 옵션 상세 성과 조회
+     */
+    getProductOptionPerformance: async (
+        productId: string,
+        periodType: string = 'weekly',
+        periodCount: number = 4
+    ): Promise<OptionPerformance[]> => {
+        const response = await api.get(`/analytics/product/${productId}/options`, {
+            params: { period_type: periodType, period_count: periodCount },
+        });
+        return response.data;
+    },
+
+    /**
      * 제품별 매출 분석 생성
      */
     analyzeProductSales: async (request: AnalyzeProductSalesRequest): Promise<SalesAnalytics> => {
@@ -118,6 +137,30 @@ export const analyticsAPI = {
         const response = await api.post('/analytics/bulk-analyze', null, {
             params: { limit, period_type: periodType },
         });
+        return response.data;
+    },
+
+    /**
+     * AI 전략 보고서 조회
+     */
+    getStrategicReport: async (productId: string): Promise<StrategicReport> => {
+        const response = await api.get(`/analytics/strategic-report/${productId}`);
+        return response.data;
+    },
+
+    /**
+     * AI 최적 가격 제안 조회
+     */
+    getOptimalPricePrediction: async (productId: string): Promise<OptimalPricePrediction> => {
+        const response = await api.get(`/analytics/optimal-price/${productId}`);
+        return response.data;
+    },
+
+    /**
+     * 마켓 상품 판매가 수정
+     */
+    updatePrice: async (request: UpdatePriceRequest): Promise<UpdatePriceResponse> => {
+        const response = await api.post('/analytics/update-price', request);
         return response.data;
     },
 };
@@ -239,6 +282,16 @@ export const recommendationsAPI = {
     ): Promise<BulkRecommendationsResponse> => {
         const response = await api.post('/recommendations/bulk-generate', null, {
             params: { limit, recommendation_type: recommendationType },
+        });
+        return response.data;
+    },
+
+    /**
+     * 다채널 확장 추천 목록 조회
+     */
+    getScalingRecommendations: async (limit: number = 10): Promise<ScalingRecommendation[]> => {
+        const response = await api.get('/recommendations/scaling', {
+            params: { limit },
         });
         return response.data;
     },

@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { TrendingUp, TrendingDown, Package, ChevronRight } from "lucide-react";
+import { TrendingUp, TrendingDown, Package, ChevronRight, Brain } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { analyticsAPI } from "@/lib/analytics-api";
@@ -12,6 +12,8 @@ interface ProductPerformanceTableProps {
     type: "top" | "low";
     limit?: number;
     periodType?: "weekly" | "monthly";
+    onProductClick?: (productId: string, productName: string) => void;
+    onAIAnalysisClick?: (productId: string, productName: string) => void;
 }
 
 const container = {
@@ -32,12 +34,14 @@ const item = {
 export default function ProductPerformanceTable({
     type,
     limit = 10,
-    periodType = "weekly"
+    periodType = "weekly",
+    onProductClick,
+    onAIAnalysisClick
 }: ProductPerformanceTableProps) {
     const [products, setProducts] = useState<ProductPerformance[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
-    const fetchProducts = async () => {
+    const fetchProducts = useCallback(async () => {
         try {
             setIsLoading(true);
             const data = type === "top"
@@ -49,11 +53,11 @@ export default function ProductPerformanceTable({
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [limit, periodType, type]);
 
     useEffect(() => {
         fetchProducts();
-    }, [type, limit, periodType]);
+    }, [fetchProducts]);
 
     const formatCurrency = (value: number) => {
         return new Intl.NumberFormat("ko-KR", {
@@ -142,43 +146,64 @@ export default function ProductPerformanceTable({
                             <motion.div
                                 key={product.product_id}
                                 variants={item}
-                                className="flex items-center gap-4 p-3 rounded-xl hover:bg-accent/50 transition-colors group cursor-pointer"
+                                className={`flex items-center gap-4 p-3 rounded-xl hover:bg-accent/50 transition-colors group ${onProductClick ? "cursor-pointer" : ""}`}
                             >
-                                {/* Rank Badge */}
                                 <div
-                                    className={`h-10 w-10 rounded-lg ${bgColor} flex items-center justify-center font-black text-sm ${iconColor}`}
+                                    className="flex items-center gap-4 flex-1 min-w-0"
+                                    onClick={() => onProductClick?.(product.product_id, product.product_name)}
                                 >
-                                    {index + 1}
-                                </div>
-
-                                {/* Product Info */}
-                                <div className="flex-1 min-w-0">
-                                    <div className="font-semibold text-sm truncate">
-                                        {product.product_name}
+                                    {/* Rank Badge */}
+                                    <div
+                                        className={`h-10 w-10 rounded-lg ${bgColor} flex items-center justify-center font-black text-sm ${iconColor}`}
+                                    >
+                                        {index + 1}
                                     </div>
-                                    <div className="text-xs text-muted-foreground mt-0.5">
-                                        {product.total_orders.toLocaleString()} 주문
+
+                                    {/* Product Info */}
+                                    <div className="flex-1 min-w-0">
+                                        <div className="font-semibold text-sm truncate">
+                                            {product.product_name}
+                                        </div>
+                                        <div className="text-xs text-muted-foreground mt-0.5">
+                                            {product.total_orders.toLocaleString()} 주문
+                                        </div>
+                                    </div>
+
+                                    {/* Revenue */}
+                                    <div className="text-right">
+                                        <div className="font-bold text-sm">
+                                            {formatCurrency(product.total_revenue)}
+                                        </div>
+                                        <div className="text-xs text-muted-foreground">
+                                            이익률: {formatPercent(product.avg_margin_rate)}
+                                        </div>
+                                    </div>
+
+                                    {/* Growth */}
+                                    <div className={`flex items-center gap-1 text-sm font-bold ${getGrowthColor(product.revenue_growth_rate)}`}>
+                                        {getGrowthIcon(product.revenue_growth_rate)}
+                                        <span>{formatPercent(product.revenue_growth_rate)}</span>
+                                    </div>
+
+                                    {/* Chevron / AI Button */}
+                                    <div className="flex items-center gap-2">
+                                        {onAIAnalysisClick && (
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    onAIAnalysisClick(product.product_id, product.product_name);
+                                                }}
+                                                className="h-8 px-2 text-[10px] font-bold gap-1 bg-primary/5 border-primary/20 hover:bg-primary/10 opacity-0 group-hover:opacity-100 transition-all"
+                                            >
+                                                <Brain className="h-3 w-3" />
+                                                AI 분석
+                                            </Button>
+                                        )}
+                                        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                                     </div>
                                 </div>
-
-                                {/* Revenue */}
-                                <div className="text-right">
-                                    <div className="font-bold text-sm">
-                                        {formatCurrency(product.total_revenue)}
-                                    </div>
-                                    <div className="text-xs text-muted-foreground">
-                                        이익률: {formatPercent(product.avg_margin_rate)}
-                                    </div>
-                                </div>
-
-                                {/* Growth */}
-                                <div className={`flex items-center gap-1 text-sm font-bold ${getGrowthColor(product.revenue_growth_rate)}`}>
-                                    {getGrowthIcon(product.revenue_growth_rate)}
-                                    <span>{formatPercent(product.revenue_growth_rate)}</span>
-                                </div>
-
-                                {/* Chevron */}
-                                <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                             </motion.div>
                         ))}
                     </motion.div>

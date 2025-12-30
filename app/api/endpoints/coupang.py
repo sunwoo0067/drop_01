@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import select, or_
 import asyncio
+import os
 import uuid
 from pydantic import BaseModel, Field
 
@@ -22,6 +23,10 @@ from app.coupang_client import CoupangClient
 from sqlalchemy.dialects.postgresql import insert
 
 router = APIRouter()
+
+
+def _is_skipped_reason(reason: str | None) -> bool:
+    return bool(reason) and str(reason).startswith("SKIPPED:")
 
 
 def _to_https_url(url: str) -> str:
@@ -284,6 +289,7 @@ async def register_products_bulk_endpoint(
     force_fetch_ownerclan: bool = Query(default=True, alias="forceFetchOwnerClan"),
     augment_images: bool = Query(default=True, alias="augmentImages"),
     wait: bool = Query(default=False),
+    research_mode: bool = Query(default=False, alias="researchMode"),
     limit: int = Query(default=50, ge=1, le=200),
     account_id: uuid.UUID | None = Query(default=None, alias="accountId"),
 ):
@@ -322,9 +328,20 @@ async def register_products_bulk_endpoint(
                 detail={"message": "쿠팡 등록을 위해서는 가공 완료 및 이미지 1장이 필요합니다", "items": missing[:50]},
             )
 
+    if research_mode:
+        if os.getenv("COUPANG_BULK_TRY", "0") != "1":
+            raise HTTPException(status_code=403, detail="Research mode disabled (COUPANG_BULK_TRY!=1)")
+        if not wait:
+            raise HTTPException(status_code=400, detail="Research mode requires wait=true")
+
     if wait:
         # 동기 실행(운영용). bulk는 시간이 걸릴 수 있으므로 limit을 반드시 사용합니다.
         from app.services.coupang_ready_service import ensure_product_ready_for_coupang
+        from app.models import SupplierRawFetchLog
+        try:
+            from app.smartstore_sync import register_smartstore_product
+        except Exception:
+            register_smartstore_product = None
 
         if payload.productIds:
             stmt = select(Product).where(Product.id.in_(payload.productIds))
@@ -337,12 +354,23 @@ async def register_products_bulk_endpoint(
         ready_ok = 0
         registered_ok = 0
         registered_fail = 0
+        registered_skip = 0
         blocked = 0
 
         registered_ok_ids: list[str] = []
         registered_fail_ids: list[str] = []
         registered_fail_items: list[dict] = []
         blocked_ids: list[str] = []
+        skipped_reasons: list[dict] = []
+
+        smartstore_account = None
+        if research_mode:
+            smartstore_account = session.scalars(
+                select(MarketAccount)
+                .where(MarketAccount.market_code == "SMARTSTORE")
+                .where(MarketAccount.is_active == True)
+                .limit(1)
+            ).first()
 
         for account in accounts:
             for p in products:
@@ -352,6 +380,21 @@ async def register_products_bulk_endpoint(
                     blocked += 1
                     blocked_ids.append(str(p.id))
                     continue
+                if research_mode and p.coupang_doc_pending:
+                    blocked += 1
+                    blocked_ids.append(str(p.id))
+                    continue
+                if research_mode:
+                    existing_skip = session.scalars(
+                        select(SupplierRawFetchLog.id)
+                        .where(SupplierRawFetchLog.endpoint == "register_product_skipped")
+                        .where(SupplierRawFetchLog.request_payload.contains({"productId": str(p.id)}))
+                        .limit(1)
+                    ).first()
+                    if existing_skip:
+                        blocked += 1
+                        blocked_ids.append(str(p.id))
+                        continue
 
                 if auto_fix:
                     ready = await ensure_product_ready_for_coupang(
@@ -400,18 +443,49 @@ async def register_products_bulk_endpoint(
                     registered_ok += 1
                     registered_ok_ids.append(str(p.id))
                 else:
-                    registered_fail += 1
-                    registered_fail_ids.append(str(p.id))
-                    raw_reason = f"[{account.name}] " + (reason or "쿠팡 등록 실패")
-                    registered_fail_items.append(
-                        {
+                    if research_mode:
+                        p.coupang_doc_pending = True
+                        p.coupang_doc_pending_reason = str(reason or "research_mode_failed")
+                        session.commit()
+                        if smartstore_account and register_smartstore_product:
+                            fallback_result = register_smartstore_product(session, smartstore_account.id, p.id)
+                            if fallback_result.get("status") == "success":
+                                p.status = "ACTIVE"
+                                session.commit()
+                    if _is_skipped_reason(reason):
+                        blocked += 1
+                        blocked_ids.append(str(p.id))
+                        raw_reason = f"[{account.name}] " + str(reason)
+                        skipped_item = {
                             "productId": str(p.id),
                             "accountId": str(account.id),
                             "accountName": account.name,
                             "reason": _tag_reason(raw_reason),
                             "reasonRaw": raw_reason,
                         }
-                    )
+                        registered_fail_items.append(
+                            {
+                                "productId": str(p.id),
+                                "accountId": str(account.id),
+                                "accountName": account.name,
+                                "reason": _tag_reason(raw_reason),
+                                "reasonRaw": raw_reason,
+                            }
+                        )
+                        skipped_reasons.append(skipped_item)
+                    else:
+                        registered_fail += 1
+                        registered_fail_ids.append(str(p.id))
+                        raw_reason = f"[{account.name}] " + (reason or "쿠팡 등록 실패")
+                        registered_fail_items.append(
+                            {
+                                "productId": str(p.id),
+                                "accountId": str(account.id),
+                                "accountName": account.name,
+                                "reason": _tag_reason(raw_reason),
+                                "reasonRaw": raw_reason,
+                            }
+                        )
 
         return {
             "status": "completed",
@@ -428,6 +502,7 @@ async def register_products_bulk_endpoint(
                 "registeredFailIds": registered_fail_ids[:200],
                 "registeredFailItems": registered_fail_items[:200],
                 "blockedIds": blocked_ids[:200],
+                "skippedReasons": skipped_reasons[:200],
             },
         }
 
@@ -547,6 +622,7 @@ async def register_product_endpoint(
             results = []
             for account in accounts:
                 success, reason = register_product(session, account.id, product.id)
+                skipped = _is_skipped_reason(reason)
                 if success:
                     product.status = "ACTIVE"
                     session.commit()
@@ -554,6 +630,7 @@ async def register_product_endpoint(
                     "accountId": str(account.id),
                     "accountName": account.name,
                     "success": bool(success),
+                    "skipped": bool(skipped),
                     "reason": _tag_reason(reason),
                     "reasonRaw": (str(reason) if reason is not None else None),
                 })
@@ -786,22 +863,26 @@ def execute_bulk_coupang_registration(
                 continue
 
             ready_ok += 1
-            ok, _reason = register_product(session, account_id, p.id)
+            ok, reason = register_product(session, account_id, p.id)
             if ok:
                 p.status = "ACTIVE"
                 session.commit()
                 registered_ok += 1
             else:
-                registered_fail += 1
+                if _is_skipped_reason(reason):
+                    registered_skip += 1
+                else:
+                    registered_fail += 1
 
         import logging
 
         logging.getLogger(__name__).info(
-            "쿠팡 벌크 자동등록 요약(total=%s, readyOk=%s, registeredOk=%s, registeredFail=%s)",
+            "쿠팡 벌크 자동등록 요약(total=%s, readyOk=%s, registeredOk=%s, registeredFail=%s, registeredSkip=%s)",
             total,
             ready_ok,
             registered_ok,
             registered_fail,
+            registered_skip,
         )
 
 
@@ -832,13 +913,13 @@ def execute_coupang_registration(
             if not ready.get("ok"):
                 return
 
-        success, _reason = register_product(session, account_id, product_id)
+        success, reason = register_product(session, account_id, product_id)
         if success:
             p = session.get(Product, product_id)
             if p and p.status == "DRAFT":
                 p.status = "ACTIVE"
                 session.commit()
-        else:
+        elif _is_skipped_reason(reason):
             pass
 
 
@@ -887,11 +968,11 @@ async def get_coupang_product_detail(
     session: Session = Depends(get_session),
     account_id: uuid.UUID | None = Query(default=None, alias="accountId"),
 ):
+    listing = session.scalars(select(MarketListing).where(MarketListing.market_item_id == seller_product_id)).first()
     if account_id:
         account = session.get(MarketAccount, account_id)
     else:
         # seller_product_id로 해당 계정을 찾음
-        listing = session.scalars(select(MarketListing).where(MarketListing.market_item_id == seller_product_id)).first()
         if listing:
             account = session.get(MarketAccount, listing.market_account_id)
         else:
@@ -942,6 +1023,7 @@ async def get_coupang_product_detail(
         "sellerProductId": str(seller_product_id).strip(),
         "sellerProductName": seller_product_name,
         "vendorItemIds": vendor_item_ids,
+        "rejectionReason": listing.rejection_reason if listing else None,
         "raw": data,
     }
 

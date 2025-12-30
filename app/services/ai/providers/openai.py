@@ -163,6 +163,28 @@ class OpenAIProvider(AIProvider):
         # Specific reasoning models (like o1) might require different configs, but for now reuse text
         return await self.generate_text(prompt, model=model)
 
+    async def generate_image(self, prompt: str, negative_prompt: str = "", width: int = 1024, height: int = 1024, model: Optional[str] = None) -> bytes:
+        if not self.client:
+            return b""
+
+        target_model = model or "dall-e-3"
+        try:
+            response = await self.client.images.generate(
+                model=target_model,
+                prompt=prompt,
+                n=1,
+                size=f"{width}x{height}",
+                response_format="b64_json"
+            )
+            import base64
+            img_b64 = response.data[0].b64_json
+            if img_b64:
+                return base64.b64decode(img_b64)
+            return b""
+        except Exception as e:
+            logger.error(f"OpenAI generate_image failed: {e}")
+            return b""
+
     async def analyze_visual_layout(self, image_data: bytes, prompt: str = "Analyze the visual layout and identify key elements with their positions.", model: Optional[str] = None) -> str:
         prompt += " Please provide spatial coordinates or describe the layout in detail."
         return await self._generate_with_image(image_data, prompt, model)

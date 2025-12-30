@@ -18,25 +18,40 @@ async def main():
     # 1. 5,000건의 SourcingCandidate 생성
     count = service.import_from_raw(limit=5000)
     print(f"Imported {count} items as SourcingCandidates.")
+    db.close()
     
-    # 2. PENDING 상태의 후보들 중 고득점 상품 5,0000건 승인
-    # (import_from_raw는 기본 점수 50.0을 주므로, 강제 승인 로직 수행)
+    # 2. PENDING 상태의 후보들 중 고득점 상품 승인 (모든 PENDING 대상)
+    db = SessionLocal()
     stmt = (
         select(SourcingCandidate)
         .where(SourcingCandidate.status == "PENDING")
-        .limit(5000)
     )
     candidates = db.scalars(stmt).all()
-    
-    approved_count = 0
-    for c in candidates:
-        await service.approve_candidate(c.id)
-        approved_count += 1
-        if approved_count % 100 == 0:
-            print(f"Approved {approved_count}/5000...")
-            
-    print(f"Final: {approved_count} products added to PENDING queue.")
     db.close()
+    
+    print(f"Found {len(candidates)} pending candidates. Starting parallel approval...")
+    
+    semaphore = asyncio.Semaphore(10) # 10개씩 병렬 처리
+    approved_count = 0
+    
+    async def approve_with_session(candidate_id):
+        nonlocal approved_count
+        async with semaphore:
+            # 각 태스크마다 별도의 세션 생성 (스레드/비동기 안전)
+            task_db = SessionLocal()
+            try:
+                task_service = SourcingService(task_db)
+                await task_service.approve_candidate(candidate_id)
+                approved_count += 1
+                if approved_count % 50 == 0:
+                    print(f"Approved {approved_count}/{len(candidates)}...")
+            finally:
+                task_db.close()
+
+    tasks = [approve_with_session(c.id) for c in candidates]
+    await asyncio.gather(*tasks)
+            
+    print(f"Final: {approved_count} candidates processed.")
 
 if __name__ == "__main__":
     asyncio.run(main())

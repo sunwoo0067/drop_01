@@ -19,22 +19,22 @@ import {
     Database,
     Upload,
     Store,
-    TrendingUp
+    TrendingUp,
+    ChevronDown
 } from "lucide-react";
 import { useState } from "react";
-import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 
 const menuGroups = [
     {
-        title: "Overview",
+        title: "개요",
         items: [
             { name: "대시보드", href: "/", icon: LayoutDashboard },
         ]
     },
     {
-        title: "Market Management",
+        title: "시장 관리",
         items: [
             { name: "상품 관리", href: "/products", icon: Package },
             { name: "상품 가공", href: "/processing", icon: Wand2 },
@@ -46,21 +46,21 @@ const menuGroups = [
         ]
     },
     {
-        title: "Data Collection",
+        title: "데이터 수집",
         items: [
             { name: "공급사 상품수집", href: "/suppliers", icon: Download },
             { name: "공급사 상품목록", href: "/suppliers/items", icon: Database },
         ]
     },
     {
-        title: "Intelligence",
+        title: "인텔리전스",
         items: [
             { name: "에이전트", href: "/agents", icon: Bot },
-            { name: "매출 등대", href: "/analytics", icon: TrendingUp },
+            { name: "매출 분석", href: "/analytics", icon: TrendingUp },
         ]
     },
     {
-        title: "System",
+        title: "시스템",
         items: [
             { name: "설정", href: "/settings", icon: Settings },
         ]
@@ -71,37 +71,45 @@ const menuGroups = [
 export default function Sidebar() {
     const pathname = usePathname();
     const [collapsed, setCollapsed] = useState(false);
+    const [expandedGroups, setExpandedGroups] = useState<string[]>(
+        menuGroups.map(g => g.title)
+    );
+
+    const toggleGroup = (title: string) => {
+        setExpandedGroups(prev =>
+            prev.includes(title)
+                ? prev.filter(t => t !== title)
+                : [...prev, title]
+        );
+    };
 
     return (
         <div className={cn(
-            "flex flex-col border-r bg-card h-screen transition-all duration-300 ease-in-out relative",
-            collapsed ? "w-16" : "w-64"
+            "flex flex-col border-r bg-card h-screen",
+            collapsed ? "w-16" : "w-56"
         )}>
             {/* Collapse Toggle Button */}
             <button
                 onClick={() => setCollapsed(!collapsed)}
                 aria-label={collapsed ? "사이드바 펼치기" : "사이드바 접기"}
-                className="absolute -right-3 top-20 flex h-6 w-6 items-center justify-center rounded-full border bg-background shadow-sm hover:bg-accent transition-colors z-10"
+                className="absolute -right-3 top-4 flex h-5 w-5 items-center justify-center rounded bg-background border border-border shadow-sm hover:bg-muted transition-colors z-10"
             >
-                {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+                {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronLeft className="h-3 w-3" />}
             </button>
 
             {/* Logo Section */}
-            <div className="flex h-20 items-center px-6 mb-2">
-                <div className="flex items-center gap-3">
-                    <motion.div
-                        whileHover={{ rotate: 10, scale: 1.1 }}
-                        className="h-10 w-10 rounded-xl bg-gradient-to-br from-primary to-blue-600 flex items-center justify-center shrink-0 shadow-lg shadow-primary/20"
-                    >
-                        <Package className="h-6 w-6 text-primary-foreground" />
-                    </motion.div>
+            <div className="flex h-12 items-center px-4 border-b border-border">
+                <div className="flex items-center gap-2">
+                    <div className="h-8 w-8 rounded-sm bg-primary flex items-center justify-center shrink-0">
+                        <Package className="h-4 w-4 text-primary-foreground" />
+                    </div>
                     {!collapsed && (
                         <div className="flex flex-col">
-                            <span className="text-lg font-black tracking-tighter bg-gradient-to-r from-primary via-blue-500 to-indigo-400 bg-clip-text text-transparent transition-all">
+                            <span className="text-sm font-bold text-foreground tracking-tight">
                                 DROP AUTOMATA
                             </span>
-                            <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest leading-none">
-                                AI Management
+                            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                                ERP System
                             </span>
                         </div>
                     )}
@@ -109,76 +117,80 @@ export default function Sidebar() {
             </div>
 
             {/* Navigation Section */}
-            <nav className="flex-1 overflow-y-auto overflow-x-hidden py-4 px-3 space-y-8 custom-scrollbar">
+            <nav className="flex-1 overflow-y-auto overflow-x-hidden py-2 table-scroll">
                 {menuGroups.map((group) => (
-                    <div key={group.title} className="relative">
+                    <div key={group.title} className="border-b border-border/50">
                         {!collapsed && (
-                            <h2 className="px-4 text-[10px] font-extrabold text-muted-foreground/60 uppercase tracking-[0.2em] mb-3">
-                                {group.title}
-                            </h2>
+                            <button
+                                onClick={() => toggleGroup(group.title)}
+                                className="w-full px-4 py-2 flex items-center justify-between hover:bg-muted transition-colors"
+                            >
+                                <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                                    {group.title}
+                                </span>
+                                <ChevronDown
+                                    className={cn(
+                                        "h-3 w-3 text-muted-foreground transition-transform",
+                                        expandedGroups.includes(group.title) ? "rotate-180" : ""
+                                    )}
+                                />
+                            </button>
                         )}
-                        <div className="space-y-1">
-                            {group.items.map((item) => {
-                                const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
-                                return (
-                                    <Link
-                                        key={item.href}
-                                        href={item.href}
-                                        className={cn(
-                                            "group relative flex items-center rounded-xl px-4 py-3 text-sm font-semibold transition-all duration-300",
-                                            isActive
-                                                ? "bg-primary text-primary-foreground shadow-md shadow-primary/20"
-                                                : "text-muted-foreground hover:bg-accent/80 hover:text-foreground",
-                                            collapsed && "justify-center px-0 h-12 w-12 mx-auto"
-                                        )}
-                                        title={collapsed ? item.name : ""}
-                                    >
-                                        <item.icon
+                        {(collapsed || expandedGroups.includes(group.title)) && (
+                            <div className="space-y-0.5">
+                                {group.items.map((item) => {
+                                    const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
+                                    return (
+                                        <Link
+                                            key={item.href}
+                                            href={item.href}
                                             className={cn(
-                                                "h-5 w-5 flex-shrink-0 transition-all duration-300",
-                                                isActive ? "text-primary-foreground" : "text-muted-foreground group-hover:text-foreground group-hover:scale-110",
-                                                !collapsed && "mr-3"
+                                                "flex items-center px-4 py-2 text-xs font-medium transition-colors border-l-2",
+                                                isActive
+                                                    ? "bg-primary/10 text-primary border-primary"
+                                                    : "text-muted-foreground border-transparent hover:bg-muted hover:text-foreground",
+                                                collapsed && "justify-center px-0 h-8 w-8 mx-auto"
                                             )}
-                                        />
-                                        {!collapsed && <span>{item.name}</span>}
-
-                                        {/* Active Indicator Bar */}
-                                        {isActive && !collapsed && (
-                                            <motion.div
-                                                layoutId="active-nav-indicator"
-                                                className="absolute left-1 h-5 w-1 bg-primary-foreground rounded-full"
+                                            title={collapsed ? item.name : ""}
+                                        >
+                                            <item.icon
+                                                className={cn(
+                                                    "h-4 w-4 flex-shrink-0",
+                                                    !collapsed && "mr-2"
+                                                )}
                                             />
-                                        )}
-                                    </Link>
-                                );
-                            })}
-                        </div>
+                                            {!collapsed && <span>{item.name}</span>}
+                                        </Link>
+                                    );
+                                })}
+                            </div>
+                        )}
                     </div>
                 ))}
             </nav>
 
             {/* User Profile Section */}
-            <div className="p-4 border-t border-glass-border">
+            <div className="p-3 border-t border-border">
                 <div className={cn(
-                    "w-full rounded-2xl transition-all duration-300",
-                    !collapsed && "bg-gradient-to-br from-accent/40 to-accent/10 p-4 border border-glass-border hover:shadow-lg"
+                    "w-full border border-border",
+                    !collapsed && "p-2"
                 )}>
                     <div className={cn(
                         "flex items-center",
-                        collapsed ? "justify-center" : "gap-3"
+                        collapsed ? "justify-center" : "gap-2"
                     )}>
-                        <div className="h-10 w-10 rounded-full bg-gradient-to-tr from-primary/20 to-blue-500/10 flex items-center justify-center shrink-0 border border-primary/20 shadow-inner">
-                            <User className="h-6 w-6 text-primary" />
+                        <div className="h-7 w-7 rounded-sm bg-secondary flex items-center justify-center shrink-0 border border-border">
+                            <User className="h-4 w-4 text-foreground" />
                         </div>
                         {!collapsed && (
-                            <div className="flex flex-col min-w-0">
-                                <span className="text-sm font-bold truncate leading-none mb-1">Admin User</span>
-                                <span className="text-[10px] text-muted-foreground truncate uppercase font-medium tracking-tighter">Premium License</span>
+                            <div className="flex flex-col min-w-0 flex-1">
+                                <span className="text-xs font-semibold truncate">Admin User</span>
+                                <span className="text-[10px] text-muted-foreground truncate uppercase">License: Premium</span>
                             </div>
                         )}
                         {!collapsed && (
-                            <Button variant="ghost" size="icon" className="ml-auto h-8 w-8 text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10 transition-all duration-300 rounded-lg">
-                                <LogOut className="h-4 w-4" />
+                            <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-sm">
+                                <LogOut className="h-3 w-3" />
                             </Button>
                         )}
                     </div>

@@ -9,7 +9,6 @@ import { Loader2, RefreshCw, AlertTriangle, CheckCircle2, RotateCcw } from "luci
 export default function JobMonitor() {
     const [jobs, setJobs] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(false);
-    const [isRefreshing, setIsRefreshing] = useState(false);
 
     const fetchJobs = async (silent = false) => {
         if (!silent) setIsLoading(true);
@@ -27,9 +26,10 @@ export default function JobMonitor() {
         try {
             await api.post(`/benchmarks/jobs/${id}/retry`);
             fetchJobs(true);
-        } catch (err) {
-            alert("재시도 요청 실패");
-        }
+    } catch (error) {
+        console.error(error);
+        alert("재시도 요청 실패");
+    }
     };
 
     useEffect(() => {

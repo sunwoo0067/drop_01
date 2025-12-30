@@ -14,7 +14,8 @@ from sqlalchemy.orm import Session
 from app.models import (
     SalesAnalytics, Order, OrderItem, Product, 
     SourcingRecommendation, SupplierPerformance,
-    SourcingCandidate, BenchmarkProduct, SupplierItemRaw
+    SourcingCandidate, BenchmarkProduct, SupplierItemRaw,
+    MarketAccount, MarketListing
 )
 from app.services.sales_analytics_service import SalesAnalyticsService
 from app.services.ai import AIService
@@ -95,12 +96,102 @@ class SourcingRecommendationService:
         # 공급처 신뢰도 점수
         supplier_score = await self._calculate_supplier_score(product)
         
+        # 옵션별 추천 계산
+        option_recommendations = await self._calculate_option_recommendations(product_id)
+        
+        # 모델 생성
+        recommendation = SourcingRecommendation(
+            product_id=product_id,
+            recommendation_type=recommendation_type,
+            overall_score=scores["overall_score"],
+            sales_potential_score=scores["sales_potential_score"],
+            market_trend_score=scores["market_trend_score"],
+            profit_margin_score=scores["profit_margin_score"],
+            supplier_reliability_score=supplier_score,
+            seasonal_score=scores["seasonal_score"],
+            recommended_quantity=quantity_info["recommended_quantity"],
+            min_quantity=quantity_info["min_quantity"],
+            max_quantity=quantity_info["max_quantity"],
+            current_supply_price=price_info["current_supply_price"],
+            recommended_selling_price=price_info["recommended_selling_price"],
+            expected_margin=price_info["expected_margin"],
+            current_stock=stock_info["current_stock"],
+            stock_days_left=stock_info["stock_days_left"],
+            reorder_point=stock_info["reorder_point"],
+            reasoning=prediction.get("reason") if recommendation_type == "REORDER" else None,
+            option_recommendations=option_recommendations,
+            status="PENDING"
+        )
+        
+        self.db.add(recommendation)
+        self.db.commit()
+        return recommendation
+
+    async def get_scaling_recommendations(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        다채널 확장을 위한 상품 추천 목록을 생성합니다.
+        (예: 쿠팡에서 잘 팔리는 상품을 스마트스토어에 확장)
+        """
+        # 1. 최근 14일간 판매 성과가 우수한 상품 조회 (주문 5건 이상)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=14)
+        
+        high_performers = (
+            self.db.execute(
+                select(Product.id, Product.name, func.count(Order.id).label("order_count"))
+                .join(OrderItem, Product.id == OrderItem.product_id)
+                .join(Order, OrderItem.order_id == Order.id)
+                .where(Order.order_at >= cutoff_date)
+                .group_by(Product.id, Product.name)
+                .having(func.count(Order.id) >= 5)
+                .order_by(func.count(Order.id).desc())
+                .limit(50)
+            )
+            .all()
+        )
+        
+        # 2. 사용 가능한 마켓 계정 확인
+        market_accounts = self.db.execute(select(MarketAccount).where(MarketAccount.is_active == True)).scalars().all()
+        available_markets = list(set([acc.market_code for acc in market_accounts]))
+        
+        recommendations = []
+        for p_id, p_name, order_count in high_performers:
+            # 해당 상품이 등록된 마켓들 확인 (MarketAccount와 조인하여 market_code 가져옴)
+            listings = self.db.execute(
+                select(MarketAccount.market_code)
+                .join(MarketListing, MarketAccount.id == MarketListing.market_account_id)
+                .where(MarketListing.product_id == p_id)
+            ).scalars().all()
+            
+            listed_markets = list(set(listings))
+            
+            # 미등록 마켓 식별
+            for market in available_markets:
+                if market not in listed_markets:
+                    # 확장 추천 생성
+                    expected_impact = "High" if order_count > 15 else "Medium"
+                    difficulty = "Low" # 기본적으로 이미 등록된 상품이므로 낮음
+                    
+                    recommendations.append({
+                        "product_id": str(p_id),
+                        "product_name": p_name,
+                        "current_orders": order_count,
+                        "source_market": listed_markets[0] if listed_markets else "UNKNOWN",
+                        "target_market": market,
+                        "expected_impact": expected_impact,
+                        "difficulty_score": difficulty,
+                        "potential_revenue": int(order_count * 20000 * 0.8), # 대략적인 추정
+                        "reason": f"최근 14일간 {order_count}건의 주문이 발생한 검증된 상품입니다. {market} 채널 확장 시 추가 매출이 기대됩니다."
+                    })
+                    
+        return recommendations[:limit]
+        
         # AI 기반 추천 사유 생성
         reasoning = await self._generate_recommendation_reasoning(
             product, 
             analytics, 
             scores, 
-            quantity_info
+            quantity_info,
+            option_recommendations
         )
         
         # 리스크 및 기회 요소
@@ -129,6 +220,7 @@ class SourcingRecommendationService:
             stock_days_left=stock_info["stock_days_left"],
             reorder_point=stock_info["reorder_point"],
             reasoning=reasoning,
+            option_recommendations=option_recommendations,
             risk_factors=risk_factors,
             opportunity_factors=opportunity_factors,
             status="PENDING",
@@ -230,6 +322,56 @@ class SourcingRecommendationService:
             "seasonal_score": seasonal_score,
             "confidence_level": analytics.prediction_confidence or 0.5
         }
+
+    async def _calculate_option_recommendations(
+        self,
+        product_id: uuid.UUID
+    ) -> List[Dict[str, Any]]:
+        """
+        옵션별 추천 상세 계산
+        
+        Args:
+            product_id: 제품 ID
+            
+        Returns:
+            옵션별 추천 목록
+        """
+        # 1. 옵션 성과 데이터 조회
+        option_performance = await self.sales_analytics_service.get_option_performance(product_id)
+        
+        recommendations = []
+        for opt in option_performance:
+            # 점수 계산: 마진율(50%) + 판매량 점수(50%)
+            margin_rate = opt.get("avg_margin_rate", 0.0)
+            total_qty = opt.get("total_quantity", 0)
+            
+            margin_score = min(1.0, margin_rate * 5) * 50  # 20% 마진 = 50점
+            volume_score = min(1.0, total_qty / 20) * 50  # 20개 판매 = 50점
+            score = margin_score + volume_score
+            
+            # 추천 수량: 지난 판매량의 1.3배 보정 (시즌성 제외 기본 로직)
+            # 판매량이 0인 경우 최소 5개 추천 (신규 진입 대비)
+            rec_qty = int(total_qty * 1.3) if total_qty > 0 else 5
+            
+            oid = opt.get("option_id")
+            if oid == "No Option":
+                oid = None
+                
+            recommendations.append({
+                "option_id": oid,
+                "option_name": opt.get("option_name"),
+                "option_value": opt.get("option_value"),
+                "total_quantity": total_qty,
+                "total_revenue": opt.get("total_revenue", 0),
+                "total_profit": opt.get("total_profit", 0),
+                "avg_margin_rate": margin_rate,
+                "recommended_quantity": rec_qty,
+                "score": score
+            })
+            
+        # 점수 높은 순 정렬
+        recommendations.sort(key=lambda x: x["score"], reverse=True)
+        return recommendations
     
     def _calculate_recommended_quantity(
         self,
@@ -283,23 +425,13 @@ class SourcingRecommendationService:
     ) -> Dict[str, Any]:
         """
         가격 정보 계산
-        
-        Args:
-            product: 제품 객체
-            analytics: 판매 분석 데이터
-        
-        Returns:
-            가격 정보 딕셔너리
         """
         current_supply_price = product.cost_price
-        
-        # 추천 판매가: 현재 판매가 또는 마진률 기반 계산
         recommended_selling_price = product.selling_price
+        
         if recommended_selling_price == 0:
-            # 기본 30% 마진
             recommended_selling_price = int(current_supply_price * 1.3)
         
-        # 예상 마진률
         expected_margin = (
             (recommended_selling_price - current_supply_price) 
             / recommended_selling_price 
@@ -311,6 +443,83 @@ class SourcingRecommendationService:
             "recommended_selling_price": recommended_selling_price,
             "expected_margin": expected_margin
         }
+
+    async def predict_optimal_price(self, product_id: uuid.UUID) -> Dict[str, Any]:
+        """
+        AI 모델을 사용하여 제품의 최적 판매가를 예측합니다.
+        판매 속도(Velocity), 현재 이익률, 시장 수요를 종합 고려합니다.
+        """
+        product = self.db.get(Product, product_id)
+        if not product:
+            raise ValueError(f"Product {product_id} not found")
+
+        # 최신 분석 데이터 가져오기
+        analytics = (
+            self.db.execute(
+                select(SalesAnalytics)
+                .where(SalesAnalytics.product_id == product_id)
+                .order_by(SalesAnalytics.created_at.desc())
+                .limit(1)
+            )
+            .scalars()
+            .first()
+        )
+
+        if not analytics:
+            analytics = await self.sales_analytics_service.analyze_product_sales(product_id)
+
+        prompt = f"""
+        당신은 이커머스 가격 전략 전문가입니다. 다음 데이터를 바탕으로 이 제품의 최적 판매가를 제안하세요.
+
+        제품명: {product.name}
+        매입 원가: {product.cost_price}원
+        현재 판매가: {product.selling_price}원
+        주간 주문수: {analytics.total_orders}건
+        매출 성장률: {analytics.revenue_growth_rate:.1%}
+        시장 수요 점수: {analytics.market_demand_score}/1.0
+
+        가이드라인:
+        - 판매 속도가 빠르고 성장세라면 이익률을 높이는 필승가 전략을 취하세요.
+        - 재고가 많고 판매가 정체되었다면 공격적인 할인가 전략을 취하세요.
+        - 마켓 수수료(약 12%)를 고려하여 역마진이 나지 않도록 하세요.
+
+        반드시 다음 항목을 포함한 JSON 형식으로 응답하세요:
+        1. "optimal_price": 제안하는 최적 판매가 (숫자)
+        2. "strategy": 가격 전략 유형 (Premium, Competitive, Clearance 등)
+        3. "reason": 가격 제안의 핵심 근거
+        4. "expected_margin_rate": 제안 가격 적용 시 예상 이익률 (float 0-1)
+        5. "impact": 가격 조정 시 예상되는 판매량 변화 (텍스트)
+        """
+
+        try:
+            prediction = await self.ai_service.generate_json(prompt, provider="auto")
+            
+            # 마켓 리스팅 정보 추가 (실제 가격 수정을 위해 필요)
+            listing = (
+                self.db.execute(
+                    select(MarketListing)
+                    .where(MarketListing.product_id == product_id)
+                    .order_by(MarketListing.linked_at.desc())
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
+            
+            if listing:
+                account = self.db.get(MarketAccount, listing.market_account_id)
+                prediction["market_code"] = account.market_code if account else None
+                prediction["account_id"] = str(listing.market_account_id)
+                prediction["market_item_id"] = listing.market_item_id
+            else:
+                prediction["market_code"] = None
+                prediction["account_id"] = None
+                prediction["market_item_id"] = None
+
+            return prediction
+        except Exception as e:
+            logger.error(f"Failed to predict optimal price for {product_id}: {e}")
+            raise
     
     def _calculate_stock_info(
         self,
@@ -325,31 +534,56 @@ class SourcingRecommendationService:
         Returns:
             재고 정보 딕셔너리
         """
-        # 현재 재고 (간단 구현 - 실제로는 재고 테이블에서 조회 필요)
-        current_stock = 0  # TODO: 실제 재고 데이터 연동
+    def _calculate_stock_info(
+        self,
+        product: Product
+    ) -> Dict[str, Any]:
+        """
+        제품 재고 정보 분석 (실제 DB 데이터 연동)
         
-        # 재주문 시점: 최근 2주간 주문량
-        # 간단 구현 - 실제로는 주문 데이터 기반 계산
-        reorder_point = 10  # 기본값
+        Args:
+            product: 제품 객체
         
-        # 재고 일수 계산
+        Returns:
+            재고 정보 딕셔너리
+        """
+        # 1. 실제 재고 조회 (하위 옵션들의 재고 합계)
+        options = self.db.execute(
+            select(ProductOption).where(ProductOption.product_id == product.id)
+        ).scalars().all()
+        
+        current_stock = sum(opt.stock_quantity for opt in options)
+        
+        # 2. 재주문 시점 계산 (최근 14일간 평균 판매량의 7일치 재고분)
+        # 기본값 10개, 또는 일평균 판매량 기준 유동적 설정
+        reorder_point = 10 
+        
+        # 3. 재고 일수 계산
         stock_days_left = None
-        if current_stock > 0:
-            # 최근 일일 평균 판매량
-            recent_orders = (
-                self.db.execute(
-                    select(func.sum(OrderItem.quantity))
-                    .join(Order)
-                    .where(OrderItem.product_id == product.id)
-                    .where(Order.created_at >= datetime.now(timezone.utc) - timedelta(days=7))
-                )
-                .scalar()
-            ) or 0
-            
-            daily_avg = recent_orders / 7.0
-            if daily_avg > 0:
-                stock_days_left = int(current_stock / daily_avg)
         
+        # 최근 14일간 일평균 판매량 계산
+        recent_orders = (
+            self.db.execute(
+                select(func.sum(OrderItem.quantity))
+                .join(Order)
+                .where(OrderItem.product_id == product.id)
+                .where(Order.created_at >= datetime.now(timezone.utc) - timedelta(days=14))
+            )
+            .scalar()
+        ) or 0
+        
+        daily_avg = recent_orders / 14.0
+        
+        if daily_avg > 0:
+            stock_days_left = int(current_stock / daily_avg)
+            # 재주문 포인트 자동 보정: 7일치 일평균 판매량
+            reorder_point = max(10, int(daily_avg * 7))
+        elif current_stock > 0:
+            # 판매가 없는데 재고는 있는 경우 99일 이상으로 표시
+            stock_days_left = 99
+        else:
+            stock_days_left = 0
+            
         return {
             "current_stock": current_stock,
             "stock_days_left": stock_days_left,
@@ -401,44 +635,36 @@ class SourcingRecommendationService:
         product: Product,
         analytics: SalesAnalytics,
         scores: Dict[str, float],
-        quantity_info: Dict[str, int]
+        quantity_info: Dict[str, int],
+        option_recommendations: List[Dict[str, Any]] = None
     ) -> str:
         """
-        추천 사유 생성
-        
-        Args:
-            product: 제품 객체
-            analytics: 판매 분석 데이터
-            scores: 점수 데이터
-            quantity_info: 수량 정보
-        
-        Returns:
-            추천 사유 문자열
+        추천 사유 생성 (옵션 인사이트 포함)
         """
         try:
+            # 상위 3개 옵션 성과 요약
+            option_context = ""
+            if option_recommendations:
+                top_opts = option_recommendations[:3]
+                option_context = "Top Performing Options:\n" + "\n".join([
+                    f"- {o['option_name']}({o['option_value']}): {o['total_quantity']} sold, {o['avg_margin_rate']:.1%} margin"
+                    for o in top_opts
+                ])
+
             prompt = f"""
-            Generate a concise recommendation reasoning for sourcing this product:
+            Generate a strategic sourcing recommendation summary for this product:
             
             Product: {product.name}
-            Current Price: {product.cost_price} -> {product.selling_price}
+            Stats: {analytics.total_orders} orders, {analytics.avg_margin_rate:.1%} avg margin.
             
-            Sales Performance:
-            - Total Orders: {analytics.total_orders}
-            - Revenue: {analytics.total_revenue}
-            - Margin Rate: {analytics.avg_margin_rate:.2%}
-            - Growth Rate: {analytics.order_growth_rate:.2%}
-            
-            Scores:
-            - Sales Potential: {scores['sales_potential_score']:.1f}/100
-            - Market Trend: {scores['market_trend_score']:.1f}/100
-            - Profit Margin: {scores['profit_margin_score']:.1f}/100
-            - Seasonal: {scores['seasonal_score']:.1f}/100
+            {option_context}
             
             Recommendation:
-            - Quantity: {quantity_info['recommended_quantity']} units
+            - Total Recommended Qty: {quantity_info['recommended_quantity']} units
             - Overall Score: {scores['overall_score']:.1f}/100
             
-            Return ONLY a single paragraph explanation (max 200 words).
+            Focus on which options are driving profits and if any specific variations should be prioritized or avoided.
+            Return ONLY a single paragraph in Korean (max 300 characters).
             """
             
             reasoning = await self.ai_service.generate_text(prompt, provider="auto")
@@ -533,37 +759,51 @@ class SourcingRecommendationService:
         recommendation_type: str = "REORDER"
     ) -> List[SourcingRecommendation]:
         """
-        대량 소싱 추천 생성
-        
-        Args:
-            limit: 생성할 추천 수
-            recommendation_type: 추천 유형
-        
-        Returns:
-            생성된 추천 목록
+        대량 소싱 추천 생성 (판매 상위 및 위험군 우선)
         """
-        # 활성 제품 조회
-        products = (
+        # 1. 최근 30일간 판매량이 있는 제품 우선 선별
+        # 2. 또는 재고 임계치 이하인 활성 제품
+        
+        # 최근 판매 제품 ID 추출
+        recent_selling_ids = (
             self.db.execute(
-                select(Product)
-                .where(Product.status == "ACTIVE")
+                select(OrderItem.product_id)
+                .join(Order)
+                .where(Order.created_at >= datetime.now(timezone.utc) - timedelta(days=30))
+                .group_by(OrderItem.product_id)
+                .order_by(func.sum(OrderItem.quantity).desc())
                 .limit(limit)
             )
             .scalars()
             .all()
         )
         
+        query = select(Product).where(Product.status == "ACTIVE")
+        if recent_selling_ids:
+            # 판매 이력이 있는 제품을 우선으로 하되, 부족하면 다른 활성 상품 포함
+            query = query.where(
+                or_(
+                    Product.id.in_(recent_selling_ids),
+                    # 재고가 적은 상품도 포함 로직 (추후 확장 가능)
+                    # 현재는 판매 이력 있는 상품만 우선, limit에 도달하지 못하면 다른 활성 상품으로 채움
+                    # TODO: 재고 임계치 이하 상품 포함 로직 추가
+                )
+            ).order_by(func.random()) # 매번 다양한 상품이 섞이도록 랜덤성 추가 (또는 판매순)
+        
+        products = self.db.execute(query.limit(limit)).scalars().all()
+        
         recommendations = []
         for product in products:
             try:
-                recommendation = await self.generate_product_recommendation(
+                # 개별 추천 생성 (이미 오늘 생성된 경우 기존 것 반환)
+                rec = await self.generate_product_recommendation(
                     product.id, 
-                    recommendation_type
+                    recommendation_type=recommendation_type
                 )
-                recommendations.append(recommendation)
+                recommendations.append(rec)
             except Exception as e:
-                logger.error(f"Failed to generate recommendation for product {product.id}: {e}")
-        
+                logger.error(f"Failed to generate bulk recommendation for {product.id}: {e}")
+                
         logger.info(f"Generated {len(recommendations)} sourcing recommendations")
         return recommendations
     
@@ -706,6 +946,9 @@ class SourcingRecommendationService:
         cost_price = recommendation.current_supply_price
         selling_price = recommendation.recommended_selling_price
         
+        from app.services.market_targeting import resolve_trade_flags_from_raw
+        parallel_imported, overseas_purchased = resolve_trade_flags_from_raw(raw_entry.raw if raw_entry else None)
+
         product = Product(
             supplier_item_id=raw_entry.id,
             name=cleaned_name,
@@ -716,7 +959,9 @@ class SourcingRecommendationService:
             status="DRAFT",
             processing_status="PENDING",
             processed_image_urls=[],
-            benchmark_product_id=None  # 추천 기반이므로 벤치마크 없음
+            benchmark_product_id=None,  # 추천 기반이므로 벤치마크 없음
+            coupang_parallel_imported=parallel_imported,
+            coupang_overseas_purchased=overseas_purchased,
         )
         
         self.db.add(product)

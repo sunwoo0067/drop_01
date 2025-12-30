@@ -247,3 +247,4 @@ def get_lifecycle_scheduler() -> LifecycleScheduler:
     if _lifecycle_scheduler is None:
         _lifecycle_scheduler = LifecycleScheduler()
     return _lifecycle_scheduler
+

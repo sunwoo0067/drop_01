@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import axios from "axios";
 import api from "@/lib/api";
 import { Button } from "@/components/ui/Button";
@@ -409,11 +410,13 @@ export default function SupplierItemsPage() {
                                             ) : (
                                                 <div className="grid grid-cols-3 gap-2">
                                                     {images.slice(0, 9).map((url: any, idx: number) => (
-                                                        <div key={`${idx}-${String(url)}`} className="rounded-md border overflow-hidden bg-muted/20">
-                                                            <img
+                                                        <div key={`${idx}-${String(url)}`} className="rounded-md border overflow-hidden bg-muted/20 relative h-24">
+                                                            <Image
                                                                 src={String(url)}
                                                                 alt={typeof itemName === "string" ? itemName : "image"}
-                                                                className="h-24 w-full object-cover"
+                                                                fill
+                                                                sizes="(min-width: 1024px) 10vw, (min-width: 768px) 20vw, 33vw"
+                                                                className="object-cover"
                                                             />
                                                         </div>
                                                     ))}

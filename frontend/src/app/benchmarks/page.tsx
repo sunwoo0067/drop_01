@@ -266,7 +266,7 @@ function CollectionDialog({ isOpen, onClose, onRefresh }: { isOpen: boolean, onC
                 <Select
                     label="대상 마켓"
                     value={marketCode}
-                    onChange={(e) => setMarketCode(e.target.value)}
+                    onChange={(e: any) => setMarketCode(e.target.value)}
                     options={[
                         { value: "ALL", label: "전체 마켓 (ALL)" },
                         { value: "COUPANG", label: "쿠팡 (Coupang)" },
