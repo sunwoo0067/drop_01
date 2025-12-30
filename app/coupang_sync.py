@@ -42,6 +42,32 @@ from app.settings import settings
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_COUPANG_ALLOWED_REQUIRED_DOC_TEMPLATES = [
+    "유통경로확인서",
+    "상표권사용동의서",
+    "브랜드소명자료",
+]
+
+DEFAULT_COUPANG_BLOCKED_REQUIRED_DOC_KEYWORDS = [
+    "KC",
+    "전기",
+    "전기안전인증",
+    "어린이",
+    "식품",
+    "의료",
+    "안전인증",
+    "방송통신기자재적합등록",
+]
+
+DEFAULT_COUPANG_BLOCKED_CATEGORY_KEYWORDS = [
+    "전기",
+    "전자",
+    "식품",
+    "유아",
+    "의료",
+    "화장품",
+]
+
 
 class SkipCoupangRegistrationError(Exception):
     """상품 등록을 정책상 건너뛰는 경우 사용."""
@@ -1439,7 +1465,20 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
         return False, f"클라이언트 초기화 실패: {e}"
 
     # 1. 메타 데이터 준비
-    meta_result = _get_coupang_product_metadata(session, client, account, product)
+    try:
+        meta_result = _get_coupang_product_metadata(session, client, account, product)
+    except SkipCoupangRegistrationError as e:
+        reason = f"SKIPPED: {e}"
+        logger.info(f"상품 등록 스킵: {e}")
+        _log_registration_skip(
+            session,
+            account,
+            product.id,
+            reason,
+            None,
+        )
+        return False, reason
+
     if not meta_result["ok"]:
         return False, meta_result["error"]
 
@@ -2975,6 +3014,55 @@ def _get_coupang_product_metadata(
     if not return_center_code or not outbound_center_code:
         return {"ok": False, "error": f"기본 센터 정보 조회 실패: {_debug}"}
 
+    def _parse_env_list(env_key: str) -> list[str]:
+        raw = os.getenv(env_key, "")
+        if not raw:
+            return []
+        return [p.strip() for p in raw.split(",") if p.strip()]
+
+    def _normalize_tokens(values: list[str]) -> list[str]:
+        return [str(v).strip().lower() for v in values if str(v).strip()]
+
+    def _match_any(text: str, keywords: list[str]) -> bool:
+        t = str(text or "").lower()
+        return any(k in t for k in keywords if k)
+
+    def _extract_required_doc_templates(meta: dict[str, Any]) -> list[dict[str, Any]]:
+        docs = meta.get("requiredDocumentNames")
+        if not isinstance(docs, list):
+            return []
+        return [d for d in docs if isinstance(d, dict)]
+
+    def _evaluate_required_documents(meta: dict[str, Any]) -> tuple[bool, str | None]:
+        docs = _extract_required_doc_templates(meta)
+        if not docs:
+            return True, None
+
+        mandatory_docs = [d for d in docs if "MANDATORY" in str(d.get("required") or "")]
+        if not mandatory_docs:
+            return True, None
+
+        allowed_templates = _parse_env_list("COUPANG_ALLOWED_REQUIRED_DOCUMENTS") or DEFAULT_COUPANG_ALLOWED_REQUIRED_DOC_TEMPLATES
+        blocked_keywords = _parse_env_list("COUPANG_BLOCKED_REQUIRED_DOCUMENTS") or DEFAULT_COUPANG_BLOCKED_REQUIRED_DOC_KEYWORDS
+        allowed_tokens = _normalize_tokens(allowed_templates)
+        blocked_tokens = _normalize_tokens(blocked_keywords)
+
+        names = []
+        for doc in mandatory_docs:
+            name = doc.get("templateName") or doc.get("documentName") or ""
+            names.append(str(name))
+
+        for name in names:
+            if _match_any(name, blocked_tokens):
+                return False, f"필수 구비서류 금지 템플릿: {name}"
+
+        if allowed_tokens:
+            for name in names:
+                if not _match_any(name, allowed_tokens):
+                    return False, f"필수 구비서류 허용 목록 외: {name}"
+
+        return True, None
+
     # 카테고리 예측
     predicted_category_code = 77800
     try:
@@ -2998,6 +3086,13 @@ def _get_coupang_product_metadata(
                         predicted_category_code = int(resp_data)
     except Exception as e:
         logger.info(f"카테고리 예측 스킵/실패: {e}")
+
+    allowed_category_codes = _parse_env_list("COUPANG_ALLOWED_CATEGORY_CODES")
+    blocked_category_codes = _parse_env_list("COUPANG_BLOCKED_CATEGORY_CODES")
+    if blocked_category_codes and str(predicted_category_code) in blocked_category_codes:
+        raise SkipCoupangRegistrationError(f"쿠팡 금지 카테고리 코드: {predicted_category_code}")
+    if allowed_category_codes and str(predicted_category_code) not in allowed_category_codes:
+        raise SkipCoupangRegistrationError(f"쿠팡 허용 카테고리 외: {predicted_category_code}")
 
     # 공시 메타
     def _fetch_category_meta(category_code: int) -> dict[str, Any] | None:
@@ -3059,6 +3154,16 @@ def _get_coupang_product_metadata(
                 predicted_category_code,
                 fallback_codes,
             )
+
+    if isinstance(notice_meta, dict):
+        category_name = notice_meta.get("displayCategoryName") or notice_meta.get("name") or ""
+        blocked_keywords = _parse_env_list("COUPANG_BLOCKED_CATEGORY_KEYWORDS") or DEFAULT_COUPANG_BLOCKED_CATEGORY_KEYWORDS
+        if _match_any(category_name, _normalize_tokens(blocked_keywords)):
+            raise SkipCoupangRegistrationError(f"쿠팡 금지 카테고리 키워드: {category_name}")
+
+        ok, reason = _evaluate_required_documents(notice_meta)
+        if not ok and reason:
+            raise SkipCoupangRegistrationError(reason)
 
     # 반품지 상세
     return_center_detail = None

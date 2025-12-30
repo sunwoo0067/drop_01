@@ -186,6 +186,7 @@ async def _execute_post_promote_actions(product_id: uuid.UUID, auto_register_cou
     from app.session_factory import session_factory
     from app.services.processing_service import ProcessingService
     from app.coupang_sync import register_product
+    from app.services.market_targeting import decide_target_market_for_product
 
     with session_factory() as bg_session:
         service = ProcessingService(bg_session)
@@ -201,6 +202,10 @@ async def _execute_post_promote_actions(product_id: uuid.UUID, auto_register_cou
             return
 
         if product.status != "DRAFT" or product.processing_status != "COMPLETED":
+            return
+
+        target_market, _reason = decide_target_market_for_product(bg_session, product)
+        if target_market != "COUPANG":
             return
 
         account = (
@@ -339,7 +344,14 @@ def _execute_global_keyword_sourcing(keywords: list[str], min_margin: float) -> 
     try:
         with session_factory() as session:
             service = SourcingService(session)
-            anyio.run(service.execute_keyword_sourcing, keywords, float(min_margin))
+            async def _run_all() -> None:
+                if isinstance(keywords, str):
+                    await service.execute_keyword_sourcing(keywords, float(min_margin))
+                    return
+                for keyword in keywords:
+                    await service.execute_keyword_sourcing(keyword, float(min_margin))
+
+            anyio.run(_run_all)
     except Exception as e:
         error_trace = traceback.format_exc()
         logger.error(f"Error in global keyword sourcing:\n{error_trace}")

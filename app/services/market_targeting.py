@@ -1,0 +1,109 @@
+import os
+from typing import Any
+
+from sqlalchemy.orm import Session
+
+from app.models import Product, SupplierItemRaw
+
+
+DEFAULT_COUPANG_CATEGORY_ALLOW_KEYWORDS = [
+    "의류",
+    "패션잡화",
+    "침구",
+    "패브릭",
+    "인테리어소품",
+    "문구",
+    "사무용품",
+    "생활잡화",
+    "캠핑용품",
+]
+
+DEFAULT_COUPANG_CATEGORY_DENY_KEYWORDS = [
+    "전기용품",
+    "전자기기",
+    "가전",
+    "식품",
+    "건강식품",
+    "유아",
+    "아동",
+    "의료",
+    "의료기기",
+    "화장품",
+    "미용기기",
+    "배터리",
+    "충전기",
+]
+
+
+def _parse_env_list(env_key: str) -> list[str]:
+    raw = os.getenv(env_key, "")
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def _normalize_text(value: str | None) -> str:
+    return str(value or "").strip().lower()
+
+
+def _contains_any(text: str, keywords: list[str]) -> bool:
+    target = _normalize_text(text)
+    return any(_normalize_text(keyword) in target for keyword in keywords if keyword)
+
+
+def resolve_supplier_category_name(session: Session, product: Product) -> str | None:
+    if hasattr(product, "processed_category") and product.processed_category:
+        return str(product.processed_category)
+    if getattr(product, "category_path", None):
+        return str(product.category_path)
+    if getattr(product, "category_name", None):
+        return str(product.category_name)
+
+    if not product.supplier_item_id:
+        return None
+
+    raw_item = session.get(SupplierItemRaw, product.supplier_item_id)
+    if not raw_item or not isinstance(raw_item.raw, dict):
+        return None
+
+    raw: dict[str, Any] = raw_item.raw
+    category = raw.get("category")
+    if isinstance(category, str) and category.strip():
+        return category.strip()
+    if isinstance(category, dict):
+        name = category.get("name") or category.get("categoryName")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+
+    for key in ("category_name", "categoryName", "category_path", "categoryPath"):
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    return None
+
+
+def decide_target_market_by_category(category_name: str | None) -> tuple[str, str]:
+    if not category_name:
+        return "SMARTSTORE", "no_category"
+
+    allow_keywords = _parse_env_list("COUPANG_CATEGORY_ALLOW_KEYWORDS")
+    deny_keywords = _parse_env_list("COUPANG_CATEGORY_DENY_KEYWORDS")
+
+    if not allow_keywords:
+        allow_keywords = DEFAULT_COUPANG_CATEGORY_ALLOW_KEYWORDS
+    if not deny_keywords:
+        deny_keywords = DEFAULT_COUPANG_CATEGORY_DENY_KEYWORDS
+
+    if _contains_any(category_name, deny_keywords):
+        return "SMARTSTORE", f"category_denied:{category_name}"
+
+    if allow_keywords and not _contains_any(category_name, allow_keywords):
+        return "SMARTSTORE", f"category_not_allowed:{category_name}"
+
+    return "COUPANG", f"category_allowed:{category_name}"
+
+
+def decide_target_market_for_product(session: Session, product: Product) -> tuple[str, str]:
+    category_name = resolve_supplier_category_name(session, product)
+    return decide_target_market_by_category(category_name)

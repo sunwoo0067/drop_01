@@ -99,11 +99,25 @@ class OrchestratorService:
             config = setting.value if setting else {
                 "listing_limit": 15000,
                 "sourcing_keyword_limit": 30,
-                "continuous_mode": False
+                "sourcing_import_limit": 15000,
+                "initial_processing_batch": 100,
+                "processing_batch_size": 50,
+                "listing_concurrency": 5,
+                "listing_batch_limit": 100,
+                "backfill_approve_enabled": True,
+                "backfill_approve_limit": 2000,
+                "continuous_mode": False,
             }
             
             listing_limit = config.get("listing_limit", 15000)
             keyword_limit = config.get("sourcing_keyword_limit", 30)
+            sourcing_import_limit = config.get("sourcing_import_limit", 15000)
+            initial_processing_batch = config.get("initial_processing_batch", 100)
+            processing_batch_size = config.get("processing_batch_size", 50)
+            listing_concurrency = config.get("listing_concurrency", 5)
+            listing_batch_limit = config.get("listing_batch_limit", 100)
+            backfill_approve_enabled = config.get("backfill_approve_enabled", True)
+            backfill_approve_limit = config.get("backfill_approve_limit", 2000)
             continuous_mode = config.get("continuous_mode", False)
 
             # 1. Planning: 시즌성 판단 및 전략 수립
@@ -146,7 +160,10 @@ class OrchestratorService:
                 await self.sourcing_service.trigger_full_supplier_sync()
                 
                 # 이전 수집분에서 미가공된 데이터들 후보군으로 가져오기
-                imported_count = await asyncio.to_thread(self.sourcing_service.import_from_raw, limit=15000) # 한도 상향
+                imported_count = await asyncio.to_thread(
+                    self.sourcing_service.import_from_raw,
+                    limit=int(sourcing_import_limit),
+                )
                 if imported_count > 0:
                     self._record_event("SOURCING", "IN_PROGRESS", f"기존 수집 데이터 {imported_count}건을 소싱 후보로 전환했습니다.")
 
@@ -180,12 +197,12 @@ class OrchestratorService:
             # [추가] 목표 수량 대비 부족할 경우 백필 승인 (Backfill Approval)
             # 키워드 소싱 여부와 관계없이 실행되어야 함
             candidates_to_approve = []
-            if not dry_run:
+            if not dry_run and backfill_approve_enabled:
                 stmt_approved = select(Product).where(Product.created_at >= select(func.current_date()))
                 today_count = self.db.execute(select(func.count()).select_from(stmt_approved)).scalar() or 0
                 
                 if today_count < listing_limit:
-                    shortfall = listing_limit - today_count
+                    shortfall = min(listing_limit - today_count, int(backfill_approve_limit))
                     self._record_event("SOURCING", "IN_PROGRESS", f"목표 수량 대비 {shortfall}건 부족하여 추가 승인을 진행합니다.")
                     
                     stmt_pending = (
@@ -213,12 +230,14 @@ class OrchestratorService:
                 
                 # [최적화] 메인 루프에서 listing_limit 전체를 한 번에 가공하면 너무 오래 블로킹됨
                 # 초기 부팅을 위해 작은 배치(예: 100건)만 블로킹 방식으로 처리하고, 나머지는 백그라운드 워커에 위임
-                initial_batch_size = 100 
-                processed_count = await self.processing_service.process_pending_products(limit=initial_batch_size)
+                processed_count = await self.processing_service.process_pending_products(
+                    limit=int(initial_processing_batch),
+                )
                 logger.info(f"Step 1: Processed initial batch of {processed_count} products. Remaining {listing_limit - processed_count} left for background worker.")
                 
                 # 활성 계정 조회
                 from app.session_factory import session_factory
+                from app.services.market_targeting import decide_target_market_for_product
                 stmt_acc = select(MarketAccount).where(MarketAccount.is_active == True)
                 accounts = self.db.scalars(stmt_acc).all()
                 
@@ -231,8 +250,12 @@ class OrchestratorService:
                 stmt_prod = select(Product).where(Product.processing_status == "COMPLETED").order_by(Product.updated_at.desc()).limit(listing_limit)
                 products = self.db.scalars(stmt_prod).all()
                 
+                accounts_by_market: dict[str, list[MarketAccount]] = {}
+                for acc in accounts:
+                    accounts_by_market.setdefault(acc.market_code, []).append(acc)
+
                 # 병렬 등록을 위한 세마포어 (마켓 API 부하 조절)
-                register_sem = asyncio.Semaphore(5) # 마켓별 동시성 제한
+                register_sem = asyncio.Semaphore(int(listing_concurrency)) # 마켓별 동시성 제한
                 
                 async def _register_task(idx, p_id):
                     async with register_sem:
@@ -241,16 +264,46 @@ class OrchestratorService:
                             from app.services.market_service import MarketService
                             m_service = MarketService(tmp_db)
                             
-                            target_acc = accounts[idx % len(accounts)]
-                            market_code = target_acc.market_code
-                            
                             try:
                                 # Product 객체를 새로운 세션에서 다시 가져오기
                                 p = tmp_db.get(Product, p_id)
                                 if not p: return False
-                                
-                                res = m_service.register_product(market_code, target_acc.id, p.id)
-                                return res.get("status") == "success"
+
+                                target_market, reason = decide_target_market_for_product(tmp_db, p)
+                                target_accounts = accounts_by_market.get(target_market, [])
+                                if not target_accounts:
+                                    if target_market != "SMARTSTORE" and accounts_by_market.get("SMARTSTORE"):
+                                        logger.info(
+                                            "No %s accounts; fallback to SMARTSTORE (product=%s, reason=%s)",
+                                            target_market,
+                                            p.id,
+                                            reason,
+                                        )
+                                        target_market = "SMARTSTORE"
+                                        target_accounts = accounts_by_market.get("SMARTSTORE", [])
+                                    else:
+                                        logger.warning(
+                                            "No target accounts for %s (product=%s, reason=%s)",
+                                            target_market,
+                                            p.id,
+                                            reason,
+                                        )
+                                        return False
+
+                                target_acc = target_accounts[idx % len(target_accounts)]
+                                res = m_service.register_product(target_market, target_acc.id, p.id)
+                                if res.get("status") == "success":
+                                    return True
+
+                                if res.get("status") == "skipped" and target_market == "COUPANG":
+                                    fallback_accounts = accounts_by_market.get("SMARTSTORE", [])
+                                    if not fallback_accounts:
+                                        return False
+                                    fallback_acc = fallback_accounts[idx % len(fallback_accounts)]
+                                    fallback_res = m_service.register_product("SMARTSTORE", fallback_acc.id, p.id)
+                                    return fallback_res.get("status") == "success"
+
+                                return False
                             except Exception as e:
                                 logger.error(f"Async listing failed for product {p_id}: {e}")
                                 return False
@@ -331,12 +384,16 @@ class OrchestratorService:
                     with session_factory() as db:
                         # 설정 확인
                         setting = db.query(SystemSetting).filter_by(key="orchestrator").one_or_none()
-                        listing_limit = 5000 # 기본값
+                        processing_batch_size = 50
                         if setting and setting.value:
-                            listing_limit = setting.value.get("listing_limit", 5000)
+                            processing_batch_size = setting.value.get("processing_batch_size", 50)
                         
                         # 가공 대기 상품 조회
-                        stmt = select(Product.id).where(Product.processing_status == "PENDING").limit(50)
+                        stmt = (
+                            select(Product.id)
+                            .where(Product.processing_status == "PENDING")
+                            .limit(int(processing_batch_size))
+                        )
                         p_ids = db.scalars(stmt).all()
                         
                         if not p_ids:
@@ -347,7 +404,7 @@ class OrchestratorService:
                         # 가공 서비스 인스턴스를 루프 내에서 새로 생성 (세션 바인딩)
                         from app.services.processing_service import ProcessingService
                         ps = ProcessingService(db)
-                        processed_count = await ps.process_pending_products(limit=50)
+                        processed_count = await ps.process_pending_products(limit=int(processing_batch_size))
                         logger.info(f"Continuous Processing: Batch processed {processed_count} products.")
                 except Exception as e:
                     wrapped_error = wrap_exception(
@@ -386,6 +443,8 @@ class OrchestratorService:
                     if not setting or not setting.value.get("continuous_mode"):
                         logger.info("Continuous mode disabled. Stopping.")
                         break
+                    listing_batch_limit = setting.value.get("listing_batch_limit", 100)
+                    listing_concurrency = setting.value.get("listing_concurrency", 5)
 
                     # 활성 계정 조회
                     stmt_acc = select(MarketAccount).where(MarketAccount.is_active == True)
@@ -396,7 +455,11 @@ class OrchestratorService:
                         continue
                     
                     # 미등록 상품 조회 (배치 단위로 처리)
-                    stmt_prod = select(Product).where(Product.processing_status == "COMPLETED").limit(100)
+                    stmt_prod = (
+                        select(Product)
+                        .where(Product.processing_status == "COMPLETED")
+                        .limit(int(listing_batch_limit))
+                    )
                     products = db.scalars(stmt_prod).all()
                     
                     if not products:
@@ -405,7 +468,7 @@ class OrchestratorService:
                         continue
 
                     # 병렬 등록
-                    register_sem = asyncio.Semaphore(5)
+                    register_sem = asyncio.Semaphore(int(listing_concurrency))
                     
                     async def _task(idx, p_id):
                         async with register_sem:
