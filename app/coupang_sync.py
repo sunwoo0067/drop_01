@@ -3235,6 +3235,13 @@ def _get_coupang_product_metadata(
                     elif isinstance(resp_data, (str, int)):
                         predicted_category_code = int(resp_data)
                         predicted_from_ai = True
+                    if predicted_from_ai:
+                        logger.info(
+                            "쿠팡 카테고리 예측 결과: product=%s name=%s predicted=%s",
+                            product.id,
+                            (product.processed_name or product.name)[:80],
+                            predicted_category_code,
+                        )
     except Exception as e:
         logger.info(f"카테고리 예측 스킵/실패: {e}")
 
@@ -3319,6 +3326,13 @@ def _get_coupang_product_metadata(
     if predicted_from_ai:
         safety_score, safety_reasons = _score_category_safety(notice_meta, product)
         unsafe_predicted = safety_score < 0
+        logger.info(
+            "쿠팡 예측 카테고리 안전 점수: product=%s category=%s score=%s reasons=%s",
+            product.id,
+            predicted_category_code,
+            safety_score,
+            ",".join(safety_reasons) if safety_reasons else "-",
+        )
     if _has_mandatory_required_docs(notice_meta, product) or unsafe_predicted:
         fallback_raw = (
             os.getenv("COUPANG_FALLBACK_CATEGORY_CODES", "")

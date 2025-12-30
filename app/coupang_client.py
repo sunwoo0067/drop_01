@@ -259,10 +259,24 @@ class CoupangClient:
         """카테고리 추천 (예측)"""
         # 참고: 구체적인 엔드포인트 구현에 따라 달라질 수 있음. 명시적인 문서가 없다면 일반적인 v1 구조를 가정.
         # 문서는 보통 /v2/providers/seller_api/apis/api/v1/marketplace/seller-products/recommend-categories 를 가리킴
-        payload = {"productName": product_name}
+        params = {"productName": product_name}
         if attributes:
-            payload["attributes"] = attributes
-        return self.post("/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/recommend-categories", payload)
+            params["attributes"] = attributes
+        code, data = self.get(
+            "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/recommend-categories",
+            params=params,
+        )
+        if code == 404 and isinstance(data, dict):
+            message = data.get("message") or data.get("_normalized_message") or ""
+            if "did you mean to request via POST" in str(message):
+                payload = {"productName": product_name}
+                if attributes:
+                    payload["attributes"] = attributes
+                return self.post(
+                    "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/recommend-categories",
+                    payload,
+                )
+        return code, data
 
     # --------------------------------------------------------------------------
     # 2. 상품 API (Product API)
