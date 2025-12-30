@@ -40,7 +40,13 @@ async def test_v140_strategic_autonomy():
                     planning_event = next((c[0][0] for c in db.add.call_args_list if isinstance(c[0][0], OrchestrationEvent) and c[0][0].step == "PLANNING" and c[0][0].status == "SUCCESS"), None)
                     print(f"Planning Event Message: {planning_event.message}")
                     assert "Limit: 500" in planning_event.message
-                    print("✅ Scenario 1 Passed (Quota reduced by 50%)")
+                    
+                    # Verify Simulation Report
+                    assert "simulation" in planning_event.details
+                    assert "comparison" in planning_event.details["simulation"]
+                    print(f"✅ Simulation Report Verified: {planning_event.details['simulation']['impact_summary']}")
+                    
+                    print("✅ Scenario 1 Passed (Quota reduced by 50% with Simulation)")
 
     # 2. Scenario: ROI Momentum (Should Boost)
     print("\n[Scenario 2] Strategic Momentum - High ROI")

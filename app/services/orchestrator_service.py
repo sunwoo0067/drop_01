@@ -128,7 +128,10 @@ class OrchestratorService:
             
             # 1.1 Meta-Strategy Drift Detection (v1.4.0)
             from app.services.analytics.strategy_drift import StrategyDriftDetector
+            from app.services.analytics.policy_simulator import PolicySimulatorService
+            
             strategy_health = StrategyDriftDetector.analyze_global_strategy_health(self.db, days=14)
+            simulation_report = PolicySimulatorService.simulate_strategy_change(self.db, strategy_health)
             
             # Capital Allocation Engine (v1.4.0): 전략 건강 상태에 따른 동적 쿼터 조정
             if strategy_health["should_pivot"]:
@@ -136,7 +139,14 @@ class OrchestratorService:
                 # 위험 감지 시 쿼터를 50%로 축소 (자본 보호)
                 listing_limit = int(listing_limit * 0.5)
                 logger.warning(f"Strategy Pivot Alert: {strategy_health['message']} (Limiting Quota: {original_limit} -> {listing_limit})")
-                self._record_event("STRATEGY_PIVOT", strategy_health["severity"], strategy_health["message"], strategy_health)
+                
+                # 시뮬레이션 결과와 함께 이벤트 기록
+                self._record_event(
+                    "STRATEGY_PIVOT", 
+                    strategy_health["severity"], 
+                    f"{strategy_health['message']} (예상 손실 방지: {simulation_report['comparison']['proposed']['avoided_loss']:,}원)", 
+                    {"health": strategy_health, "simulation": simulation_report}
+                )
             else:
                 # 건강할 경우 ROI 성과에 따라 최대 20%까지 쿼터 증액 (모멘텀 투자)
                 if strategy_health["current_roi"] > 0.2:
@@ -144,7 +154,7 @@ class OrchestratorService:
                     logger.info(f"Strategy Momentum: ROI {strategy_health['current_roi']:.2f} detected. Boosting Quota to {listing_limit}")
 
             logger.info(f"Today's Strategy: {season_name} - {theme} (Listing Limit: {listing_limit}, Keyword Limit: {keyword_limit})")
-            self._record_event("PLANNING", "SUCCESS", f"전략 수립 완료: {season_name} ({theme}) [Limit: {listing_limit}]", {**strategy, "strategy_health": strategy_health})
+            self._record_event("PLANNING", "SUCCESS", f"전략 수립 완료: {season_name} ({theme}) [Limit: {listing_limit}]", {**strategy, "strategy_health": strategy_health, "simulation": simulation_report})
             
             # 2. Optimization: 비인기/오프시즌 상품 정리
             self._record_event("OPTIMIZATION", "START", "비인기 상품 정리를 시작합니다.")
