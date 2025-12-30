@@ -99,3 +99,101 @@ def get_agents_status():
                 "queue_size": processing_pending
             }
         }
+
+
+@router.get("/coupang-gating")
+def get_coupang_gating_report(
+    limit: int = Query(default=20, ge=1, le=100),
+    days: int = Query(default=7, ge=1, le=30),
+):
+    """
+    쿠팡 등록 분기(서류 보류/재시도/스킵 로그) 리포트를 반환합니다.
+    """
+    from collections import Counter
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import select
+    from app.session_factory import session_factory
+    from app.models import Product, MarketRegistrationRetry, SupplierRawFetchLog
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    def _format_reason(reason: str | None) -> str:
+        if not reason:
+            return "-"
+        s = str(reason).replace("\n", " ").strip()
+        return s[:160]
+
+    with session_factory() as session:
+        doc_pending = session.scalars(
+            select(Product)
+            .where(Product.coupang_doc_pending.is_(True))
+            .order_by(Product.updated_at.desc())
+            .limit(limit)
+        ).all()
+
+        retry_rows = session.scalars(
+            select(MarketRegistrationRetry)
+            .where(MarketRegistrationRetry.market_code == "COUPANG")
+            .where(MarketRegistrationRetry.status.in_(["queued", "failed"]))
+            .order_by(MarketRegistrationRetry.updated_at.desc())
+            .limit(limit)
+        ).all()
+
+        skip_logs = session.scalars(
+            select(SupplierRawFetchLog)
+            .where(SupplierRawFetchLog.supplier_code == "COUPANG")
+            .where(SupplierRawFetchLog.endpoint == "register_product_skipped")
+            .where(SupplierRawFetchLog.fetched_at >= cutoff)
+            .order_by(SupplierRawFetchLog.fetched_at.desc())
+            .limit(limit)
+        ).all()
+
+    reason_counter = Counter()
+    skip_payload = []
+    for log in skip_logs:
+        msg = None
+        if isinstance(log.response_payload, dict):
+            msg = log.response_payload.get("message")
+        reason = _format_reason(msg)
+        reason_counter[reason] += 1
+        product_id = None
+        if isinstance(log.request_payload, dict):
+            product_id = log.request_payload.get("productId")
+        skip_payload.append(
+            {
+                "fetchedAt": log.fetched_at.isoformat() if log.fetched_at else None,
+                "productId": product_id,
+                "reason": reason,
+            }
+        )
+
+    return {
+        "summary": {
+            "docPendingCount": len(doc_pending),
+            "retryCount": len(retry_rows),
+            "skipLogCount": len(skip_logs),
+            "skipReasonsTop": reason_counter.most_common(10),
+            "cutoff": cutoff.isoformat(),
+        },
+        "docPending": [
+            {
+                "productId": str(product.id),
+                "brand": product.brand,
+                "name": product.name,
+                "reason": product.coupang_doc_pending_reason,
+                "updatedAt": product.updated_at.isoformat() if product.updated_at else None,
+            }
+            for product in doc_pending
+        ],
+        "retries": [
+            {
+                "productId": str(row.product_id),
+                "status": row.status,
+                "attempts": row.attempts,
+                "reason": row.reason,
+                "updatedAt": row.updated_at.isoformat() if row.updated_at else None,
+            }
+            for row in retry_rows
+        ],
+        "skipLogs": skip_payload,
+    }
