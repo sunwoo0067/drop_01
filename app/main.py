@@ -197,56 +197,43 @@ async def upload_image(file: UploadFile = File(...)) -> dict:
 
 
 @app.post("/ownerclan/accounts/primary")
-def set_ownerclan_primary_account(payload: OwnerClanPrimaryAccountIn, session: Session = Depends(get_session)) -> dict:
+def set_ownerclan_primary_account(
+    payload: OwnerClanPrimaryAccountIn, 
+    session: Session = Depends(get_session)
+) -> dict:
+    """오너클랜 대표계정 설정 (서비스 호출 버전)."""
     user_type = payload.user_type or settings.ownerclan_primary_user_type
     username = payload.username or settings.ownerclan_primary_username
     password = payload.password or settings.ownerclan_primary_password
-
+    
     if not username or not password:
         raise HTTPException(status_code=400, detail="오너클랜 대표계정이 설정되어 있지 않습니다(.env OWNERCLAN_PRIMARY_USERNAME/PASSWORD)")
-
-    client = OwnerClanClient(
-        auth_url=settings.ownerclan_auth_url,
-        api_base_url=settings.ownerclan_api_base_url,
-        graphql_url=settings.ownerclan_graphql_url,
-    )
-
+    
     try:
-        token = client.issue_token(username=username, password=password, user_type=user_type)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"오너클랜 토큰 발급 실패: {e}")
-
-    # primary는 user_type 별로 유지합니다(seller/vendor 각각 1개씩 가능)
-    session.query(SupplierAccount).filter(SupplierAccount.supplier_code == "ownerclan").filter(SupplierAccount.user_type == user_type).update({"is_primary": False})
-
-    existing = (
-        session.query(SupplierAccount)
-        .filter(SupplierAccount.supplier_code == "ownerclan")
-        .filter(SupplierAccount.username == username)
-        .one_or_none()
-    )
-
-    if existing:
-        existing.user_type = user_type
-        existing.access_token = token.access_token
-        existing.token_expires_at = token.expires_at
-        existing.is_primary = True
-        existing.is_active = True
-        account = existing
-    else:
-        account = SupplierAccount(
-            supplier_code="ownerclan",
+        account = SupplierAccountService.set_ownerclan_primary_account(
+            session=session,
             user_type=user_type,
             username=username,
-            access_token=token.access_token,
-            token_expires_at=token.expires_at,
-            is_primary=True,
-            is_active=True,
+            password=password
         )
-        session.add(account)
-        session.flush()
-
-    return {"accountId": str(account.id), "tokenExpiresAt": token.expires_at.isoformat() if token.expires_at else None}
+        session.commit()
+        
+        result = OwnerClanPrimaryAccountResult(
+            account_id=str(account.id),
+            username=account.username,
+            token_expires_at=account.token_expires_at.isoformat() if account.token_expires_at else None
+        )
+        return result.model_dump()
+        
+    except ValueError as e:
+        session.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        session.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"서버 오류: {e}")
 
 
 def _enqueue_ownerclan_job(job_type: str, params: dict, session: Session) -> dict:
