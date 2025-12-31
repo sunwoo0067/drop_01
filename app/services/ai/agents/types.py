@@ -203,6 +203,38 @@ class SourcingAgentOutput(BaseModel):
 
 
 # ============================================================================
+# PricingAgent Types
+# ============================================================================
+
+class PricingDecisionInput(BaseModel):
+    """가격 결정 입력"""
+    product_name: str = Field(..., description="상품명")
+    supply_price: float = Field(..., description="공급가")
+    market_stats: Dict[str, Any] = Field(..., description="시장 통계 (평균가, 최저가 등)")
+    min_safe_price: float = Field(..., description="마진 확보를 위한 최소 안전 가격")
+    market_code: str = Field("COUPANG", description="마켓 코드")
+
+
+class PricingDecisionOutput(BaseModel):
+    """가격 결정 출력"""
+    suggested_price: int = Field(..., description="제안 가격")
+    strategy: str = Field(..., description="적용된 전략 (예: COMPETITIVE_MIN, MARGIN_PROTECTION)")
+    reasoning: str = Field(..., description="가격 결정 근거")
+    expected_roi: float = Field(..., description="예상 ROI")
+
+
+class PricingAgentOutput(BaseModel):
+    """PricingAgent 최종 출력"""
+    listing_id: str = Field(..., description="리스팅 ID")
+    suggested_price: int = Field(..., description="최종 제안 가격")
+    strategy: str = Field(..., description="전략")
+    reasoning: str = Field(..., description="근거")
+    expected_roi: float = Field(..., description="예상 ROI")
+    status: ProcessingStatus = Field(ProcessingStatus.COMPLETED, description="처리 상태")
+    error_message: Optional[str] = Field(None, description="에러 메시지")
+
+
+# ============================================================================
 # Common Types
 # ============================================================================
 
@@ -291,3 +323,20 @@ def from_dict_safe(cls: type, data: Dict[str, Any]) -> Optional[BaseModel]:
         return cls(**data)
     except Exception:
         return None
+# ============================================================================
+# CSWorkflowAgent Types
+# ============================================================================
+
+class InquiryAnalysis(BaseModel):
+    """문의 분석 결과"""
+    intent: str = Field(..., description="문의 의도")
+    sentiment: str = Field(..., description="감정 상태")
+    urgency: str = Field("medium", description="긴급도")
+    summary: str = Field(..., description="문의 내용 요약")
+
+class CSResult(BaseModel):
+    """CS 답변 생성 결과"""
+    draft_answer: str = Field(..., description="생성된 답변 초안")
+    confidence_score: float = Field(0.0, ge=0.0, le=1.0, description="답변 신뢰도 점수")
+    needs_human_review: bool = Field(True, description="수동 검토 필요 여부")
+    status: str = Field("AI_DRAFTED", description="최종 상태")

@@ -67,10 +67,11 @@ class OllamaProvider(AIProvider):
             return {}
 
     async def generate_text(self, prompt: str, model: Optional[str] = None) -> str:
+        """텍스트 생성 (internal _chat 사용 -> /api/chat)"""
         target_model = model or self.model_name
         messages = [{"role": "user", "content": prompt}]
         response = await self._chat(messages, target_model)
-        return response.get("message", {}).get("content", "")
+        return response.get("message", {}).get("content", "").strip()
 
     async def generate_json(self, prompt: str, model: Optional[str] = None, tools: Optional[List[Dict[str, Any]]] = None, image_data: Optional[bytes] = None) -> Dict[str, Any] | List[Any]:
         target_model = model or (self.vision_model_name if image_data else self.function_model_name)

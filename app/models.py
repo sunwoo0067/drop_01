@@ -306,6 +306,15 @@ class MarketInquiryRaw(MarketBase):
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
     ai_suggested_answer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="PENDING")
+    confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cs_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    
+    # v1.8.0: 전송 상태 관리 가드레일
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    send_status: Mapped[str | None] = mapped_column(Text, nullable=True) # SENT, SEND_FAILED
+    send_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_send_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class MarketRevenueRaw(MarketBase):
@@ -542,6 +551,9 @@ class MarketListing(MarketBase):
     proven_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     category_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     category_grade: Mapped[str | None] = mapped_column(Text, nullable=True) # FALLBACK_SAFE, VERIFIED_EXACT
+
+    # Relationships
+    market_account: Mapped["MarketAccount"] = relationship("MarketAccount")
 
     # === 3단계 전략 관련 필드 ===
     # 노출/클릭 지표
@@ -1040,6 +1052,7 @@ class AdaptivePolicyEvent(MarketBase):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     category_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    market_code: Mapped[str] = mapped_column(Text, nullable=False, default="COUPANG")
     keyword: Mapped[str | None] = mapped_column(Text, nullable=True)
     
     # PENALTY(감점), RECOVERY(복원), DRIFT(환경변화감지)

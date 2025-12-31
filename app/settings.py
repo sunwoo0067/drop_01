@@ -95,7 +95,7 @@ class Settings(BaseSettings):
     gemini_api_keys: list[str] = [] # List of keys for rotation
     
     # Ollama
-    ollama_base_url: str = "http://localhost:11434"
+    ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen3:8b"  # gemma3:4b → qwen3:8b (최신 모델로 업그레이드)
     ollama_function_model: str = "functiongemma"
     ollama_embedding_model: str = "qwen3-embedding"  # embeddinggemma → qwen3-embedding (최신 모델로 업그레이드)
@@ -103,7 +103,7 @@ class Settings(BaseSettings):
     ollama_vision_model: str = "qwen3-vl:8b"  # drop-vision → qwen3-vl:8b (최신 모델로 업그레이드)
     ollama_ocr_model: str = "drop-ocr"
     ollama_qwen_vl_model: str = "qwen3-vl:8b"  # drop-qwen-vl → qwen3-vl:8b (최신 모델로 업그레이드)
-    ollama_logic_model: str = "qwen3:8b"  # granite4 → qwen3:8b (최신 모델로 업그레이드)
+    ollama_logic_model: str = "qwen3:8b"
 
     # OpenAI
     openai_api_keys: list[str] = [] # List of keys for rotation
@@ -112,6 +112,11 @@ class Settings(BaseSettings):
     # Stable Diffusion (Automatic1111 / Forge / etc)
     sd_api_url: str = "http://localhost:7860"
     sd_model_name: str = "v1-5-pruned-emaonly.safetensors"
+    # CS 운영 가드레일
+    cs_auto_approval_threshold: float = 0.85
+    cs_auto_send_threshold: float = 0.90 # 자동 전송을 위한 최소 점수 (final_score 기준)
+    enable_cs_partial_auto: bool = False # Shadow Mode -> Partial Auto 전환 스위치
+    daily_premium_image_quota: int = 50  # 일일 프리미엄 이미지 생성 한도
 
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)

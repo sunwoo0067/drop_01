@@ -23,6 +23,7 @@ class AgentState(TypedDict, total=False):
     rank_explanation: str
     
     # 워크플로우 제어
+    current_step: str
     next_step: str
     errors: Annotated[List[str], operator.add]
     logs: Annotated[List[str], operator.add]

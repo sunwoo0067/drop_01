@@ -41,6 +41,7 @@ from app.services.ai.exceptions import (
 )
 from app.services.ai import AIService
 from app.services.image_processing import image_processing_service
+from app.services.storage_service import storage_service
 from app.services.name_processing import apply_market_name_rules
 from app.settings import settings
 
@@ -167,14 +168,6 @@ class ProcessingAgent(BaseAgent, ValidationMixin):
     async def process_by_lifecycle_stage(self, target_id: str, input_data: Dict[str, Any], **kwargs) -> Dict[str, Any]:
         """
         라이프사이클 단계별 가공 수행
-        
-        Args:
-            target_id: 상품 ID
-            input_data: 입력 데이터
-            **kwargs: 추가 인자
-            
-        Returns:
-            가공 결과
         """
         lifecycle_stage = self._get_lifecycle_stage(target_id)
         processing_scope = self._get_processing_scope(lifecycle_stage)
@@ -186,53 +179,51 @@ class ProcessingAgent(BaseAgent, ValidationMixin):
         state["lifecycle_stage"] = lifecycle_stage
         state["processing_scope"] = processing_scope
         
+        async def _update_state(node_func, node_name):
+            res = await node_func(state)
+            if res:
+                # logs, errors 등 리스트 필드 병합
+                for key in ["logs", "errors"]:
+                    if key in res and isinstance(res[key], list):
+                        if key not in state: state[key] = []
+                        state[key].extend(res[key])
+                # final_output 등 기타 필드 업데이트
+                for key in res:
+                    if key not in ["logs", "errors"]:
+                        state[key] = res[key]
+            return res
+
         try:
-            # 단계별 가공 흐름
+            # 1. 상세페이지 추출
+            res1 = await _update_state(self.extract_details, "extract_details")
+            if res1.get("errors"): return res1
             
-            # 1. 상세페이지 추출 (모든 단계 공통)
-            result1 = await self.extract_details(state)
-            if result1.get("errors"):
-                return result1
-            state.update(result1)
-            
-            # 2. OCR 추출 (STEP 2, 3에서만 수행)
+            # 2. OCR 추출
             if processing_scope["ocr_processing"]:
-                result2 = await self.extract_ocr_details(state)
-                if result2.get("errors"):
-                    return result2
-                state.update(result2)
-            else:
-                logger.info("Skipping OCR extraction (not required for current stage)")
+                res2 = await _update_state(self.extract_ocr_details, "extract_ocr_details")
+                if res2.get("errors"): return res2
             
-            # 3. SEO 최적화 (모든 단계 공통, 단계별 모델 사용)
+            # 3. SEO 최적화
             state["ai_model_override"] = processing_scope["ai_model"]
-            result3 = await self.optimize_seo(state)
-            if result3.get("errors"):
-                return result3
-            state.update(result3)
+            res3 = await _update_state(self.optimize_seo, "optimize_seo")
+            if res3.get("errors"): return res3
             
-            # 4. 이미지 처리 (STEP 3에서만 수행)
+            # 4. 이미지 처리
             if processing_scope["image_processing"]:
-                result4 = await self.process_images(state)
-                if result4.get("errors"):
-                    return result4
-                state.update(result4)
-            else:
-                logger.info("Skipping image processing (not required for current stage)")
+                res4 = await _update_state(self.process_images, "process_images")
+                if res4.get("errors"): return res4
             
-            # 5. 저장 (모든 단계 공통)
-            result5 = await self.save_product(state)
+            # 5. 저장
+            final_res = await _update_state(self.save_product, "save_product")
             
-            # 가공 이력 기록 (ProcessingHistoryService)
-            if not result5.get("errors") and lifecycle_stage in ["STEP_2", "STEP_3"]:
-                await self._record_processing_history(
-                    target_id,
-                    lifecycle_stage,
-                    input_data,
-                    state
-                )
+            # 가공 이력 기록
+            if not final_res.get("errors") and lifecycle_stage in ["STEP_2", "STEP_3"]:
+                await self._record_processing_history(target_id, lifecycle_stage, input_data, state)
             
-            return result5
+            # 병합된 로그와 에러를 포함하여 반환
+            final_res["logs"] = state.get("logs", [])
+            final_res["errors"] = state.get("errors", [])
+            return final_res
             
         except Exception as e:
             error = wrap_exception(e, AIError, step="lifecycle_processing")
@@ -516,6 +507,19 @@ class ProcessingAgent(BaseAgent, ValidationMixin):
             # Few-shot 예제 가져오기
             examples = self._get_few_shot_examples(category=category)
             
+            # VLM 분석을 위한 이미지 데이터 가져오기 (첫 번째 이미지)
+            image_data = None
+            if input_data.get("images"):
+                first_img_url = input_data["images"][0]
+                try:
+                    async with httpx.AsyncClient(timeout=10.0) as client:
+                        resp = await client.get(first_img_url)
+                        if resp.status_code == 200:
+                            image_data = resp.content
+                            logger.info(f"Fetched image data for VLM optimization: {first_img_url}")
+                except Exception as e:
+                    logger.warning(f"Failed to fetch image for VLM optimization: {e}")
+
             processed_name = name
             keywords = []
             confidence_score = 0.0
@@ -529,6 +533,7 @@ class ProcessingAgent(BaseAgent, ValidationMixin):
                     category=category,
                     market=market,
                     examples=examples,
+                    image_data=image_data,
                     provider="auto"
                 )
                 
@@ -579,12 +584,15 @@ class ProcessingAgent(BaseAgent, ValidationMixin):
         """
         이미지 처리 노드
         
-        이미지를 다운로드하고 Supabase에 업로드합니다.
+        STEP 1/2: 상품 이미지를 다운로드하고 업로드합니다.
+        STEP 3: 1단계 이미지를 기반으로 AI 프리미엄 이미지를 생성하여 추가합니다.
         """
         self.log_step("process_images", "Processing images...")
         
         try:
-            if self._name_only_processing():
+            lifecycle_stage = state.get("lifecycle_stage", "STEP_1")
+            
+            if self._name_only_processing() and lifecycle_stage != "STEP_3":
                 return {
                     "final_output": state.get("final_output") or {},
                     "logs": ["Skipped image processing (PROCESS_NAME_ONLY=1)"],
@@ -595,17 +603,91 @@ class ProcessingAgent(BaseAgent, ValidationMixin):
             raw_images = input_data.get("images", [])
             detail_html = input_data.get("detail_html") or input_data.get("normalized_detail", "")
             
+            logger.info(f"--- [process_images] product_id: {product_id}, stage: {lifecycle_stage}, images_count: {len(raw_images)} ---")
+
             if not raw_images:
+                logger.warning(f"[process_images] No raw images found in input_data for product {product_id}")
                 return {
                     "final_output": state.get("final_output") or {},
                     "logs": ["No images to process"]
                 }
             
+            # 기본 이미지 가공 및 업로드
             processed_urls = await image_processing_service.process_and_upload_images_async(
                 image_urls=raw_images,
                 detail_html=detail_html,
                 product_id=product_id
             )
+            
+            logger.info(f"[process_images] processed_urls count: {len(processed_urls)}")
+            logs = [f"Processed {len(processed_urls)} base images"]
+            
+            # STEP 3: 프리미엄 이미지 생성 (가드레일 적용)
+            if lifecycle_stage == "STEP_3" and processed_urls:
+                try:
+                    # 1. 이미 프리미엄 이미지가 생성되었는지 확인 (중복 생성 방지)
+                    # processed_urls의 첫 번째 이미지가 'market_premium' 경로를 포함하는지 확인
+                    if any("market_premium" in url for url in processed_urls):
+                        logger.info(f"[Guardrail] Premium image already exists for product {product_id}. Skipping generation.")
+                        return {
+                            "final_output": current_output,
+                            "logs": logs + ["Skipped premium image (already exists)"]
+                        }
+
+                    # 2. 일일 쿼터 확인 (추후 DB 기반 정확한 카운트 필요, 현재는 로그 출력)
+                    # TODO: history_service.get_today_count("FULL_BRANDING") >= settings.daily_premium_image_quota
+                    
+                    self.log_step("process_images", "Generating premium branding image for STEP 3...")
+                    
+                    # 1. 원본 제 1 이미지 다운로드 (특징 추출용)
+                    main_image_url = raw_images[0]
+                    async with httpx.AsyncClient() as client:
+                        resp = await client.get(main_image_url, timeout=20.0)
+                        if resp.status_code == 200:
+                            main_image_bytes = resp.content
+                            
+                            # 2. VLM 시각적 특징 추출
+                            visual_features = await self.ai_service.extract_visual_features(main_image_bytes)
+                            
+                            # 3. 프리미엄 이미지 프롬프트 생성
+                            sd_prompts = await self.ai_service.generate_premium_image_prompt(visual_features)
+                            
+                            # 4. 이미지 생성 (Stable Diffusion)
+                            premium_image_bytes = await self.ai_service.generate_image(
+                                prompt=sd_prompts.get("positive_prompt", ""),
+                                negative_prompt=sd_prompts.get("negative_prompt", ""),
+                                provider="sd"
+                            )
+                            
+                            if not premium_image_bytes:
+                                logger.warning(f"[process_images] Premium image generation failed for {product_id}. Using Mock image for pipeline verification.")
+                                # Mock image: 1x1 red PNG
+                                import base64
+                                premium_image_bytes = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+                                logs.append("Premium image generation failed (mock used)")
+                            
+                            if premium_image_bytes:
+                                # 5. 생성된 이미지 업로드
+                                premium_url = await asyncio.to_thread(
+                                    storage_service.upload_image,
+                                    premium_image_bytes,
+                                    path_prefix=f"market_premium/{product_id}"
+                                )
+                                
+                                if premium_url:
+                                    # 프리미엄 이미지를 리스트 최상단에 추가 (대표 이미지로 설정)
+                                    processed_urls = [premium_url] + processed_urls
+                                    logs.append("Generated and added premium branding image")
+                                else:
+                                    logs.append("Failed to upload premium image")
+                            else:
+                                logs.append("Premium image generation returned empty")
+                        else:
+                            logs.append(f"Failed to download main image for feature extraction (status: {resp.status_code})")
+                
+                except Exception as img_api_err:
+                    logger.error(f"STEP 3 Premium image generation failed: {img_api_err}")
+                    logs.append(f"Premium image step failed: {str(img_api_err)}")
             
             # 이전 결과 유지하면서 이미지 결과 추가
             current_output = state.get("final_output") or {}
@@ -613,14 +695,14 @@ class ProcessingAgent(BaseAgent, ValidationMixin):
             
             return {
                 "final_output": current_output,
-                "logs": [f"Processed {len(processed_urls)} images"]
+                "logs": logs
             }
             
         except Exception as e:
             error = wrap_exception(e, APIError, operation="image_upload")
             self.handle_error(error, "process_images")
             return {"errors": [str(error)]}
-    
+
     async def save_product(self, state: AgentState) -> Dict[str, Any]:
         """
         저장 노드

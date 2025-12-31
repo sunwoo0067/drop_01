@@ -251,4 +251,54 @@ class SmartStoreClient:
             logger.error(f"SmartStore delete_product error: {e}")
             return 500, {"message": str(e)}
 
-    # 향후 등록(POST), 수정(PATCH) 등 추가 예정
+    # --------------------------------------------------------------------------
+    # CS API (Customer Inquiry)
+    # --------------------------------------------------------------------------
+
+    def get_customer_inquiries(
+        self, 
+        answered: Optional[bool] = None, 
+        start_datetime: Optional[str] = None, 
+        end_datetime: Optional[str] = None,
+        page: int = 1,
+        size: int = 50
+    ) -> Dict[str, Any]:
+        """
+        고객 문의 목록 조회
+        
+        Args:
+            answered: 답변 여부 필터
+            start_datetime: 조회 시작일시 (ISO 8601)
+            end_datetime: 조회 종료일시 (ISO 8601)
+        """
+        url = "https://api.commerce.naver.com/external/v1/customer-inquiries"
+        params = {
+            "page": page,
+            "size": size
+        }
+        if answered is not None:
+            params["isAnswered"] = "true" if answered else "false"
+        if start_datetime:
+            params["startSearchDate"] = start_datetime
+        if end_datetime:
+            params["endSearchDate"] = end_datetime
+            
+        try:
+            resp = requests.get(url, headers=self._get_headers(), params=params)
+            return resp.json()
+        except Exception as e:
+            logger.error(f"SmartStore get_customer_inquiries error: {e}")
+            return {"contents": [], "totalElements": 0}
+
+    def answer_customer_inquiry(self, inquiry_id: str, content: str) -> Dict[str, Any]:
+        """고객 문의 답변 등록"""
+        url = f"https://api.commerce.naver.com/external/v1/customer-inquiries/{inquiry_id}/replies"
+        payload = {
+            "comment": content
+        }
+        try:
+            resp = requests.post(url, headers=self._get_headers(), json=payload)
+            return resp.json()
+        except Exception as e:
+            logger.error(f"SmartStore answer_customer_inquiry error: {e}")
+            return {"error": str(e)}
