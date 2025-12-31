@@ -10,6 +10,7 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from app.models import SourceBase, DropshipBase, MarketBase
+import app.models_analytics
 from app.settings import settings
 
 # Mapping of database name to (Metadata, URL)
@@ -28,6 +29,11 @@ def run_migrations_offline() -> None:
     # To run for a specific db, one might need CLI args, but here we run all.
     
     for name, info in db_info.items():
+        def include_object(object, name, type_, reflected, compare_to):
+            if type_ == "table":
+                return name in info["metadata"].tables
+            return True
+
         context.configure(
             url=info["url"],
             target_metadata=info["metadata"],
@@ -36,6 +42,7 @@ def run_migrations_offline() -> None:
             version_table=f"alembic_version_{name}", # Separate version table per DB
             upgrade_token=f"{name}_upgrades",
             downgrade_token=f"{name}_downgrades",
+            include_object=include_object,
         )
         
         with context.begin_transaction():
@@ -52,12 +59,18 @@ def run_migrations_online() -> None:
         engine = create_engine(info["url"], poolclass=pool.NullPool)
 
         with engine.connect() as connection:
+            def include_object(object, name, type_, reflected, compare_to):
+                if type_ == "table":
+                    return name in info["metadata"].tables
+                return True
+
             context.configure(
                 connection=connection,
                 target_metadata=info["metadata"],
                 version_table=f"alembic_version_{name}", # Separate version table per DB
                 upgrade_token=f"{name}_upgrades",
                 downgrade_token=f"{name}_downgrades",
+                include_object=include_object,
             )
 
             with context.begin_transaction():

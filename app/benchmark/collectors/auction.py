@@ -32,7 +32,7 @@ class AuctionBenchmarkCollector:
         )
 
         html = ""
-        if settings.ownerclan_use_sef_proxy:
+        if settings.ownerclan_use_self_proxy:
             status, html = await self._saver._fetch_via_proxy(url)
             if status != 200:
                 logger.error(f"옥션 베스트 수집 실패 (Proxy): HTTP {status} (url={url})")
@@ -108,7 +108,7 @@ class AuctionBenchmarkCollector:
         html = ""
         blocked_reason: str | None = None
         
-        if settings.ownerclan_use_sef_proxy:
+        if settings.ownerclan_use_self_proxy:
             status, html = await self._saver._fetch_via_proxy(url)
             if status != 200:
                 logger.error(f"옥션 상세 수집 실패 (Proxy): HTTP {status} (url={url})")

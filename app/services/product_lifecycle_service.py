@@ -6,7 +6,7 @@
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
@@ -244,7 +244,7 @@ class ProductLifecycleService:
 
         # 상품 단계 업데이트
         product.lifecycle_stage = "STEP_2"
-        product.lifecycle_stage_updated_at = datetime.now()
+        product.lifecycle_stage_updated_at = datetime.now(timezone.utc)
 
         self.db.add(lifecycle)
         self.db.commit()
@@ -288,7 +288,7 @@ class ProductLifecycleService:
 
         # 상품 단계 업데이트
         product.lifecycle_stage = "STEP_3"
-        product.lifecycle_stage_updated_at = datetime.now()
+        product.lifecycle_stage_updated_at = datetime.now(timezone.utc)
 
         self.db.add(lifecycle)
         self.db.commit()
@@ -437,7 +437,7 @@ class ProductLifecycleService:
             "total_revenue": product.total_revenue,
             "avg_customer_value": product.avg_customer_value,
             "lifecycle_stage": product.lifecycle_stage,
-            "snapshot_at": datetime.now().isoformat()
+            "snapshot_at": datetime.now(timezone.utc).isoformat()
         }
 
     def _resolve_category_label(self, product: Product) -> str:
@@ -496,14 +496,14 @@ class ProductLifecycleService:
         first_order_date = self.db.execute(stmt).scalar()
 
         if first_order_date:
-            return (datetime.now() - first_order_date).days
+            return (datetime.now(timezone.utc) - first_order_date).days
         return 0
 
     def _get_days_in_stage(self, product: Product, stage: str) -> int:
         """특정 단계 체류 일수 계산"""
         if not product.lifecycle_stage_updated_at:
             return 0
-        return (datetime.now() - product.lifecycle_stage_updated_at).days
+        return (datetime.now(timezone.utc) - product.lifecycle_stage_updated_at).days
 
     def _get_next_transition_sequence(self, product_id: uuid.UUID) -> int:
         """다음 전환 순서 번호 가져오기"""

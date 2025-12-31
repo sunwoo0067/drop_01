@@ -24,135 +24,77 @@ from app.models import (
 from app.ownerclan_client import OwnerClanClient
 from app.settings import settings
 from app.services.detail_html_normalizer import normalize_ownerclan_html
+from app.services.ownerclan_utils import (
+    OwnerClanJobResult,
+    _parse_ownerclan_datetime,
+    _sanitize_json,
+    get_primary_ownerclan_account,
+    _get_ownerclan_access_token,
+    upsert_sync_state,
+    get_sync_state,
+)
 
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class OwnerClanJobResult:
-    processed: int
-
-
-def _parse_ownerclan_datetime(value: Any) -> datetime | None:
-    if value is None:
-        return None
-
-    if isinstance(value, (int, float)):
-        ts = float(value)
-        if ts > 10_000_000_000:
-            ts = ts / 1000.0
-        return datetime.fromtimestamp(ts, tz=timezone.utc)
-
-    if isinstance(value, str):
-        s = value.strip()
-        if not s:
-            return None
-        if s.endswith("Z"):
-            s = s[:-1] + "+00:00"
-        try:
-            return datetime.fromisoformat(s)
-        except ValueError:
-            return None
-
-    return None
-
-
-def _sanitize_json(value: Any) -> Any:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return value.replace("\x00", "")
-    if isinstance(value, list):
-        return [_sanitize_json(v) for v in value]
-    if isinstance(value, dict):
-        return {k: _sanitize_json(v) for k, v in value.items()}
-    return value
-
-
-def get_primary_ownerclan_account(session: Session, user_type: str = "seller") -> SupplierAccount:
-    user_type = (user_type or "seller").strip().lower()
-
-    account = (
-        session.query(SupplierAccount)
-        .filter(SupplierAccount.supplier_code == "ownerclan")
-        .filter(SupplierAccount.user_type == user_type)
-        .filter(SupplierAccount.is_primary.is_(True))
-        .filter(SupplierAccount.is_active.is_(True))
-        .one_or_none()
-    )
-
-    if account:
-        return account
-
-    # fallback: primary가 아니더라도 active 계정이 있으면 사용
-    account = (
-        session.query(SupplierAccount)
-        .filter(SupplierAccount.supplier_code == "ownerclan")
-        .filter(SupplierAccount.user_type == user_type)
-        .filter(SupplierAccount.is_active.is_(True))
-        .order_by(SupplierAccount.updated_at.desc())
-        .first()
-    )
-
-    if not account:
-        raise RuntimeError(f"오너클랜 {user_type} 계정이 설정되어 있지 않습니다")
-
-    return account
-
-
-def _get_ownerclan_access_token(session: Session, user_type: str = "seller") -> tuple[uuid.UUID, str]:
-    account = get_primary_ownerclan_account(session, user_type=user_type)
-    return account.id, account.access_token
-
-
-def upsert_sync_state(session: Session, sync_type: str, watermark_ms: int | None, cursor: str | None) -> None:
-    nil_account_id = uuid.UUID(int=0)
-    stmt = insert(SupplierSyncState).values(
-        supplier_code="ownerclan",
-        sync_type=sync_type,
-        account_id=nil_account_id,
-        watermark_ms=watermark_ms,
-        cursor=cursor,
-    )
-
-    stmt = stmt.on_conflict_do_update(
-        index_elements=["supplier_code", "sync_type", "account_id"],
-        set_={
-            "watermark_ms": watermark_ms,
-            "cursor": cursor,
-            "updated_at": datetime.now(timezone.utc),
-        },
-    )
-
-    session.execute(stmt)
-
-
-def get_sync_state(session: Session, sync_type: str) -> SupplierSyncState | None:
-    nil_account_id = uuid.UUID(int=0)
-    return (
-        session.query(SupplierSyncState)
-        .filter(SupplierSyncState.supplier_code == "ownerclan")
-        .filter(SupplierSyncState.sync_type == sync_type)
-        .filter(SupplierSyncState.account_id == nil_account_id)
-        .one_or_none()
-    )
 
 
 def run_ownerclan_job(session: Session, job: SupplierSyncJob) -> OwnerClanJobResult:
+    """
+    OwnerClan 동기화 작업 디스패처.
+    
+    Bridge 패턴 적용: "useHandler" 파라미터가 True이면 OwnerClanItemSyncHandler를 사용하고,
+    아니면 기존 로직을 그대로 실행하여 하위 호환 보장.
+    """
+    # 2️⃣ useHandler 기본값 확인 (파라미터 없으면 settings 기본값, 그마저도 없으면 False)
+    use_handler = bool((job.params or {}).get("useHandler", settings.ownerclan_use_handler))
+    
+    # 1️⃣ job_type 분기 구조 유지
     if job.job_type == "ownerclan_items_raw":
-        return sync_ownerclan_items_raw(session, job)
-
+        if use_handler:
+            # 3️⃣ handler import 위치 (함수 내부 local import)
+            from app.ownerclan_sync_handler import OwnerClanItemSyncHandler
+            
+            # 신규 핸들러 사용을 위한 클라이언트 생성
+            _, access_token = _get_ownerclan_access_token(session, user_type="seller")
+            client = OwnerClanClient(
+                auth_url=settings.ownerclan_auth_url,
+                api_base_url=settings.ownerclan_api_base_url,
+                graphql_url=settings.ownerclan_graphql_url,
+                access_token=access_token,
+            )
+            
+            handler = OwnerClanItemSyncHandler(
+                session=session,
+                job=job,
+                client=client
+            )
+            
+            # 4️⃣ commit / rollback은 핸들러 또는 호출부 책임 (run_ownerclan_job 내부 제거)
+            # 5️⃣ return 타입 처리 (OwnerClanJobResult 계약 유지)
+            result = handler.sync()
+            if isinstance(result, OwnerClanJobResult):
+                return result
+            # handler가 int 또는 다른 구조를 반환할 경우를 대비한 래핑
+            return OwnerClanJobResult(processed=int(result))
+        else:
+            # useHandler=False 시 기존 legacy 경로 (items_raw)
+            return sync_ownerclan_items_raw(session, job)
+            
+    # items / orders / qna / categories 모두 존재 확인
     if job.job_type == "ownerclan_orders_raw":
         return sync_ownerclan_orders_raw(session, job)
-
+        
     if job.job_type == "ownerclan_qna_raw":
         return sync_ownerclan_qna_raw(session, job)
-
+        
     if job.job_type == "ownerclan_categories_raw":
         return sync_ownerclan_categories_raw(session, job)
+        
+    raise ValueError(f"지원하지 않는 작업 유형입니다: {job.job_type}")
 
-    raise RuntimeError(f"지원하지 않는 job_type 입니다: {job.job_type}")
+
 
 
 def sync_ownerclan_orders_raw(session: Session, job: SupplierSyncJob) -> OwnerClanJobResult:

@@ -10,6 +10,8 @@ import ProductPerformanceTable from "@/components/analytics/ProductPerformanceTa
 import ProductOptionPerformanceTable from "@/components/analytics/ProductOptionPerformanceTable";
 import SourcingRecommendationDashboard from "@/components/analytics/SourcingRecommendationDashboard";
 import ChannelExpansionDashboard from "@/components/analytics/ChannelExpansionDashboard";
+import PricingAnalyticsDashboard from "@/components/analytics/PricingAnalyticsDashboard";
+import PricingRecommendationTable from "@/components/analytics/PricingRecommendationTable";
 
 export default function AnalyticsPage() {
     const [selectedProduct, setSelectedProduct] = useState<{ id: string, name: string } | null>(null);
@@ -60,10 +62,38 @@ export default function AnalyticsPage() {
 
             {/* Sales Summary Cards */}
             {showCharts && (
-                <div className="px-4">
+                <div className="px-4 space-y-4">
                     <SalesSummaryCards />
+                    <PricingAnalyticsDashboard />
                 </div>
             )}
+
+            {/* Pricing Recommendations Section */}
+            <div className="px-4">
+                <Card className="border border-border border-l-4 border-l-primary/50">
+                    <CardHeader
+                        className="flex flex-row items-center justify-between pb-2 cursor-pointer"
+                        onClick={() => toggleSection("pricing-recommendations")}
+                    >
+                        <div className="flex flex-col">
+                            <CardTitle className="text-xs">가격 정책 실시간 권고 (Enforce Lite)</CardTitle>
+                            <span className="text-[10px] text-muted-foreground">Shadow 모니터링 및 수익성 최적화 제안</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-muted-foreground font-medium bg-primary/10 text-primary px-1.5 py-0.5 rounded">NEW</span>
+                            <span className="text-[10px] text-muted-foreground">
+                                {expandedSection === "pricing-recommendations" ? "접기" : "펼치기"}
+                            </span>
+                            {expandedSection === "pricing-recommendations" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                        </div>
+                    </CardHeader>
+                    <CardContent>
+                        <div className={`transition-all ${expandedSection === "pricing-recommendations" || expandedSection === null ? "block" : "hidden"}`}>
+                            <PricingRecommendationTable />
+                        </div>
+                    </CardContent>
+                </Card>
+            </div>
 
             {/* Product Performance */}
             <div className="px-4">

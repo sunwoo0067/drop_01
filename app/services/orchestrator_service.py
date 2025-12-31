@@ -17,6 +17,7 @@ from app.services.ai.exceptions import (
     wrap_exception
 )
 from app.services.lifecycle_scheduler import get_lifecycle_scheduler
+from app.services.analytics.dynamic_pricing_service import DynamicPricingService
 
 from app.models import OrchestrationEvent, Product, MarketAccount, SupplierItemRaw, SourcingCandidate, SystemSetting, OrderItem, Order
 
@@ -31,6 +32,7 @@ class OrchestratorService:
         self.sourcing_service = SourcingService(db)
         self.processing_service = ProcessingService(db)
         self.market_service = MarketService(db)
+        self.dynamic_pricing_service = DynamicPricingService(db)
 
     def _record_event(self, step: str, status: str, message: str = None, details: dict = None):
         """
@@ -126,35 +128,77 @@ class OrchestratorService:
             season_name = strategy.get('season_name')
             theme = strategy.get('strategy_theme')
             
-            # 1.1 Meta-Strategy Drift Detection (v1.4.0)
+            # 1.1 Meta-Strategy Drift Detection (v1.5.0 Multi-Market)
             from app.services.analytics.strategy_drift import StrategyDriftDetector
             from app.services.analytics.policy_simulator import PolicySimulatorService
+            from app.models import MarketAccount
             
-            strategy_health = StrategyDriftDetector.analyze_global_strategy_health(self.db, days=14)
-            simulation_report = PolicySimulatorService.simulate_strategy_change(self.db, strategy_health)
+            # 활성 마켓 목록 가져오기 (쿠팡, 네이버 등)
+            active_markets = self.db.execute(
+                select(MarketAccount.market_code).where(MarketAccount.is_active == True).distinct()
+            ).scalars().all()
             
-            # Capital Allocation Engine (v1.4.0): 전략 건강 상태에 따른 동적 쿼터 조정
-            if strategy_health["should_pivot"]:
-                original_limit = listing_limit
-                # 위험 감지 시 쿼터를 50%로 축소 (자본 보호)
-                listing_limit = int(listing_limit * 0.5)
-                logger.warning(f"Strategy Pivot Alert: {strategy_health['message']} (Limiting Quota: {original_limit} -> {listing_limit})")
+            if not active_markets:
+                active_markets = ["COUPANG"]
+            
+            market_reports = {}
+            total_roi_score = 0
+            
+            for m_code in active_markets:
+                # 각 마켓별 건강 상태 및 시뮬레이션 리포트 생성
+                m_health = StrategyDriftDetector.analyze_global_strategy_health(self.db, days=14, market_code=m_code)
+                m_simulation = PolicySimulatorService.simulate_strategy_change(self.db, m_health)
                 
-                # 시뮬레이션 결과와 함께 이벤트 기록
-                self._record_event(
-                    "STRATEGY_PIVOT", 
-                    strategy_health["severity"], 
-                    f"{strategy_health['message']} (예상 손실 방지: {simulation_report['comparison']['proposed']['avoided_loss']:,}원)", 
-                    {"health": strategy_health, "simulation": simulation_report}
-                )
-            else:
-                # 건강할 경우 ROI 성과에 따라 최대 20%까지 쿼터 증액 (모멘텀 투자)
-                if strategy_health["current_roi"] > 0.2:
-                    listing_limit = int(listing_limit * 1.2)
-                    logger.info(f"Strategy Momentum: ROI {strategy_health['current_roi']:.2f} detected. Boosting Quota to {listing_limit}")
+                # 마켓별 자본 배분을 위한 성과 점수 계산 (ROI + 가중치)
+                # ROI가 높을수록, 리스크가 적을수록 더 많은 쿼터를 배분받음
+                score = max(0.01, m_health["current_roi"] + 0.1) # 최소값 보장
+                if m_health["should_pivot"]:
+                    score *= 0.2 # 피벗 대상 마켓은 자본 투입 최소화 (80% 감축)
+                
+                market_reports[m_code] = {
+                    "health": m_health,
+                    "simulation": m_simulation,
+                    "roi_score": score
+                }
+                total_roi_score += score
 
-            logger.info(f"Today's Strategy: {season_name} - {theme} (Listing Limit: {listing_limit}, Keyword Limit: {keyword_limit})")
-            self._record_event("PLANNING", "SUCCESS", f"전략 수립 완료: {season_name} ({theme}) [Limit: {listing_limit}]", {**strategy, "strategy_health": strategy_health, "simulation": simulation_report})
+            # 마켓별 동적 등록 쿼터(Quota) 배분
+            market_quotas = {}
+            quota_log_msg = []
+            for m_code, report in market_reports.items():
+                share = report["roi_score"] / total_roi_score
+                m_quota = int(listing_limit * share)
+                market_quotas[m_code] = m_quota
+                quota_log_msg.append(f"{m_code}: {m_quota}건 ({share:.1%})")
+                
+            # (v1.5.0) 실제 쿼터를 시스템 설정에 저장하여 워커가 참고하도록 함
+            orchestrator_setting = self.db.query(SystemSetting).filter_by(key="orchestrator").one_or_none()
+            if orchestrator_setting:
+                val = dict(orchestrator_setting.value) if orchestrator_setting.value else {}
+                val["market_quotas"] = market_quotas
+                orchestrator_setting.value = val
+                self.db.commit()
+            
+            # 전체 전략 요약 (대표 마켓 또는 전역 기준)
+            primary_health = market_reports.get("COUPANG", list(market_reports.values())[0])["health"]
+            primary_sim = market_reports.get("COUPANG", list(market_reports.values())[0])["simulation"]
+
+            logger.info(f"Cross-Market Capital Allocation: {', '.join(quota_log_msg)}")
+            
+            # (v1.5.0) 실제 쿼터를 마켓별로 분산 적용하기 위해 listing_limit 재설치
+            # 여기서는 편의상 총합을 유지하되 로그로 배분 상황 기록
+            logger.info(f"Today's Strategy: {season_name} - {theme} (Total Limit: {listing_limit})")
+            
+            self._record_event(
+                "PLANNING", 
+                "SUCCESS", 
+                f"전략 수립 및 자본 배분 완료: {season_name} [총 {listing_limit}건]", 
+                {
+                    **strategy, 
+                    "market_quotas": market_quotas,
+                    "market_reports": market_reports
+                }
+            )
             
             # 2. Optimization: 비인기/오프시즌 상품 정리
             self._record_event("OPTIMIZATION", "START", "비인기 상품 정리를 시작합니다.")
@@ -181,6 +225,9 @@ class OrchestratorService:
                         self._record_event("OPTIMIZATION", "FAIL", f"상품 삭제 실패: {item['market_item_id']}")
 
             self._record_event("OPTIMIZATION", "SUCCESS", f"상품 정리 완료 ({cleanup_count}개 삭제)")
+
+            # 2.1 Pricing Optimization: 고도화된 AI 동적 가격 책정
+            await self.run_dynamic_pricing(dry_run=dry_run)
 
             # 2.5 Supplier Sync: 공급사 전체 상품 수집 (백그라운드)
             if not dry_run:
@@ -390,6 +437,63 @@ class OrchestratorService:
             self._record_event("COMPLETE", "FAIL", f"데일리 오케스트레이션 실패: {str(e)[:50]}")
             return None
 
+    async def run_dynamic_pricing(self, dry_run: bool = True):
+        """
+        AI Dynamic Pricing 단계를 실행합니다.
+        성과가 있는 상품(STEP 2, 3)을 대상으로 최적의 가격을 산출하고 적용합니다.
+        """
+        try:
+            self._record_event("PRICING", "START", "AI 동적 가격 최적화를 시작합니다.")
+            
+            # 전략 상품(STEP 2, 3) 위주로 선정
+            stmt = (
+                select(MarketListing)
+                .join(Product, MarketListing.product_id == Product.id)
+                .where(Product.lifecycle_stage.in_(["STEP_2", "STEP_3"]))
+                .where(MarketListing.status == "ACTIVE")
+                .limit(50) # 일일 제한
+            )
+            listings = self.db.scalars(stmt).all()
+            
+            if not listings:
+                self._record_event("PRICING", "SUCCESS", "등록된 전략 상품이 없어 가격 최적화를 건너뜁니다.")
+                return
+
+            updated_count = 0
+            for listing in listings:
+                try:
+                    # AI 가격 제안 요청
+                    suggestion = await self.dynamic_pricing_service.suggest_agent_price(listing.id)
+                    
+                    if suggestion.get("status") == "success":
+                        suggested_price = suggestion["suggest_price"]
+                        current_price = suggestion.get("original_price", 0)
+                        
+                        if suggested_price != current_price:
+                            if dry_run:
+                                logger.info(f"[DRY-RUN] Update price for listing {listing.id}: {current_price} -> {suggested_price}")
+                                self._record_event("PRICING", "IN_PROGRESS", f"[테스트] {listing.id} 가격 변경 제안: {suggested_price}원 ({suggestion['strategy']})")
+                            else:
+                                # 실제 마켓 가격 업데이트
+                                m_code = listing.market_account.market_code
+                                acc_id = listing.market_account_id
+                                item_id = listing.market_item_id
+                                
+                                success, msg = self.market_service.update_price(m_code, acc_id, item_id, suggested_price)
+                                if success:
+                                    updated_count += 1
+                                    self._record_event("PRICING", "IN_PROGRESS", f"가격 업데이트 완료: {listing.id} -> {suggested_price}원")
+                                else:
+                                    logger.error(f"Failed to update price for {listing.id}: {msg}")
+                except Exception as e:
+                    logger.error(f"Failed to update price for listing {listing.id}: {e}")
+                    
+            self._record_event("PRICING", "SUCCESS", f"가격 최적화 프로세스 완료 ({updated_count}건 업데이트)")
+            
+        except Exception as e:
+            logger.error(f"Dynamic pricing step failed: {e}")
+            self._record_event("PRICING", "FAIL", f"Error during pricing step: {str(e)}")
+
     async def run_continuous_processing(self):
         """
         [병력화] PENDING 상태인 상품을 지속적으로 찾아 AI 가공을 수행합니다.
@@ -465,12 +569,35 @@ class OrchestratorService:
                         break
                     listing_batch_limit = setting.value.get("listing_batch_limit", 100)
                     listing_concurrency = setting.value.get("listing_concurrency", 5)
-
+                    
+                    # 쿼터 정보 로드 (v1.5.0)
+                    market_quotas = setting.value.get("market_quotas", {})
+                    
                     # 활성 계정 조회
                     stmt_acc = select(MarketAccount).where(MarketAccount.is_active == True)
-                    accounts = db.scalars(stmt_acc).all()
-                    if not accounts:
-                        logger.warning("No active market accounts. Continuous listing waiting...")
+                    all_accounts = db.scalars(stmt_acc).all()
+                    
+                    # 각 마켓별 오늘 등록된 상품 수 집계 및 쿼터 체크
+                    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+                    active_accounts = []
+                    for acc in all_accounts:
+                        quota = market_quotas.get(acc.market_code, 999999)
+                        
+                        # 오늘 등록 수 집계
+                        listed_today = db.execute(
+                            select(func.count(MarketListing.id))
+                            .where(MarketListing.market_account_id == acc.id)
+                            .where(MarketListing.linked_at >= today_start)
+                        ).scalar() or 0
+                        
+                        if listed_today < quota:
+                            active_accounts.append(acc)
+                            logger.debug(f"Market {acc.market_code} ({acc.id}): {listed_today}/{quota} used. Active.")
+                        else:
+                            logger.info(f"Market {acc.market_code} ({acc.id}): Quota reached ({listed_today}/{quota}). Skipping.")
+                            
+                    if not active_accounts:
+                        logger.warning("All market quotas reached or no active accounts. Continuous listing waiting...")
                         await asyncio.sleep(60)
                         continue
                     
@@ -492,11 +619,12 @@ class OrchestratorService:
                     
                     async def _task(idx, p_id):
                         async with register_sem:
+                            # 쿼터 유효 계정 중에서 순환 선택
                             def _sync_register():
                                 with session_factory() as tmp_db:
                                     from app.services.market_service import MarketService
                                     m_service = MarketService(tmp_db)
-                                    target_acc = accounts[idx % len(accounts)]
+                                    target_acc = active_accounts[idx % len(active_accounts)]
                                     try:
                                         return m_service.register_product(target_acc.market_code, target_acc.id, p_id)
                                     except:

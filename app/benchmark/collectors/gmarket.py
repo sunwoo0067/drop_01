@@ -29,7 +29,7 @@ class GmarketBenchmarkCollector:
         url = str(category_url).strip() if category_url else "https://www.gmarket.co.kr/n/best"
 
         html = ""
-        if settings.ownerclan_use_sef_proxy:
+        if settings.ownerclan_use_self_proxy:
             status, html = await self._saver._fetch_via_proxy(url)
             if status != 200:
                 logger.error(f"G마켓 베스트 수집 실패 (Proxy): HTTP {status} (url={url})")
@@ -113,7 +113,7 @@ class GmarketBenchmarkCollector:
             return {"detail_html": "", "image_urls": [], "raw_html": ""}
 
         html = ""
-        if settings.ownerclan_use_sef_proxy:
+        if settings.ownerclan_use_self_proxy:
             status, html = await self._saver._fetch_via_proxy(url)
             if status != 200:
                 logger.error(f"G마켓 상세 수집 실패 (Proxy): HTTP {status} (url={url})")
@@ -188,7 +188,7 @@ class GmarketBenchmarkCollector:
             if src and src != "about:blank":
                 iframe_url = urljoin(url, src)
                 iframe_html = ""
-                if settings.ownerclan_use_sef_proxy:
+                if settings.ownerclan_use_self_proxy:
                     status, iframe_html = await self._saver._fetch_via_proxy(iframe_url)
                     if status == 200 and iframe_html.strip():
                         iframe_soup = BeautifulSoup(iframe_html, "html.parser")

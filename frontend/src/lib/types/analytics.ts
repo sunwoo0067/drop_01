@@ -126,6 +126,56 @@ export interface SalesTrend {
     data_points: SalesTrendDataPoint[];
 }
 
+export interface MarginTrendItem {
+    date: string;
+    avg_margin: number;
+    total_profit: number;
+    order_count: number;
+}
+
+export interface PricingSimulation {
+    pending_reco_count: number;
+    current_base_profit: number;
+    simulated_profit: number;
+    expected_lift: number;
+    lift_percentage: number;
+}
+
+export interface PricingRecommendation {
+    id: string;
+    product_id: string;
+    product_name?: string;
+    market_account_id: string;
+    current_price: number;
+    recommended_price: number;
+    expected_margin?: number;
+    confidence: number;
+    reasons?: string[];
+    status: string;
+    created_at: string;
+}
+
+export interface PricingSettings {
+    market_account_id: string;
+    auto_mode: string;
+    confidence_threshold: number;
+    max_changes_per_hour: number;
+    cooldown_hours: number;
+}
+
+export interface ThrottleStatus {
+    usage: number;
+    limit: number;
+    name: string;
+}
+
+export interface AutomationStats {
+    total_recommendations: number;
+    pending_count: number;
+    applied_24h: number;
+    throttle_status: Record<string, ThrottleStatus>;
+}
+
 // ============================================================================
 // 소싱 추천 타입
 // ============================================================================

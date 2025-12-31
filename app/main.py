@@ -26,7 +26,7 @@ from app.ownerclan_client import OwnerClanClient
 from app.ownerclan_sync import start_background_ownerclan_job
 from app.session_factory import session_factory
 from app.settings import settings
-from app.api.endpoints import sourcing, products, coupang, settings as settings_endpoint, suppliers as suppliers_endpoint, benchmarks, market, benchmark_streams, orchestration, health, analytics, recommendations, lifecycle, kpi
+from app.api.endpoints import sourcing, products, coupang, settings as settings_endpoint, suppliers as suppliers_endpoint, benchmarks, market, benchmark_streams, orchestration, health, analytics, recommendations, lifecycle, kpi, admin
 from app.schemas.product import ProductResponse
 
 app = FastAPI()
@@ -60,6 +60,7 @@ app.include_router(coupang_dashboard.router, prefix="/api/coupang/dashboard", ta
 app.include_router(sourcing_recommendations.router, prefix="/api/coupang/sourcing", tags=["Coupang Recommendations"])
 app.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback Loop"])
 app.include_router(strategy.router, prefix="/api/strategy", tags=["Strategic Autonomy"])
+app.include_router(admin.router, prefix="/api/admin", tags=["Admin Dashboard"])
 
 
 # Next.js(/api/products) 경로 정규화로 인해 백엔드가 /api/products → /api/products/ 로 307 redirect를 내보내면
@@ -197,43 +198,28 @@ async def upload_image(file: UploadFile = File(...)) -> dict:
 
 
 @app.post("/ownerclan/accounts/primary")
-def set_ownerclan_primary_account(
-    payload: OwnerClanPrimaryAccountIn, 
-    session: Session = Depends(get_session)
+def _enqueue_ownerclan_job(job_type: str, params: dict, session: Session) -> dict:
+    """OwnerClan 동기화 작업 큐잉 (private helper)."""
+    job = SupplierSyncJob(
+        supplier_code="ownerclan",
+        job_type=job_type,
+        status="queued",
+        params=params
+    )
+    session.add(job)
+    session.flush()
+    return {"jobId": str(job.id)}
+
+
+@app.post("/sync/ownerclan/items")
+def sync_ownerclan_items(
+    payload: OwnerClanSyncRequestIn,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
 ) -> dict:
-    """오너클랜 대표계정 설정 (서비스 호출 버전)."""
-    user_type = payload.user_type or settings.ownerclan_primary_user_type
-    username = payload.username or settings.ownerclan_primary_username
-    password = payload.password or settings.ownerclan_primary_password
-    
-    if not username or not password:
-        raise HTTPException(status_code=400, detail="오너클랜 대표계정이 설정되어 있지 않습니다(.env OWNERCLAN_PRIMARY_USERNAME/PASSWORD)")
-    
-    try:
-        account = SupplierAccountService.set_ownerclan_primary_account(
-            session=session,
-            user_type=user_type,
-            username=username,
-            password=password
-        )
-        session.commit()
-        
-        result = OwnerClanPrimaryAccountResult(
-            account_id=str(account.id),
-            username=account.username,
-            token_expires_at=account.token_expires_at.isoformat() if account.token_expires_at else None
-        )
-        return result.model_dump()
-        
-    except ValueError as e:
-        session.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
-    except RuntimeError as e:
-        session.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        session.rollback()
-        raise HTTPException(status_code=500, detail=f"서버 오류: {e}")
+    result = _enqueue_ownerclan_job("ownerclan_items_raw", payload.params, session)
+    background_tasks.add_task(start_background_ownerclan_job, session_factory, uuid.UUID(result["jobId"]))
+    return result
 
 
 def _enqueue_ownerclan_job(job_type: str, params: dict, session: Session) -> dict:

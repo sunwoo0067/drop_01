@@ -60,7 +60,7 @@ class BenchmarkCollector:
         items = []
         html_content = ""
         
-        if settings.ownerclan_use_sef_proxy:
+        if settings.ownerclan_use_self_proxy:
             status, html_content = await self._fetch_via_proxy(url)
             if status != 200:
                 logger.error(f"벤치마크 랭킹 페이지 호출 실패 (Proxy): HTTP {status} ({url})")
@@ -139,7 +139,7 @@ class BenchmarkCollector:
         Fetches detail page content.
         """
         html_content = ""
-        if settings.ownerclan_use_sef_proxy:
+        if settings.ownerclan_use_self_proxy:
             status, html_content = await self._fetch_via_proxy(product_url)
             if status != 200:
                 logger.error(f"벤치마크 상세 페이지 호출 실패 (Proxy): HTTP {status} ({product_url})")

@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,7 +14,12 @@ class Settings(BaseSettings):
     ownerclan_api_base_url: str = "https://api.ownerclan.com"
     ownerclan_auth_url: str = "https://auth.ownerclan.com/auth"
     ownerclan_graphql_url: str = "https://api.ownerclan.com/v1/graphql"
-    ownerclan_use_sef_proxy: bool = True 
+    ownerclan_use_handler: bool = False # PR-3: 신규 핸들러 사용 여부
+    ownerclan_retry_count: int = 5 # tenacity 재시도 횟수
+    ownerclan_batch_commit_size: int = 200 # 배치 커밋 단위 (50~2000)
+
+    ownerclan_api_sleep: float = 0.5  # 페이지 간 대기 시간
+    ownerclan_api_sleep_loop: float = 1.0  # 루프 간 대기 시간
 
 
     ownerclan_primary_user_type: str = "seller"
@@ -116,8 +122,60 @@ class Settings(BaseSettings):
     cs_auto_approval_threshold: float = 0.85
     cs_auto_send_threshold: float = 0.90 # 자동 전송을 위한 최소 점수 (final_score 기준)
     enable_cs_partial_auto: bool = False # Shadow Mode -> Partial Auto 전환 스위치
+    cs_test_mode: bool = False # True이면 실제 마켓 API 전송을 방지 (테스트/개발용)
+    cs_test_mode_allowed_accounts: str = "" # 쉼표로 구분된 계정 ID (예: "uuid1,uuid2")
+    cs_test_mode_allowed_markets: str = "" # 쉼표로 구분된 마켓 코드 (예: "COUPANG,SMARTSTORE")
+    cs_allowed_intents: str = "" # 쉼표로 구분된 허용 의도 (예: "배송문의,사용법")
+    cs_lock_expiry_minutes: int = 10 # SENDING 락 만료 시간 (분)
+    cs_daily_quota_per_account: int = 10 # 일일 전송 쿼터 (계정별)
     daily_premium_image_quota: int = 50  # 일일 프리미엄 이미지 생성 한도
 
+    def get_allowed_accounts(self) -> list[str]:
+        """쉼표로 구분된 계정 ID를 리스트로 파싱"""
+        if not self.cs_test_mode_allowed_accounts:
+            return []
+        return [acc.strip() for acc in self.cs_test_mode_allowed_accounts.split(",") if acc.strip()]
+
+    def get_allowed_markets(self) -> list[str]:
+        """쉼표로 구분된 마켓 코드를 리스트로 파싱"""
+        if not self.cs_test_mode_allowed_markets:
+            return []
+        return [mkt.strip().upper() for mkt in self.cs_test_mode_allowed_markets.split(",") if mkt.strip()]
+
+    def get_allowed_intents(self) -> list[str]:
+        """쉼표로 구분된 허용 의도를 리스트로 파싱"""
+        if not self.cs_allowed_intents:
+            return []  # 빈 값 = 전체 허용
+        return [intent.strip() for intent in self.cs_allowed_intents.split(",") if intent.strip()]
+
+
+    @field_validator("source_database_url", "dropship_database_url", "market_database_url")
+    @classmethod
+    def validate_db_url(cls, v: str) -> str:
+        if v and not v.startswith("postgresql"):
+            raise ValueError("DB URL은 'postgresql'로 시작해야 합니다.")
+        return v
+
+    @field_validator("ownerclan_api_base_url", "ownerclan_auth_url", "ownerclan_graphql_url")
+    @classmethod
+    def validate_http_url(cls, v: str) -> str:
+        if not v.startswith(("http://", "https://")):
+            raise ValueError("URL은 'http://' 또는 'https://'로 시작해야 합니다.")
+        return v
+
+    @field_validator("ownerclan_api_sleep", "ownerclan_api_sleep_loop")
+    @classmethod
+    def validate_non_negative(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("대기 시간은 0 이상이어야 합니다.")
+        return v
+
+    @field_validator("ownerclan_batch_commit_size")
+    @classmethod
+    def validate_batch_size(cls, v: int) -> int:
+        if not 50 <= v <= 2000:
+            raise ValueError("batch_commit_size는 50에서 2000 사이여야 합니다.")
+        return v
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
 

@@ -1547,3 +1547,63 @@ class CoupangClient:
         """
         params = {"revenueRecognitionYearMonth": revenue_recognition_year_month}
         return self.get("/v2/providers/marketplace_openapi/apis/api/v1/settlement-histories", params)
+
+    # --------------------------------------------------------------------------
+    # 5. CS/문의 API (Customer Inquiry/QnA API)
+    # --------------------------------------------------------------------------
+
+    def get_customer_inquiries(
+        self,
+        vendor_id: str | None = None,
+        answered: bool | None = None,
+        inquiry_id: str | None = None,
+        next_token: str | None = None,
+        max_per_page: int = 50,
+        days: int = 7
+    ) -> tuple[int, dict[str, Any]]:
+        """
+        고객 문의 목록 조회
+        
+        Args:
+            answered: 답변 여부 필터 (None: 전체, True: 답변됨, False: 미답변)
+            inquiry_id: 특정 문의 ID 조회
+            days: 최근 N일간의 문의 조회 (기본 7일)
+        """
+        vid = (vendor_id or self._vendor_id).strip()
+        path = f"/v2/providers/openapi/apis/api/v4/vendors/{vid}/customer-inquiries"
+        
+        params: dict[str, Any] = {
+            "maxPerPage": max_per_page
+        }
+        
+        if answered is not None:
+            params["answered"] = "TRUE" if answered else "FALSE"
+        if inquiry_id:
+            params["inquiryId"] = inquiry_id
+            
+        # next_token이 있으면 추가
+        if next_token:
+            params["nextToken"] = next_token
+            
+        return self.get(path, params)
+
+    def get_customer_inquiry(self, inquiry_id: str, vendor_id: str | None = None) -> tuple[int, dict[str, Any]]:
+        """고객 문의 단건 상세 조회"""
+        vid = (vendor_id or self._vendor_id).strip()
+        path = f"/v2/providers/openapi/apis/api/v4/vendors/{vid}/customer-inquiries/{inquiry_id}"
+        return self.get(path)
+
+    def answer_customer_inquiry(self, inquiry_id: str, content: str, vendor_id: str | None = None) -> tuple[int, dict[str, Any]]:
+        """
+        고객 문의 답변 등록
+        
+        Args:
+            inquiry_id: 문의 ID
+            content: 답변 내용
+        """
+        vid = (vendor_id or self._vendor_id).strip()
+        path = f"/v2/providers/openapi/apis/api/v4/vendors/{vid}/customer-inquiries/{inquiry_id}/replies"
+        payload = {
+            "replyText": content
+        }
+        return self.post(path, payload)

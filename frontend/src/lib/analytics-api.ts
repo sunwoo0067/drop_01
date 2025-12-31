@@ -22,7 +22,13 @@ import type {
     UpdatePriceRequest,
     UpdatePriceResponse,
     ScalingRecommendation,
+    ScalingRecommendation,
     BulkAnalyticsResponse,
+    MarginTrendItem,
+    PricingSimulation,
+    PricingRecommendation,
+    PricingSettings,
+    AutomationStats,
 } from './types/analytics';
 
 // ============================================================================
@@ -161,6 +167,72 @@ export const analyticsAPI = {
      */
     updatePrice: async (request: UpdatePriceRequest): Promise<UpdatePriceResponse> => {
         const response = await api.post('/analytics/update-price', request);
+        return response.data;
+    },
+
+    /**
+     * 일자별 마진율 트렌드 조회 (Admin)
+     */
+    getMarginTrend: async (days: number = 30): Promise<MarginTrendItem[]> => {
+        const response = await api.get('/admin/analytics/margin-trend', {
+            params: { days },
+        });
+        return response.data;
+    },
+
+    /**
+     * 가격 권고 적용 시뮬레이션 조회 (Admin)
+     */
+    getPricingSimulation: async (): Promise<PricingSimulation> => {
+        const response = await api.get('/admin/analytics/simulation');
+        return response.data;
+    },
+};
+
+// ============================================================================
+// 가격 관리 API (Admin)
+// ============================================================================
+
+export const pricingAPI = {
+    /**
+     * 가격 권고 리스트 조회
+     */
+    getRecommendations: async (status: string = 'PENDING', limit: number = 50): Promise<PricingRecommendation[]> => {
+        const response = await api.get('/admin/pricing/recommendations', {
+            params: { status, limit },
+        });
+        return response.data;
+    },
+
+    /**
+     * 가격 권고 수동 승인 및 적용
+     */
+    applyRecommendation: async (recoId: string): Promise<{ success: boolean; message: string }> => {
+        const response = await api.post(`/admin/pricing/recommendations/${recoId}/apply`);
+        return response.data;
+    },
+
+    /**
+     * 계정별 가격 자동화 설정 조회
+     */
+    getSettings: async (accountId: string): Promise<PricingSettings> => {
+        const response = await api.get(`/admin/pricing/settings/${accountId}`);
+        return response.data;
+    },
+
+    /**
+     * 계정별 가격 자동화 설정 수정
+     */
+    updateSettings: async (accountId: string, updates: Partial<PricingSettings>): Promise<PricingSettings> => {
+        const response = await api.patch(`/admin/pricing/settings/${accountId}`, updates);
+        return response.data;
+    },
+
+    /**
+     * 가격 자동화 시스템 가동 현황 및 통계 조회
+     */
+    getStats: async (): Promise<AutomationStats> => {
+        const response = await api.get('/admin/pricing/stats');
         return response.data;
     },
 };
@@ -304,4 +376,5 @@ export const recommendationsAPI = {
 export const analyticsClient = {
     ...analyticsAPI,
     ...recommendationsAPI,
+    ...pricingAPI,
 };

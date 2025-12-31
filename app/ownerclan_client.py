@@ -103,7 +103,7 @@ class OwnerClanClient:
 
     def put(self, path: str, payload: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
         url = f"{self._api_base_url}{path}"
-        if settings.ownerclan_use_sef_proxy:
+        if settings.ownerclan_use_self_proxy:
             return self._call_via_proxy("PUT", url, payload=payload)
 
         headers: dict[str, str] = {"Content-Type": "application/json"}
@@ -128,7 +128,7 @@ class OwnerClanClient:
 
     def delete(self, path: str, payload: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
         url = f"{self._api_base_url}{path}"
-        if settings.ownerclan_use_sef_proxy:
+        if settings.ownerclan_use_self_proxy:
             return self._call_via_proxy("DELETE", url, payload=payload)
 
         headers: dict[str, str] = {"Content-Type": "application/json"}
@@ -160,7 +160,7 @@ class OwnerClanClient:
 
     def graphql(self, query: str, variables: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
         url = self._graphql_url
-        if settings.ownerclan_use_sef_proxy:
+        if settings.ownerclan_use_self_proxy:
             return self._call_via_proxy("POST", url, payload={"query": query, "variables": variables})
 
         headers: dict[str, str] = {"Content-Type": "application/json"}
@@ -210,7 +210,7 @@ class OwnerClanClient:
 
     def get(self, path: str, params: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
         url = f"{self._api_base_url}{path}"
-        if settings.ownerclan_use_sef_proxy:
+        if settings.ownerclan_use_self_proxy:
             return self._call_via_proxy("GET", url, params=params)
 
         headers: dict[str, str] = {}
@@ -234,7 +234,7 @@ class OwnerClanClient:
 
     def post(self, path: str, payload: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
         url = f"{self._api_base_url}{path}"
-        if settings.ownerclan_use_sef_proxy:
+        if settings.ownerclan_use_self_proxy:
             return self._call_via_proxy("POST", url, payload=payload)
 
         headers: dict[str, str] = {"Content-Type": "application/json"}

@@ -178,6 +178,7 @@ class AIService:
         category: str = "일반",
         market: str = "Coupang",
         examples: Optional[List[Dict[str, str]]] = None,
+        image_data: Optional[bytes] = None,
         provider: ProviderType = "auto"
     ) -> Dict[str, Any]:
         try:
@@ -186,7 +187,8 @@ class AIService:
             
             target_model = None
             if provider == "ollama" or (provider == "auto" and self.default_provider_name == "ollama"):
-                target_model = settings.ollama_logic_model
+                # 이미지가 있으면 비전 가능 모델, 없으면 로직 모델 사용
+                target_model = settings.ollama_vision_model if image_data else settings.ollama_logic_model
                 
             context_str = f"\nContext/Details: {context[:5000]}" if context else ""
             benchmark_str = f"\nBenchmark Product Name (Top Reference): {benchmark_name}" if benchmark_name else ""
@@ -231,10 +233,17 @@ class AIService:
             - 쿠팡 금지어(최고, 제일, 특가 등)는 제외할 것.
             - 불필요한 모델번호나 내부 코드는 삭제할 것.
             - 카테고리가 가전이면 '모델명/성능'을, 패션이면 '색상/사이즈'를 중요하게 다룰 것.
-            
-            결과는 JSON {{ "title": "...", "tags": [...] }} 형태로 반환해줘.
             """
-            return await target_provider.generate_json(prompt, model=target_model)
+            
+            if image_data:
+                prompt += """
+            - 함께 제공된 이미지를 분석하여 텍스트에 없는 시각적 특징(정확한 컬러, 재질, 형태, 구성품 등)을 상품명과 태그에 반영해줘.
+            """
+            
+            prompt += """
+            결과는 JSON { "title": "...", "tags": [...] } 형태로 반환해줘.
+            """
+            return await target_provider.generate_json(prompt, model=target_model, image_data=image_data)
         except Exception as e:
             wrapped_error = wrap_exception(e, AIError, provider=provider, prompt="optimize_seo")
             logger.error(f"optimize_seo failed: {wrapped_error}")
@@ -423,48 +432,54 @@ class AIService:
         return await target_provider.generate_reasoning(prompt, model=target_model)
 
     async def extract_visual_features(self, image_data: bytes, provider: ProviderType = "auto") -> Dict[str, Any]:
-        """Exract detailed visual features from product image for image generation."""
+        """Extract detailed visual features from product image for image generation."""
         target_provider = self._get_provider(provider)
         
-        prompt = """
-        Analyze the following product image and extract detailed visual features for high-quality image generation.
-        Focus on:
-        1. Primary and secondary colors (be specific, e.g., 'matte forest green').
-        2. Textures and materials (e.g., 'brushed aluminum', 'woven linen').
-        3. Design style (e.g., 'Scandinavian minimalism', 'industrial vintage').
-        4. Key visual components and their spatial relationships (relative positions or bounding box if possible).
-        5. Lighting and atmosphere currently present in the original image.
-
-        Return ONLY a valid JSON object.
-        """
-        return await target_provider.generate_json(prompt, image_data=image_data)
-
-    async def generate_premium_image_prompt(self, product_features: Dict[str, Any], benchmark_data: Optional[Dict[str, Any]] = None, provider: ProviderType = "auto") -> Dict[str, Any]:
-        """Generate high-quality SD prompt based on features and benchmark aesthetics."""
-        target_provider = self._get_provider(provider)
-        
-        # Use logic model for prompt engineering if using Ollama
+        # Use Qwen-VL or similar for detailed visual analysis if available on Ollama
         target_model = None
         if provider == "ollama" or (provider == "auto" and self.default_provider_name == "ollama"):
-            target_model = settings.ollama_logic_model
+            target_model = self.ollama.qwen_vl_model_name
 
-        benchmark_context = ""
-        if benchmark_data:
-            benchmark_context = f"\nBenchmark Aesthetics: {benchmark_data.get('visual_analysis', '')}"
+        prompt = """
+        Analyze the following product image and extract detailed visual features for premium image generation (Stable Diffusion).
+        Return ONLY a valid JSON object with:
+        1. primary_color: Specific color name (e.g., matte carbon black).
+        2. secondary_colors: List of other colors.
+        3. material_texture: Description of materials (e.g., brushed metal, premium leather).
+        4. design_style: Style category (e.g., luxury minimalism, ergonomic tech).
+        5. lighting_atmosphere: Current lighting (e.g., soft studio lighting, harsh outdoor sun).
+        6. key_components: Major parts of the product.
+        7. background_elements: What is currently in the background.
+        """
+        return await target_provider.generate_json(prompt, model=target_model, image_data=image_data)
+
+    async def generate_premium_image_prompt(self, visual_features: Dict[str, Any], benchmark_data: Optional[Dict[str, Any]] = None, provider: ProviderType = "auto") -> Dict[str, Any]:
+        """Generate high-quality SD prompt based on extracted features."""
+        target_provider = self._get_provider(provider)
+        
+        # Use logic model for prompt engineering
+        target_model = None
+        if provider == "ollama" or (provider == "auto" and self.default_provider_name == "ollama"):
+            target_model = self.ollama.logic_model_name
+
+        benchmark_context = f"\nBenchmark Aesthetics: {benchmark_data.get('visual_analysis', '')}" if benchmark_data else ""
 
         prompt = f"""
-        Based on the following product features and benchmark aesthetics, generate a highly detailed prompt for Stable Diffusion XL (SDXL) or Flux to create a premium, trustworthy product advertisement image.
-
-        Product Features: {product_features}
+        Based on the following visual features of a product, generate a high-end commercial photography prompt for Stable Diffusion XL (SDXL) or Flux to create a premium advertisement image.
+        
+        [Visual Features]
+        - Product Components: {visual_features.get('key_components')}
+        - Colors: {visual_features.get('primary_color')} ({', '.join(visual_features.get('secondary_colors') or [])})
+        - Material: {visual_features.get('material_texture')}
+        - Style: {visual_features.get('design_style')}
         {benchmark_context}
 
-        Instructions:
-        1. Focus on 'commercial photography', 'high-end product shot', 'studio lighting'.
-        2. Incorporate the lighting style and color palette from the benchmark aesthetics if provided.
-        3. Describe a realistic setting that enhances the product's perceived value (e.g., 'on a marble countertop with soft morning light').
-        4. Include technical keywords like '8k resolution', 'highly detailed texture', 'photorealistic', 'ray tracing'.
-        5. Avoid distorted text or shapes.
+        [Output Requirements]
+        - positive_prompt: Must be in English. Focus on 'commercial product photography', 'high-end studio lighting', '8k photorealistic', 'vibrant colors', 'clean background'. 
+        - negative_prompt: Must be in English. Avoid 'deformed', 'text', 'blurry', 'low quality'.
         
-        Return JSON with "positive_prompt" and "negative_prompt".
+        Example Output: {{ "positive_prompt": "commercial product shot of a carbon black ergonomic chair, soft studio lighting, high resolution...", "negative_prompt": "blurry, lowres..." }}
+        
+        Return ONLY a valid JSON object.
         """
         return await target_provider.generate_json(prompt, model=target_model)

@@ -199,12 +199,13 @@ class CSWorkflowAgent(BaseAgent, ValidationMixin):
             # v1.8.0: Partial Auto 전송 여부 결정 (Operational Gate)
             final_score = policy_metadata.get("final_score", 0.0)
             status = "HUMAN_REVIEW"
-            
+
             if can_automate:
-                # 1. 업무 시간 체크 (KST 09:00 ~ 18:00)
+                # 1. 업무 시간 체크 (KST 09:00 ~ 17:59:59)
+                # 경계값 수정: 18:00 포함하지 않음 (< 18:00)
                 kst = pytz.timezone('Asia/Seoul')
                 now_kst = datetime.now(kst).time()
-                is_business_hours = time(9, 0) <= now_kst <= time(18, 0)
+                is_business_hours = time(9, 0) <= now_kst < time(18, 0)
                 
                 # 2. 전송 플래그 및 점수 체크
                 if settings.enable_cs_partial_auto and final_score >= settings.cs_auto_send_threshold and is_business_hours:
@@ -224,39 +225,137 @@ class CSWorkflowAgent(BaseAgent, ValidationMixin):
 
     async def finalize(self, state: CSAgentState) -> Dict[str, Any]:
         """최종 데이터베이스 반영 및 정리"""
-        db_id = state.get("inquiry_id") # 내부 PK
+        # state.inquiry_id는 내부 DB PK (MarketInquiryRaw.id)
+        # inquiry.market_inquiry_id는 마켓플레이스에서 온 원래 ID
+        db_id = state.get("inquiry_id")  # 내부 PK (UUID)
         draft = state.get("draft_answer")
         status = state.get("status")
         score = state.get("confidence_score")
-        
+        intent = state.get("intent", "")
+
         try:
-            # v1.8.0: 내부 ID(db_id)와 마켓 ID(market_inquiry_id) 명확히 구분하여 조회
             inquiry = self.db.query(MarketInquiryRaw).filter(MarketInquiryRaw.id == db_id).first()
             if inquiry:
-                # 데이터 정합성 강화: 중복 전송 방지 (Idempotency)
-                if inquiry.sent_at or inquiry.send_status == "SENT":
-                    logger.warning(f"Inquiry {db_id} already sent. Skipping final update.")
-                    return {"status": inquiry.send_status, "current_step": "finalize"}
+                # v1.8.2: SENDING 락 만료 체크 (영구 고착 방지)
+                if inquiry.send_status == "SENDING":
+                    # 락 만료 시간 계산
+                    lock_expiry_minutes = settings.cs_lock_expiry_minutes or 10
+                    lock_threshold = datetime.now(pytz.UTC) - pytz.utc.timedelta(minutes=lock_expiry_minutes)
 
+                    # sent_at이 없거나 오래되었으면 락 만료로 간주 (현재는 last_modified가 없어서 sent_at 참조)
+                    # 실제 운영에서는 send_locked_at 컬럼 추가 권장
+                    if inquiry.sent_at and inquiry.sent_at < lock_threshold:
+                        logger.warning(
+                            f"Inquiry {db_id} SENDING lock expired (sent_at: {inquiry.sent_at}). Resetting to SEND_FAILED."
+                        )
+                        inquiry.send_status = "SEND_FAILED"
+                        inquiry.last_send_error = f"[LOCK_EXPIRED] SENDING lock expired after {lock_expiry_minutes} minutes"
+                        self.db.commit()
+                        # 락 만료 시에는 재시도 가능하도록 로깅만 하고 진행하지 않음
+                        return {
+                            "final_output": {
+                                "status": "SEND_FAILED",
+                                "confidence_score": score
+                            },
+                            "logs": ["SENDING lock expired; reset to SEND_FAILED"],
+                            "current_step": "finalize"
+                        }
+
+                # v1.8.1: Production-Ready Idempotency - SENDING 선점 로직
+                # 중복 전송 방지: 이미 처리 중(SENT/SENDING)이면 스킵
+                if inquiry.send_status in ("SENT", "SENDING"):
+                    logger.warning(f"Inquiry {db_id} already {inquiry.send_status}. Skipping final update.")
+                    return {
+                        "final_output": {
+                            "status": inquiry.send_status,
+                            "confidence_score": inquiry.confidence_score
+                        },
+                        "logs": [f"Already {inquiry.send_status}; skipped"],
+                        "current_step": "finalize"
+                    }
+
+                # 기본 정보 업데이트 (전송 전 상태)
                 inquiry.ai_suggested_answer = draft
                 inquiry.status = status
                 inquiry.confidence_score = score
                 inquiry.cs_metadata = {
                     "logs": state.get("logs", []),
-                    "intent": state.get("intent"),
+                    "intent": intent,
                     "sentiment": state.get("sentiment"),
-                    "policy_evaluation": state.get("policy_evaluation", {})
+                    "policy_evaluation": state.get("policy_evaluation", {}),
+                    # v1.8.1: 전송 정보 미러링 (운영팀 시각화용)
+                    "send_status": inquiry.send_status,
+                    "send_attempts": inquiry.send_attempts,
+                    "last_send_error": inquiry.last_send_error
                 }
                 self.db.commit()
-                logger.info(f"Finalized CS inquiry {db_id} in DB with status {status}")
 
-                # v1.8.0: 실마켓 전송 (AUTO_SEND 일 때만)
+                # v1.8.2: AUTO_SEND일 때만 원자적 선점 후 실제 전송
                 if status == "AUTO_SEND":
+                    # v1.8.2: 의도 필터 체크 (ALLOWED_INTENTS)
+                    allowed_intents = settings.get_allowed_intents()
+                    if allowed_intents and intent not in allowed_intents:
+                        logger.warning(
+                            f"Inquiry {db_id} intent '{intent}' not in allowed list {allowed_intents}. "
+                            f"Downgrading to AI_DRAFTED."
+                        )
+                        inquiry.status = "AI_DRAFTED"
+                        self.db.commit()
+                        return {
+                            "final_output": {
+                                "status": "AI_DRAFTED",
+                                "confidence_score": score,
+                                "blocked_reason": f"intent '{intent}' not in allowed list"
+                            },
+                            "logs": [f"Intent '{intent}' blocked by ALLOWED_INTENTS gate"],
+                            "current_step": "finalize"
+                        }
+
+                    # v1.8.2: 일일 쿼터 체크
+                    daily_quota = settings.cs_daily_quota_per_account or 10
+                    today_start = datetime.now(pytz.UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+                    today_sent_count = self.db.query(MarketInquiryRaw).filter(
+                        MarketInquiryRaw.account_id == inquiry.account_id,
+                        MarketInquiryRaw.send_status == "SENT",
+                        MarketInquiryRaw.sent_at >= today_start
+                    ).count()
+
+                    if today_sent_count >= daily_quota:
+                        logger.warning(
+                            f"Inquiry {db_id} account {inquiry.account_id} reached daily quota "
+                            f"({today_sent_count}/{daily_quota}). Downgrading to AI_DRAFTED."
+                        )
+                        inquiry.status = "AI_DRAFTED"
+                        self.db.commit()
+                        return {
+                            "final_output": {
+                                "status": "AI_DRAFTED",
+                                "confidence_score": score,
+                                "blocked_reason": f"daily quota reached ({today_sent_count}/{daily_quota})"
+                            },
+                            "logs": [f"Daily quota exceeded ({today_sent_count}/{daily_quota})"],
+                            "current_step": "finalize"
+                        }
+
+                    # SENDING 상태로 선점 (다른 워커 진입 방지)
+                    inquiry.send_status = "SENDING"
+                    self.db.commit()
+                    logger.info(f"Inquiry {db_id} locked as SENDING for atomic send")
+
+                    # 실제 마켓 API 호출
                     await self._send_to_market(inquiry, draft)
-            
+
+                    # v1.8.2: status와 send_status 도메인 상태 통합
+                    # 전송 후 inquiry.status도 최종 상태로 동기화
+                    if inquiry.send_status == "SENT":
+                        inquiry.status = "SENT"  # AI_DRAFTED/AUTO_SEND → SENT로 통합
+                    elif inquiry.send_status == "SEND_FAILED":
+                        inquiry.status = "SEND_FAILED"
+                    self.db.commit()
+
             return {
                 "final_output": {
-                    "status": status,
+                    "status": status if inquiry is None else inquiry.status,
                     "confidence_score": score
                 },
                 "logs": ["Finalized in database"],
@@ -311,13 +410,58 @@ class CSWorkflowAgent(BaseAgent, ValidationMixin):
 
     async def _send_to_market(self, inquiry: MarketInquiryRaw, answer: str):
         """실제 마켓 API를 통해 답변 전송 및 상태 기록"""
+        # v1.8.2: TEST_MODE 안전장치 - 테스트/개발 환경에서 실제 전송 방지
+        if settings.cs_test_mode:
+            allowed_accounts = settings.get_allowed_accounts()
+            allowed_markets = settings.get_allowed_markets()
+
+            # (5) TEST_MODE=true & 허용계정 비어있음 → 무조건 전송 금지
+            if not allowed_accounts or str(inquiry.account_id) not in allowed_accounts:
+                logger.warning(
+                    f"[TEST_MODE BLOCKED] Inquiry {inquiry.id} (account {inquiry.account_id}) "
+                    f"not in allowed_accounts {allowed_accounts}"
+                )
+                # 차단된 것처럼 실패 상태로 기록
+                inquiry.send_status = "SEND_FAILED"
+                inquiry.last_send_error = "[TEST_MODE BLOCKED] Account not in allowed list"
+                if inquiry.cs_metadata:
+                    inquiry.cs_metadata.update({
+                        "send_status": "SEND_FAILED",
+                        "send_attempts": inquiry.send_attempts,
+                        "last_send_error": "[TEST_MODE BLOCKED] Account not in allowed list"
+                    })
+                self.db.commit()
+                return
+
+            # (6) market_code별 전송 함수 차단 추가 안전장치
+            if allowed_markets and inquiry.market_code not in allowed_markets:
+                logger.warning(
+                    f"[TEST_MODE BLOCKED] Inquiry {inquiry.id} market_code {inquiry.market_code} "
+                    f"not in allowed_markets {allowed_markets}"
+                )
+                inquiry.send_status = "SEND_FAILED"
+                inquiry.last_send_error = f"[TEST_MODE BLOCKED] Market {inquiry.market_code} not in allowed list"
+                if inquiry.cs_metadata:
+                    inquiry.cs_metadata.update({
+                        "send_status": "SEND_FAILED",
+                        "send_attempts": inquiry.send_attempts,
+                        "last_send_error": inquiry.last_send_error
+                    })
+                self.db.commit()
+                return
+
+            logger.info(
+                f"[TEST_MODE ALLOWED] Inquiry {inquiry.id} passed all TEST_MODE checks "
+                f"(account={inquiry.account_id}, market={inquiry.market_code})"
+            )
+
         account = self.db.query(MarketAccount).filter(MarketAccount.id == inquiry.account_id).first()
         if not account:
             logger.error(f"Account {inquiry.account_id} not found for auto-send.")
             return
 
-        # 시도 횟수 증가
-        inquiry.send_attempts += 1
+        # v1.8.2: 시도 횟수 증가 (None 방어)
+        inquiry.send_attempts = (inquiry.send_attempts or 0) + 1
         self.db.commit()
 
         try:
@@ -367,13 +511,30 @@ class CSWorkflowAgent(BaseAgent, ValidationMixin):
                 inquiry.send_status = "SEND_FAILED"
                 inquiry.last_send_error = error_msg
                 logger.error(f"Auto-send failed for inquiry {inquiry.id}: {error_msg}")
-            
+
+            # v1.8.1: cs_metadata에 전송 정보 미러링 (운영팀 시각화용)
+            if inquiry.cs_metadata:
+                inquiry.cs_metadata.update({
+                    "send_status": inquiry.send_status,
+                    "send_attempts": inquiry.send_attempts,
+                    "last_send_error": inquiry.last_send_error
+                })
+
             self.db.commit()
 
         except Exception as e:
             error_msg = f"System Error during auto-send: {str(e)}"
             inquiry.send_status = "SEND_FAILED"
             inquiry.last_send_error = error_msg
+
+            # v1.8.1: cs_metadata에 실패 정보 미러링
+            if inquiry.cs_metadata:
+                inquiry.cs_metadata.update({
+                    "send_status": inquiry.send_status,
+                    "send_attempts": inquiry.send_attempts,
+                    "last_send_error": inquiry.last_send_error
+                })
+
             self.db.commit()
             logger.error(error_msg, exc_info=True)
 

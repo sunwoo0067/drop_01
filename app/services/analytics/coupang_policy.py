@@ -11,8 +11,8 @@ from app.services.analytics.drift_detector import CoupangDriftDetectorService
 
 logger = logging.getLogger(__name__)
 
-POLICY_VERSION = "1.3.0" # Advanced Cognitive (Season Drift + ROI)
-
+POLICY_VERSION = "1.5.0" # Domestic Multi-Market Expansion
+    
 class CoupangSourcingPolicyService:
     @staticmethod
     def log_policy_event(
@@ -21,6 +21,7 @@ class CoupangSourcingPolicyService:
         event_type: str, 
         multiplier: float, 
         reason: str, 
+        market_code: str = "COUPANG",
         severity: str = "NONE", 
         context: dict = None,
         window_days: int = 7
@@ -30,11 +31,12 @@ class CoupangSourcingPolicyService:
         """
         from app.models import AdaptivePolicyEvent
         
-        # 1. Throttling: 동일 카테고리/이벤트 타입에 대해 최근 6시간 내 기록이 있으면 스킵 (진동 방지)
+        # 1. Throttling: 동일 카테고리/마켓/이벤트 타입에 대해 최근 6시간 내 기록이 있으면 스킵 (진동 방지)
         throttle_limit = datetime.now(timezone.utc) - timedelta(hours=6)
         existing = session.execute(
             select(AdaptivePolicyEvent)
             .where(AdaptivePolicyEvent.category_code == category_code)
+            .where(AdaptivePolicyEvent.market_code == market_code)
             .where(AdaptivePolicyEvent.event_type == event_type)
             .where(AdaptivePolicyEvent.created_at >= throttle_limit)
         ).scalars().first()
@@ -51,6 +53,7 @@ class CoupangSourcingPolicyService:
 
         event = AdaptivePolicyEvent(
             category_code=category_code,
+            market_code=market_code,
             event_type=event_type,
             severity=severity,
             multiplier=multiplier,

@@ -19,6 +19,9 @@ class PolicySimulatorService:
         """
         제안된 전략 변경(Pivot 등)의 예상 손익 및 리스크를 시뮬레이션합니다.
         """
+        market_code = drift_data.get("market_code")
+        market_label = market_code if market_code else "Global"
+        
         should_pivot = drift_data.get("should_pivot", False)
         current_roi = drift_data.get("current_roi", 0.0)
         roi_velocity = drift_data.get("roi_velocity", 0.0)
@@ -56,10 +59,11 @@ class PolicySimulatorService:
         recommendation = "APPLY PIVOT" if should_pivot else "MAINTAIN / BOOST"
         
         return {
-            "strategy_name": "Coupang Global Sourcing Strategy",
-            "simulation_timestamp": datetime.now(timezone.utc),
+            "market_code": market_code,
+            "strategy_name": f"{market_label} Sourcing Strategy",
+            "simulation_timestamp": datetime.now(timezone.utc).isoformat(),
             "recommendation": recommendation,
             "comparison": comparison,
             "justification": drift_data.get("message", "Strategy is healthy."),
-            "impact_summary": f"Pivot 적용 시 예상 ROI {expected_roi:.2f}, 패널티 {recent_penalties}건 억제 효과 기대." if should_pivot else "현재 전략 유지 시 안정적 수익 확보 기대."
+            "impact_summary": f"{market_label} Pivot 적용 시 예상 ROI {expected_roi:.2f}, 패널티 {recent_penalties}건 억제 효과 기대." if should_pivot else f"{market_label} 현재 전략 유지 시 안정적 수익 확보 기대."
         }

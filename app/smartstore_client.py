@@ -252,6 +252,55 @@ class SmartStoreClient:
             return 500, {"message": str(e)}
 
     # --------------------------------------------------------------------------
+    # Order API
+    # --------------------------------------------------------------------------
+
+    def get_changed_product_orders(
+        self, 
+        last_changed_from: str, 
+        last_changed_to: Optional[str] = None,
+        limit_count: int = 300,
+        more_sequence: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        최근 변경된 상품 주문 상세 정보 목록 조회
+        
+        Args:
+            last_changed_from: 조회 시작 일시 (ISO 8601: yyyy-MM-ddTHH:mm:ss.SSS+ZONE)
+            last_changed_to: 조회 종료 일시
+            limit_count: 한 번에 조회할 개수 (최대 300)
+            more_sequence: 다음 페이지 조회를 위한 시퀀스
+        """
+        url = f"{self.base_url}/v1/pay-order/seller/product-orders/last-changed-statuses"
+        params = {
+            "lastChangedFrom": last_changed_from,
+            "limitCount": limit_count
+        }
+        if last_changed_to:
+            params["lastChangedTo"] = last_changed_to
+        if more_sequence:
+            params["moreSequence"] = more_sequence
+            
+        try:
+            resp = requests.get(url, headers=self._get_headers(), params=params)
+            return resp.json()
+        except Exception as e:
+            logger.error(f"SmartStore get_changed_product_orders error: {e}")
+            return {"data": [], "more": None}
+
+    def get_product_order_detail(self, product_order_no: str) -> Dict[str, Any]:
+        """
+        상품 주문 번호로 상세 정보 단위 조회
+        """
+        url = f"{self.base_url}/v1/pay-order/seller/product-orders/{product_order_no}"
+        try:
+            resp = requests.get(url, headers=self._get_headers())
+            return resp.json()
+        except Exception as e:
+            logger.error(f"SmartStore get_product_order_detail error: {e}")
+            return {}
+
+    # --------------------------------------------------------------------------
     # CS API (Customer Inquiry)
     # --------------------------------------------------------------------------
 

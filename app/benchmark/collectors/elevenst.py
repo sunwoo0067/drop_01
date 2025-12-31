@@ -32,7 +32,7 @@ class ElevenstBenchmarkCollector:
         )
 
         html = ""
-        if settings.ownerclan_use_sef_proxy:
+        if settings.ownerclan_use_self_proxy:
             status, html = await self._saver._fetch_via_proxy(url)
             if status != 200:
                 logger.error(f"11번가 랭킹 페이지 수집 실패 (Proxy): HTTP {status} (url={url})")
@@ -120,7 +120,7 @@ class ElevenstBenchmarkCollector:
             return {"detail_html": "", "image_urls": [], "raw_html": ""}
 
         html = ""
-        if settings.ownerclan_use_sef_proxy:
+        if settings.ownerclan_use_self_proxy:
             status, html = await self._saver._fetch_via_proxy(url)
             if status != 200:
                 logger.error(f"11번가 상세 페이지 수집 실패 (Proxy): HTTP {status} (url={url})")

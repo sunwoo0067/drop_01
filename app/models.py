@@ -20,6 +20,37 @@ class MarketBase(DeclarativeBase):
     pass
 
 
+class PricingStrategy(MarketBase):
+    """
+    개별 가격 전략의 파라미터를 정의합니다.
+    """
+    __tablename__ = "pricing_strategies"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    
+    # 전략 파라미터
+    target_margin: Mapped[float] = mapped_column(Float, nullable=False)
+    min_margin_gate: Mapped[float] = mapped_column(Float, nullable=False)
+    max_price_delta: Mapped[float] = mapped_column(Float, default=0.20)
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CategoryStrategyMapping(MarketBase):
+    """
+    카테고리별 기본 가격 전략을 매핑합니다.
+    """
+    __tablename__ = "category_strategy_mappings"
+
+    category_code: Mapped[str] = mapped_column(Text, primary_key=True)
+    strategy_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("pricing_strategies.id"), nullable=False)
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 
 class MarketFeePolicy(MarketBase):
     __tablename__ = "market_fee_policies"
@@ -504,6 +535,13 @@ class Product(DropshipBase):
         comment="사용된 AI 모델 (qwen3:8b, qwen3-vl:8b, etc.)"
     )
 
+    # 전략 필드
+    strategy_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), 
+        nullable=True,
+        comment="수동 할당된 가격 전략 ID (Cross-DB: No FK)"
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -597,12 +635,21 @@ class Order(MarketBase):
     supplier_order_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("supplier_orders.id"), nullable=True)
     
     order_number: Mapped[str] = mapped_column(Text, nullable=False, unique=True) # Internal Order Number
+    vendor_order_id: Mapped[str | None] = mapped_column(Text, unique=True, nullable=True) # Marketplace native ID
+    marketplace: Mapped[str | None] = mapped_column(Text, nullable=True) # COUPANG, NAVER
+    
     status: Mapped[str] = mapped_column(Text, nullable=False, default="PAYMENT_COMPLETED")
     
     recipient_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     recipient_phone: Mapped[str | None] = mapped_column(Text, nullable=True)
     address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    buyer_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
     total_amount: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    totals: Mapped[dict | None] = mapped_column(JSONB, nullable=True) # Shipping fee, etc.
+    
+    ordered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    raw: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -610,6 +657,9 @@ class Order(MarketBase):
 
 class OrderItem(MarketBase):
     __tablename__ = "order_items"
+    __table_args__ = (
+        UniqueConstraint("order_id", "vendor_item_id", name="uq_order_items_order_vendor_item"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     order_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("orders.id"), nullable=False)
@@ -617,11 +667,16 @@ class OrderItem(MarketBase):
     market_listing_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("market_listings.id"), nullable=True)
     product_option_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
-    external_item_id: Mapped[str | None] = mapped_column(Text, nullable=True)  # e.g. Coupang orderItemId
+    vendor_item_id: Mapped[str | None] = mapped_column(Text, nullable=True) # e.g. Coupang orderItemId
+    vendor_sku: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
     product_name: Mapped[str] = mapped_column(Text, nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     unit_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    
+    status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raw: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -713,6 +768,40 @@ class SourcingCandidate(DropshipBase):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class QnaThread(MarketBase):
+    __tablename__ = "qna_threads"
+    
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    vendor: Mapped[str] = mapped_column(Text, nullable=False) # COUPANG, NAVER etc.
+    vendor_thread_id: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    
+    product_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    customer_hash: Mapped[str | None] = mapped_column(Text, nullable=True) # 식별용 해시
+    
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="OPEN") # OPEN, ANSWERED, CLOSED
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    raw: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class QnaMessage(MarketBase):
+    __tablename__ = "qna_messages"
+    
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    thread_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("qna_threads.id"), nullable=False)
+    vendor_message_id: Mapped[str | None] = mapped_column(Text, unique=True, nullable=True)
+    
+    direction: Mapped[str] = mapped_column(Text, nullable=False) # IN (Customer -> Market), OUT (Seller -> Market)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    
+    raw: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class APIKey(DropshipBase):
     __tablename__ = "api_keys"
 
@@ -797,7 +886,7 @@ class SourcingRecommendation(DropshipBase):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    product_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("products.id"), nullable=True)
+    product_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     supplier_item_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)  # FK 제거 - SourceBase와 DropshipBase 분리로 인해
     
     # 추천 유형
@@ -1072,5 +1161,296 @@ class AdaptivePolicyEvent(MarketBase):
     
     # 당시의 AR, Trials 등 상세 지표
     context: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# --- PR-6: Sync Monitoring & Cursor Models ---
+
+class SyncRun(SourceBase):
+    __tablename__ = "sync_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    channel: Mapped[str] = mapped_column(Text, nullable=False) # items, orders, qna
+    vendor: Mapped[str] = mapped_column(Text, nullable=False) # ownerclan, coupang, naver
+    status: Mapped[str] = mapped_column(Text, nullable=False) # success, fail, partial
+    
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    
+    read_count: Mapped[int] = mapped_column(Integer, default=0)
+    write_count: Mapped[int] = mapped_column(Integer, default=0)
+    error_count: Mapped[int] = mapped_column(Integer, default=0)
+    api_calls: Mapped[int] = mapped_column(Integer, default=0)
+    rate_limited_count: Mapped[int] = mapped_column(Integer, default=0)
+    
+    cursor_before: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    cursor_after: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    
+    meta: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+class SyncRunError(SourceBase):
+    __tablename__ = "sync_run_errors"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("sync_runs.id"), nullable=False)
+    
+    entity_type: Mapped[str] = mapped_column(Text, nullable=False) # order, qna, item
+    entity_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    stack: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raw: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+class SyncCursor(SourceBase):
+    __tablename__ = "sync_cursors"
+    __table_args__ = (UniqueConstraint("vendor", "channel", name="uq_sync_cursors_vendor_channel"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    vendor: Mapped[str] = mapped_column(Text, nullable=False)
+    channel: Mapped[str] = mapped_column(Text, nullable=False)
+    
+    cursor: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# --- PR-8: Profit & Pricing Models ---
+
+class CostComponent(DropshipBase):
+    """
+    상품별 원가 및 비용 정보를 저장합니다.
+    """
+    __tablename__ = "cost_components"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("products.id"), unique=True, nullable=False)
+    
+    vendor: Mapped[str] = mapped_column(Text, nullable=False) # ownerclan 등
+    supply_price: Mapped[int] = mapped_column(Integer, default=0) # 공급가
+    shipping_cost: Mapped[int] = mapped_column(Integer, default=0) # 배송비
+    platform_fee_rate: Mapped[float] = mapped_column(Float, default=0.0) # 기본 수수료율
+    extra_fee: Mapped[int] = mapped_column(Integer, default=0) # 추가 제반 비용
+    
+    raw: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ProfitSnapshot(DropshipBase):
+    """
+    실시간 수익성 분석 결과를 저장합니다.
+    """
+    __tablename__ = "profit_snapshots"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("products.id"), nullable=False)
+    channel: Mapped[str] = mapped_column(Text, nullable=False) # COUPANG, NAVER
+    
+    current_price: Mapped[int] = mapped_column(Integer, nullable=False)
+    estimated_profit: Mapped[int] = mapped_column(Integer, nullable=False)
+    margin_rate: Mapped[float] = mapped_column(Float, nullable=False)
+    
+    is_risk: Mapped[bool] = mapped_column(Boolean, default=False)
+    reason_codes: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True) # UNDER_MARGIN, LOSS_LEADER 등
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PricingRecommendation(MarketBase):
+    """
+    가격 변경 권고 사항을 저장합니다.
+    """
+    __tablename__ = "pricing_recommendations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False) # Cross-DB: No FK
+    market_account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_accounts.id"), nullable=False)
+    
+    current_price: Mapped[int] = mapped_column(Integer, nullable=False)
+    recommended_price: Mapped[int] = mapped_column(Integer, nullable=False)
+    expected_margin: Mapped[float] = mapped_column(Float, nullable=True)
+    
+    confidence: Mapped[float] = mapped_column(Float, default=1.0)
+    reasons: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    
+    status: Mapped[str] = mapped_column(Text, default="PENDING") # PENDING, APPLIED, REJECTED, IGNORED
+    
+    # A/B 테스트 메타데이터
+    experiment_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    experiment_group: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    # 전략 정보 (PR-14: Observability)
+    strategy_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PriceChangeLog(MarketBase):
+    """
+    실제 가격 변경 이력을 기록합니다.
+    """
+    __tablename__ = "price_change_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False) # Cross-DB: No FK
+    market_account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_accounts.id"), nullable=False)
+    
+    old_price: Mapped[int] = mapped_column(Integer, nullable=False)
+    new_price: Mapped[int] = mapped_column(Integer, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False) # MANUAL, AUTO_ENFORCE
+    
+    recommendation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    
+    status: Mapped[str] = mapped_column(Text, default="SUCCESS") # SUCCESS, FAIL
+    error_msg: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PricingSettings(MarketBase):
+    """
+    마켓 계정별 자동화 정책 설정을 저장합니다.
+    """
+    __tablename__ = "pricing_settings"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("market_accounts.id"), unique=True, nullable=False)
+    
+    # 자동화 모드
+    auto_mode: Mapped[str] = mapped_column(Text, default="SHADOW") # SHADOW, ENFORCE_LITE, ENFORCE_AUTO
+    
+    # 신뢰도 임계값 (ENFORCE_AUTO 모드에서 사용)
+    confidence_threshold: Mapped[float] = mapped_column(Float, default=0.95)
+    
+    # 스로틀링 정책
+    max_changes_per_hour: Mapped[int] = mapped_column(Integer, default=50)
+    
+    # 쿨다운 정책 (시간 단위)
+    cooldown_hours: Mapped[int] = mapped_column(Integer, default=24)
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class PricingExperiment(MarketBase):
+    """
+    가격 실험 명세를 관리합니다.
+    """
+    __tablename__ = "pricing_experiments"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    
+    # 실험 상태: ACTIVE, FINISHED, APPLIED
+    status: Mapped[str] = mapped_column(Text, default="ACTIVE")
+    
+    # 실험군 할당 비율 (0.0 ~ 1.0)
+    test_ratio: Mapped[float] = mapped_column(Float, default=0.1)
+    
+    # 실험군에 적용할 정책 설정 (JSON)
+    # 예: {"confidence_threshold": 0.90, "auto_mode": "ENFORCE_AUTO"}
+    config_variant: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    
+    # 실험 결과 요약 (JSON)
+    metrics_summary: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ProductExperimentMapping(MarketBase):
+    """
+    상품별 실험군 할당 정보를 관리합니다.
+    """
+    __tablename__ = "product_experiment_mappings"
+
+    product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    experiment_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("pricing_experiments.id"), primary_key=True)
+    
+    # 할당된 그룹: CONTROL, TEST
+    group: Mapped[str] = mapped_column(Text, nullable=False)
+    
+    assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TuningRecommendation(MarketBase):
+    """
+    전략별 파라미터 조정 권역안을 관리합니다.
+    """
+    __tablename__ = "tuning_recommendations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    strategy_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("pricing_strategies.id"), nullable=False)
+    
+    # 권고 내용 (JSON)
+    suggested_config: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    
+    # 권고 사유: MARGIN_DRIFT, SAFETY_SATURATION 등
+    reason_code: Mapped[str] = mapped_column(Text, nullable=False)
+    reason_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    # 상태: PENDING, APPLIED, DISMISSED
+    status: Mapped[str] = mapped_column(Text, default="PENDING")
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AutonomyPolicy(MarketBase):
+    """
+    세그먼트별 자율성 정책을 관리합니다.
+    """
+    __tablename__ = "autonomy_policies"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    segment_key: Mapped[str] = mapped_column(Text, nullable=False, unique=True) # hash(vendor, channel, category, strategy, lifecycle)
+    
+    # 세그먼트 차원 정보 (역추적용)
+    vendor: Mapped[str | None] = mapped_column(Text, nullable=True)
+    channel: Mapped[str | None] = mapped_column(Text, nullable=True)
+    category_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    strategy_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    lifecycle_stage: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # 자율 등급: Tier 0(Manual), Tier 1(Enforce Lite), Tier 2(Auto High-Confidence), Tier 3(Full Auto)
+    tier: Mapped[int] = mapped_column(Integer, default=0)
+    
+    # 가드레일/임계치 커스텀 (JSON)
+    config_override: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    
+    # 상태: ACTIVE, FROZEN
+    status: Mapped[str] = mapped_column(Text, default="ACTIVE")
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class AutonomyDecisionLog(MarketBase):
+    """
+    자율적 의사결정 집행 이력을 기록합니다.
+    """
+    __tablename__ = "autonomy_decision_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    recommendation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    segment_key: Mapped[str] = mapped_column(Text, nullable=False)
+    
+    tier_used: Mapped[int] = mapped_column(Integer, nullable=False)
+    decision: Mapped[str] = mapped_column(Text, nullable=False) # APPLIED, PENDING, REJECTED
+    
+    # 당시 신뢰도 및 마진 정보
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    expected_margin: Mapped[float | None] = mapped_column(Float, nullable=True)
+    
+    # 의사결정 사유 및 메타데이터
+    reasons: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    metrics_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
