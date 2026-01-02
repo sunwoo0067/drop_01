@@ -12,32 +12,70 @@ import { Table } from "@/components/ui/Table";
 
 type SettingsTab = "orchestration" | "lifecycle" | "market" | "supplier" | "ai";
 
+const defaultLifecycleCriteria = {
+    step1_to_step2: {
+        min_sales: 1,
+        min_ctr: 0.02,
+        min_views: 100,
+        min_days_listed: 7,
+    },
+    step2_to_step3: {
+        min_sales: 5,
+        min_repeat_purchase: 1,
+        min_customer_retention: 0.1,
+        min_revenue: 100000,
+        min_days_in_step2: 14,
+    },
+    category_adjusted: {
+        "패션의류": { min_sales: 3 },
+        "가전제품": { min_sales: 7 },
+        "기본": {}
+    }
+};
+
+const parseNumberField = (value: string, isFloat = false) => {
+    if (!value.trim()) {
+        return null;
+    }
+    const parsed = isFloat ? parseFloat(value) : parseInt(value, 10);
+    return Number.isNaN(parsed) ? null : parsed;
+};
+
+const buildCategoryAdjustedFromRows = (rows: Array<Record<string, string>>) => (
+    rows.reduce<Record<string, Record<string, number>>>((acc, row) => {
+        const name = row.name.trim();
+        if (!name) {
+            return acc;
+        }
+        const fields = [
+            { key: "min_sales", isFloat: false },
+            { key: "min_ctr", isFloat: true },
+            { key: "min_views", isFloat: false },
+            { key: "min_days_listed", isFloat: false },
+            { key: "min_repeat_purchase", isFloat: false },
+            { key: "min_customer_retention", isFloat: true },
+            { key: "min_revenue", isFloat: false },
+            { key: "min_days_in_step2", isFloat: false }
+        ];
+        const rules: Record<string, number> = {};
+        fields.forEach(({ key, isFloat }) => {
+            const value = parseNumberField(row[key] || "", isFloat);
+            if (value !== null) {
+                rules[key] = value;
+            }
+        });
+        if (Object.keys(rules).length > 0) {
+            acc[name] = rules;
+        }
+        return acc;
+    }, {})
+);
+
 export default function SettingsPage() {
     const [activeTab, setActiveTab] = useState<SettingsTab>("orchestration");
     const [isLoading, setIsLoading] = useState(false);
     const [isLoadingSettings, setIsLoadingSettings] = useState(false);
     const [notification, setNotification] = useState<{ type: "success" | "error" | null; message: string }>({ type: null, message: "" });
-
-    const defaultLifecycleCriteria = {
-        step1_to_step2: {
-            min_sales: 1,
-            min_ctr: 0.02,
-            min_views: 100,
-            min_days_listed: 7,
-        },
-        step2_to_step3: {
-            min_sales: 5,
-            min_repeat_purchase: 1,
-            min_customer_retention: 0.1,
-            min_revenue: 100000,
-            min_days_in_step2: 14,
-        },
-        category_adjusted: {
-            "패션의류": { min_sales: 3 },
-            "가전제품": { min_sales: 7 },
-            "기본": {}
-        }
-    };
 
     const [orchestratorForm, setOrchestratorForm] = useState({
         listing_limit: 15000,
@@ -142,42 +180,6 @@ export default function SettingsPage() {
             return null;
         }
     };
-    const parseNumberField = (value: string, isFloat = false) => {
-        if (!value.trim()) {
-            return null;
-        }
-        const parsed = isFloat ? parseFloat(value) : parseInt(value, 10);
-        return Number.isNaN(parsed) ? null : parsed;
-    };
-    const buildCategoryAdjustedFromRows = (rows: Array<Record<string, string>>) => (
-        rows.reduce<Record<string, Record<string, number>>>((acc, row) => {
-            const name = row.name.trim();
-            if (!name) {
-                return acc;
-            }
-            const fields = [
-                { key: "min_sales", isFloat: false },
-                { key: "min_ctr", isFloat: true },
-                { key: "min_views", isFloat: false },
-                { key: "min_days_listed", isFloat: false },
-                { key: "min_repeat_purchase", isFloat: false },
-                { key: "min_customer_retention", isFloat: true },
-                { key: "min_revenue", isFloat: false },
-                { key: "min_days_in_step2", isFloat: false }
-            ];
-            const rules: Record<string, number> = {};
-            fields.forEach(({ key, isFloat }) => {
-                const value = parseNumberField(row[key] || "", isFloat);
-                if (value !== null) {
-                    rules[key] = value;
-                }
-            });
-            if (Object.keys(rules).length > 0) {
-                acc[name] = rules;
-            }
-            return acc;
-        }, {})
-    );
     const parseCsvLine = (line: string) => {
         const result: string[] = [];
         let current = "";
@@ -819,7 +821,7 @@ export default function SettingsPage() {
                     ? JSON.parse(lifecycleCriteriaForm.category_adjusted_raw)
                     : {};
             }
-        } catch (error) {
+        } catch {
             setNotification({ type: "error", message: "카테고리 보정 JSON 형식이 올바르지 않습니다." });
             setIsSavingLifecycle(false);
             return;

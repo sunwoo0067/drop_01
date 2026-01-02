@@ -4,13 +4,9 @@ import { useEffect, useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import {
     TrendingUp,
-    TrendingDown,
     ArrowUpRight,
-    BarChart2,
     ShieldCheck,
-    AlertCircle,
-    RefreshCw,
-    Play
+    RefreshCw
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -129,20 +125,21 @@ export default function PricingAnalyticsDashboard() {
                 </motion.div>
 
                 <motion.div variants={item}>
-                    <CardContent className="pt-4 px-4 pb-4">
-                        <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-medium text-muted-foreground uppercase">최근 24시간 집행</span>
-                            <motion.div animate={{ scale: [1, 1.1, 1] }} transition={{ repeat: Infinity, duration: 2 }}>
-                                <div className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                            </motion.div>
-                        </div>
-                        <div className="mt-1 flex items-baseline gap-2">
-                            <span className="text-xl font-bold">{stats?.applied_24h || 0}</span>
-                            <span className="text-[10px] text-muted-foreground">건 자동 적용됨</span>
-                        </div>
-                    </CardContent>
-                </Card>
-            </motion.div>
+                    <Card className="bg-card border-l-4 border-l-sky-500">
+                        <CardContent className="pt-4 px-4 pb-4">
+                            <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-medium text-muted-foreground uppercase">최근 24시간 집행</span>
+                                <motion.div animate={{ scale: [1, 1.1, 1] }} transition={{ repeat: Infinity, duration: 2 }}>
+                                    <div className="h-1.5 w-1.5 rounded-full bg-sky-500" />
+                                </motion.div>
+                            </div>
+                            <div className="mt-1 flex items-baseline gap-2">
+                                <span className="text-xl font-bold">{stats?.applied_24h || 0}</span>
+                                <span className="text-[10px] text-muted-foreground">건 자동 적용됨</span>
+                            </div>
+                        </CardContent>
+                    </Card>
+                </motion.div>
 
             <motion.div variants={item}>
                 <Card className="bg-card border-l-4 border-l-amber-500">
@@ -204,7 +201,6 @@ export default function PricingAnalyticsDashboard() {
                 {/* Bars */}
                 {trend.length > 0 ? trend.map((p, i) => {
                     const height = (p.avg_margin / maxMargin) * 100;
-                    const isPositive = p.avg_margin > 0;
 
                     return (
                         <div key={i} className="flex-1 flex flex-col items-center group relative h-full justify-end">

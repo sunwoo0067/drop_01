@@ -3,9 +3,8 @@
 import { useEffect, useState, useCallback } from "react";
 import {
     CheckCircle2,
-    XCircle,
     ArrowRight,
-    ExternalLink,
+    RefreshCw,
     AlertTriangle,
     Check
 } from "lucide-react";
