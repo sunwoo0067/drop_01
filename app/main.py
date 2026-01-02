@@ -9,6 +9,11 @@ from sqlalchemy.orm import Session
 from typing import List
 import logging
 
+import logging
+import traceback
+from fastapi import Request
+from starlette.responses import JSONResponse
+
 # 전역 로깅 설정
 logging.basicConfig(
     level=logging.INFO,
@@ -198,7 +203,6 @@ async def upload_image(file: UploadFile = File(...)) -> dict:
     return {"bucket": settings.supabase_bucket, "path": object_path, "publicUrl": public_url}
 
 
-@app.post("/ownerclan/accounts/primary")
 def _enqueue_ownerclan_job(job_type: str, params: dict, session: Session) -> dict:
     """OwnerClan 동기화 작업 큐잉 (private helper)."""
     job = SupplierSyncJob(
@@ -207,24 +211,6 @@ def _enqueue_ownerclan_job(job_type: str, params: dict, session: Session) -> dic
         status="queued",
         params=params
     )
-    session.add(job)
-    session.flush()
-    return {"jobId": str(job.id)}
-
-
-@app.post("/sync/ownerclan/items")
-def sync_ownerclan_items(
-    payload: OwnerClanSyncRequestIn,
-    background_tasks: BackgroundTasks,
-    session: Session = Depends(get_session),
-) -> dict:
-    result = _enqueue_ownerclan_job("ownerclan_items_raw", payload.params, session)
-    background_tasks.add_task(start_background_ownerclan_job, session_factory, uuid.UUID(result["jobId"]))
-    return result
-
-
-def _enqueue_ownerclan_job(job_type: str, params: dict, session: Session) -> dict:
-    job = SupplierSyncJob(supplier_code="ownerclan", job_type=job_type, status="queued", params=params)
     session.add(job)
     session.flush()
     return {"jobId": str(job.id)}
