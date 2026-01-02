@@ -240,6 +240,9 @@ export default function Home() {
     + (p.refinement_completed || 0);
   const latestEvent = events[0];
   const gatingSummary = gatingReport?.summary || {};
+  const sourcingPendingRate = supplierTotal > 0 ? ((p.sourcing_pending || 0) / supplierTotal) * 100 : 0;
+  const processingFailedRate = processingTotal > 0 ? ((p.refinement_failed || 0) / processingTotal) * 100 : 0;
+  const retryRate = listingTotal > 0 ? ((gatingSummary.retryCount || 0) / listingTotal) * 100 : 0;
   const gatingStats = [
     {
       label: "서류 보류 상품",
@@ -258,6 +261,26 @@ export default function Home() {
       value: gatingSummary.skipLogCount || 0,
       icon: <AlertTriangle className="h-3 w-3 text-destructive" />,
       description: "최근 7일 내 쿠팡 스킵 로그 건수",
+    },
+  ];
+  const kpiHighlights = [
+    {
+      label: "소싱 대기 비중",
+      value: sourcingPendingRate,
+      detail: `${(p.sourcing_pending || 0).toLocaleString()} / ${supplierTotal.toLocaleString()}`,
+      tone: "text-warning",
+    },
+    {
+      label: "가공 실패 비중",
+      value: processingFailedRate,
+      detail: `${(p.refinement_failed || 0).toLocaleString()} / ${processingTotal.toLocaleString()}`,
+      tone: "text-destructive",
+    },
+    {
+      label: "쿠팡 재시도 비중",
+      value: retryRate,
+      detail: `${(gatingSummary.retryCount || 0).toLocaleString()} / ${listingTotal.toLocaleString()}`,
+      tone: "text-info",
     },
   ];
 
@@ -494,6 +517,22 @@ export default function Home() {
               orchestrationProgress={orchestrationProgress}
               onRunCycle={handleRunCycle}
             />
+            <Card className="border border-border">
+              <CardHeader className="py-2">
+                <CardTitle className="text-xs">KPI 하이라이트</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-2 sm:grid-cols-3">
+                {kpiHighlights.map((item) => (
+                  <div key={item.label} className="rounded-sm border border-border/60 bg-muted/30 px-3 py-2">
+                    <div className="text-[10px] text-muted-foreground">{item.label}</div>
+                    <div className={`text-lg font-semibold ${item.tone}`}>
+                      {item.value.toFixed(1)}%
+                    </div>
+                    <div className="text-[9px] text-muted-foreground">{item.detail}</div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
             <div className="grid gap-3 md:grid-cols-[1fr,1fr]">
               <StatTable title="쿠팡 분기 현황" data={gatingStats} />
               <Card className="border border-border">
