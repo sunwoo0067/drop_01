@@ -11,6 +11,7 @@ from app.settings import settings
 from app.services.ai.agents.processing_agent import ProcessingAgent
 from app.services.image_processing import image_processing_service
 from app.services.detail_html_normalizer import normalize_ownerclan_html
+from app.services.processing.processing_autonomy_guard import ProcessingAutonomyGuard
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,7 @@ class ProcessingService:
     def __init__(self, db: Session):
         self.db = db
         self.processing_agent = ProcessingAgent(db)
+        self.autonomy_guard = ProcessingAutonomyGuard(db)
 
     def _name_only_processing(self) -> bool:
         return settings.product_processing_name_only
@@ -63,15 +65,29 @@ class ProcessingService:
         Orchestrates the processing of a single product using LangGraph ProcessingAgent.
         """
         try:
-            logger.info(f"Starting LangGraph processing for product {product_id}...")
-            
+            logger.info(f"LangGraph 상품 가공 시작 (상품 ID: {product_id})...")
+
             product = self.db.scalars(select(Product).where(Product.id == product_id)).one_or_none()
             if not product:
-                logger.error(f"Product {product_id} not found.")
+                logger.error(f"상품을 찾을 수 없습니다 (상품 ID: {product_id})")
                 return False
 
             product.processing_status = "PROCESSING"
             self.db.commit()
+
+            # 자율성 체크: 상품명 최적화 자동 실행 여부 확인
+            can_auto_process, reasons, tier = self.autonomy_guard.check_processing_autonomy(
+                product, 
+                "NAME",
+                metadata={"vendor": "ownerclan", "channel": "COUPANG"}
+            )
+            
+            if not can_auto_process:
+                logger.info(f"상품명 최적화가 자율성 정책에 의해 승인 대기 (상품 ID: {product_id}, 사유: {reasons})")
+                product.processing_status = "PENDING_APPROVAL"
+                product.last_processing_type = "NAME"
+                self.db.commit()
+                return True
 
             # 기본 정보 초기화
             if not product.processed_name:
@@ -138,15 +154,20 @@ class ProcessingService:
                             product.description = detail_html
                             # 중간 commit 제거 - 최종 commit에서 한 번에 처리
                 except Exception as e:
-                    logger.error(f"Error extracting data for product {product_id}: {e}")
+                    logger.error(f"상품 데이터 추출 실패 (상품 ID: {product_id}): {e}")
 
             # 벤치마크 상품 정보 가져오기 시도
             benchmark_data = None
             benchmark = None
             if product.supplier_item_id:
-                candidate = self.db.scalars(
-                    select(SourcingCandidate).where(SourcingCandidate.supplier_item_id == str(product.supplier_item_id))
-                ).first()
+                # supplier_item_id (UUID) -> SupplierItemRaw (item_code) -> SourcingCandidate (supplier_item_id)
+                raw_item = self.db.get(SupplierItemRaw, product.supplier_item_id)
+                if raw_item and raw_item.item_code:
+                    candidate = self.db.scalars(
+                        select(SourcingCandidate).where(SourcingCandidate.supplier_item_id == raw_item.item_code)
+                    ).first()
+                else:
+                    candidate = None
                 
                 if candidate and candidate.benchmark_product_id:
                     benchmark = self.db.get(BenchmarkProduct, candidate.benchmark_product_id)
@@ -183,7 +204,7 @@ class ProcessingService:
                 if output.get("processed_image_urls"):
                     product.processed_image_urls = output.get("processed_image_urls")
             except Exception as e:
-                logger.error(f"ProcessingAgent 실행 실패(productId={product_id}): {e}")
+                logger.error(f"ProcessingAgent 실행 실패 (상품 ID: {product_id}): {e}")
                 if not self._name_only_processing() and (not product.processed_image_urls) and raw_images:
                     # 비동기 이미지 처리 사용
                     product.processed_image_urls = await image_processing_service.process_and_upload_images_async(
@@ -205,7 +226,7 @@ class ProcessingService:
             return True
             
         except Exception as e:
-            logger.error(f"Error processing product {product_id}: {e}")
+            logger.error(f"상품 가공 중 오류 발생 (상품 ID: {product_id}): {e}")
             self.db.rollback()
             try:
                 product.processing_status = "FAILED"
@@ -236,7 +257,7 @@ class ProcessingService:
                         scoped_service = ProcessingService(tmp_db)
                         return await scoped_service.process_product(p_id, min_images_required=min_images_required)
                     except Exception as e:
-                        logger.error(f"Error in scoped processing for product {p_id}: {e}")
+                        logger.error(f"범위 가공 중 오류 발생 (상품 ID: {p_id}): {e}")
                         return False
         
         tasks = [_limited_process(pid) for pid in product_ids]
@@ -265,6 +286,21 @@ class ProcessingService:
                 return False
             product.processing_status = "PROCESSING"
             self.db.commit()
+            
+            # 자율성 체크: 프리미엄 이미지 생성 자동 실행 여부 확인
+            can_auto_process, reasons, tier = self.autonomy_guard.check_processing_autonomy(
+                product, 
+                "PREMIUM_IMAGE",
+                metadata={"vendor": "ownerclan", "channel": "COUPANG"}
+            )
+            
+            if not can_auto_process:
+                logger.info(f"프리미엄 이미지 생성이 자율성 정책에 의해 승인 대기 (상품 ID: {product_id}, 사유: {reasons})")
+                product.processing_status = "PENDING_APPROVAL"
+                product.last_processing_type = "PREMIUM_IMAGE"
+                self.db.commit()
+                return True
+            
             image_urls = product.processed_image_urls or []
             if image_urls:
                 first_image_url = image_urls[0]
@@ -283,13 +319,13 @@ class ProcessingService:
                             "specs": benchmark.specs
                         }
                 prompts = await ai_service.generate_premium_image_prompt(features, benchmark_data)
-                logger.info(f"Generated Premium Prompts for {product.name}: {prompts}")
+                logger.info(f"프리미엄 프롬프트 생성 완료 ({product.name}): {prompts}")
                 
                 positive_prompt = prompts.get("positive_prompt")
                 negative_prompt = prompts.get("negative_prompt", "")
                 
                 if positive_prompt:
-                    logger.info(f"Generating premium image for product {product.id}...")
+                    logger.info(f"프리미엄 이미지 생성 시작 (상품 ID: {product.id})...")
                     image_bytes = await ai_service.generate_image(
                         prompt=positive_prompt,
                         negative_prompt=negative_prompt,
@@ -306,7 +342,7 @@ class ProcessingService:
                         )
                         
                         if new_image_url:
-                            logger.info(f"Premium image uploaded: {new_image_url}")
+                            logger.info(f"프리미엄 이미지 업로드 완료: {new_image_url}")
                             # 대표 이미지 목록 앞에 추가
                             current_images = product.processed_image_urls or []
                             product.processed_image_urls = [new_image_url] + current_images
@@ -323,6 +359,6 @@ class ProcessingService:
             self.db.commit()
             return False
         except Exception as e:
-            logger.error(f"Error in premium processing for product {product_id}: {e}")
+            logger.error(f"프리미엄 가공 중 오류 발생 (상품 ID: {product_id}): {e}")
             self.db.rollback()
             return False

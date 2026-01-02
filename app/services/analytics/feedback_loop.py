@@ -27,13 +27,19 @@ class CoupangFeedbackLoopService:
         if not product:
             return
 
+        from app.models import SupplierItemRaw
+        
         # 1. 원본 소싱 후보(Candidate) 정보 추출
-        # (통계 및 키워드 연계 분석용)
-        candidate = session.execute(
-            select(SourcingCandidate)
-            .where(SourcingCandidate.supplier_item_id == product.supplier_item_id)
-            .limit(1)
-        ).scalar_one_or_none()
+        # product.supplier_item_id is UUID linking to SupplierItemRaw.id
+        raw_item = session.get(SupplierItemRaw, product.supplier_item_id) if product.supplier_item_id else None
+        
+        candidate = None
+        if raw_item and raw_item.item_code:
+            candidate = session.execute(
+                select(SourcingCandidate)
+                .where(SourcingCandidate.supplier_item_id == raw_item.item_code)
+                .limit(1)
+            ).scalar_one_or_none()
 
         keyword = candidate.sourcing_policy.get("keyword") if candidate and candidate.sourcing_policy else None
         category_code = candidate.sourcing_policy.get("category_code") if candidate and candidate.sourcing_policy else None
