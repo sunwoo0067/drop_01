@@ -1,5 +1,6 @@
 import logging
 import datetime
+from datetime import timezone
 import asyncio
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
@@ -19,7 +20,7 @@ from app.services.ai.exceptions import (
 from app.services.lifecycle_scheduler import get_lifecycle_scheduler
 from app.services.analytics.dynamic_pricing_service import DynamicPricingService
 
-from app.models import OrchestrationEvent, Product, MarketAccount, SupplierItemRaw, SourcingCandidate, SystemSetting, OrderItem, Order
+from app.models import OrchestrationEvent, Product, MarketAccount, SupplierItemRaw, SourcingCandidate, SystemSetting, OrderItem, Order, MarketListing
 
 logger = logging.getLogger(__name__)
 
@@ -448,6 +449,7 @@ class OrchestratorService:
             # 전략 상품(STEP 2, 3) 위주로 선정
             stmt = (
                 select(MarketListing)
+                .select_from(MarketListing)
                 .join(Product, MarketListing.product_id == Product.id)
                 .where(Product.lifecycle_stage.in_(["STEP_2", "STEP_3"]))
                 .where(MarketListing.status == "ACTIVE")
@@ -578,7 +580,7 @@ class OrchestratorService:
                     all_accounts = db.scalars(stmt_acc).all()
                     
                     # 각 마켓별 오늘 등록된 상품 수 집계 및 쿼터 체크
-                    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+                    today_start = datetime.datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
                     active_accounts = []
                     for acc in all_accounts:
                         quota = market_quotas.get(acc.market_code, 999999)
@@ -627,7 +629,8 @@ class OrchestratorService:
                                     target_acc = active_accounts[idx % len(active_accounts)]
                                     try:
                                         return m_service.register_product(target_acc.market_code, target_acc.id, p_id)
-                                    except:
+                                    except Exception as e:
+                                        logger.error(f"Error registering product {p_id} to {target_acc.market_code}: {e}")
                                         return {"status": "error"}
 
                             res = await asyncio.to_thread(_sync_register)
@@ -642,3 +645,26 @@ class OrchestratorService:
                 await asyncio.sleep(10)
             
             await asyncio.sleep(2) # API 부하 방지
+
+
+if __name__ == "__main__":
+    import asyncio
+    from app.session_factory import session_factory
+    
+    async def main():
+        logging.basicConfig(level=logging.INFO)
+        with session_factory() as db:
+            orchestrator = OrchestratorService(db)
+            
+            # 병렬로 지속 가공 및 지속 등록 실행
+            await asyncio.gather(
+                orchestrator.run_continuous_processing(),
+                orchestrator.run_continuous_listing()
+            )
+
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        logger.exception(f"Orchestrator service entry point failed: {e}")

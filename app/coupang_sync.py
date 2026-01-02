@@ -342,7 +342,7 @@ def _preserve_detail_html(product: Product | None = None) -> bool:
 
 
 def _name_only_processing() -> bool:
-    return True
+    return settings.product_processing_name_only
 
 
 def _get_original_image_urls(session: Session, product: Product) -> list[str]:
@@ -1703,20 +1703,22 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
     if not payload_images:
         processed_images = product.processed_image_urls if isinstance(product.processed_image_urls, list) else []
         payload_images = processed_images
+    payload_images = [
+        url.strip()
+        for url in payload_images
+        if isinstance(url, str) and url.strip()
+    ]
+    payload_images = list(dict.fromkeys(payload_images))
 
     if len(payload_images) > 9:
         payload_images = payload_images[:9]
     if len(payload_images) < 1:
-        if _name_only_processing():
-            logger.warning(
-                "이미지 없이 등록을 시도합니다(name_only). productId=%s",
-                product.id,
-            )
-        else:
-            logger.error(
-                f"쿠팡 등록을 위해서는 이미지가 최소 1장 필요합니다(productId={product.id}, images={len(payload_images)})"
-            )
-            return False, f"쿠팡 등록을 위해서는 이미지가 최소 1장 필요합니다(images={len(payload_images)})"
+        logger.warning(
+            "쿠팡 등록 스킵: 이미지 없음(productId=%s, name_only=%s)",
+            product.id,
+            _name_only_processing(),
+        )
+        return False, "SKIPPED: 쿠팡 등록을 위해서는 이미지가 최소 1장 필요합니다"
 
     try:
         client = _get_client_for_account(account)
@@ -1939,6 +1941,7 @@ def register_product(session: Session, account_id: uuid.UUID, product_id: uuid.U
         except Exception as e:
             logger.warning(f"등록 직후 상세(contents) 보강 실패: {e}")
     
+    logger.info(f"쿠팡 API 등록 성공, DB 영속화 시작 (ID: {product.id}, sellerProductId: {seller_product_id})")
     # MarketListing 생성 또는 업데이트
     stmt = insert(MarketListing).values(
         product_id=product.id,
@@ -3094,38 +3097,27 @@ def _map_product_to_coupang_payload(
                 # 데이터 형식에 따른 기본값 설정
                 data_type = attr.get("dataType", "STRING")
                 basic_unit = attr.get("basicUnit", "")
-                usable_units = attr.get("usableUnits", [])
                 
-                # 기본값 설정: 수량/무게/부피는 1개/1g/1ml, 그 외는 "-"
-                # 템플릿에 값이 있으면 우선 사용, 없으면 기본값 계산
+                # 템플릿에 값이 있으면 우선 사용, 없으면 기본값 설정
                 attr_value = template_attrs.get(attr_type)
                 if not attr_value:
-                    attr_value = "상세페이지 참조" # 기본값
-                if data_type == "NUMBER":
-                    if "수량" in attr_type or "qty" in attr_type.lower():
-                        attr_value = "1개"
-                        if basic_unit and basic_unit != "없음":
-                            attr_value = f"1{basic_unit}"
-                    elif "무게" in attr_type or "중량" in attr_type or "weight" in attr_type.lower():
-                        attr_value = "1g"
-                        if basic_unit and basic_unit != "없음":
-                            attr_value = f"1{basic_unit}"
-                    elif "용량" in attr_type or "volume" in attr_type.lower():
-                        attr_value = "1ml"
-                        if basic_unit and basic_unit != "없음":
-                            attr_value = f"1{basic_unit}"
+                    if data_type == "NUMBER":
+                        if "수량" in attr_type or "qty" in attr_type.lower():
+                            attr_value = "1개"
+                            if basic_unit and basic_unit != "없음":
+                                attr_value = f"1{basic_unit}"
+                        elif "무게" in attr_type or "중량" in attr_type or "weight" in attr_type.lower():
+                            attr_value = "1g"
+                            if basic_unit and basic_unit != "없음":
+                                attr_value = f"1{basic_unit}"
+                        elif "용량" in attr_type or "volume" in attr_type.lower():
+                            attr_value = "1ml"
+                            if basic_unit and basic_unit != "없음":
+                                attr_value = f"1{basic_unit}"
+                        else:
+                            attr_value = "1"
                     else:
-                        attr_value = "1"
-                elif data_type == "STRING":
-                    # 색상, 사이즈 등 특정 키워드에 대한 처리
-                    low_type = attr_type.lower()
-                    if "색상" in low_type or "color" in low_type:
-                        attr_value = "상세이미지 참조"
-                    elif "사이즈" in low_type or "size" in low_type:
-                        attr_value = "상세페이지 참조"
-                    elif "재질" in low_type or "material" in low_type:
-                        attr_value = "상세페이지 참조"
-                    elif "모델명" in low_type or "model" in low_type:
+                        # STRING 타입 필수 속성은 일단 홀더로 두고, 옵션 매핑 단계에서 실제 값으로 변환 시도
                         attr_value = "상세페이지 참조"
                 
                 # 필수 옵션에 추가
@@ -3134,7 +3126,6 @@ def _map_product_to_coupang_payload(
                     "attributeValueName": attr_value,
                     "exposed": "EXPOSED"
                 })
-                logger.info(f"필수 attribute 추가: {attr_type}={attr_value} (type={data_type}, unit={basic_unit})")
             
             # 필수 속성이 있는 경우 로깅
             if mandatory_attrs:
@@ -3301,6 +3292,7 @@ def _map_product_to_coupang_payload(
             "offerCondition": offer_condition,
         })
     else:
+        seen_option_keys: set[str] = set()
         for opt in options:
             # 옵션별 가격 계산
             opt_price = int(opt.selling_price or 0)
@@ -3308,8 +3300,85 @@ def _map_product_to_coupang_payload(
             opt_price = ((opt_price + 99) // 100) * 100
             
             # 옵션명을 상품명과 조합 (쿠팡 권장: [상품명] [옵션값])
-            full_item_name = f"{name_to_use} {opt.option_value}" if opt.option_value != "단품" else name_to_use
+            opt_name = str(opt.option_name or "").strip()
+            opt_val = str(opt.option_value or "").strip() or "단품"
+            option_key = f"{opt_name.lower()}::{opt_val.lower()}"
+            if option_key in seen_option_keys:
+                logger.warning(
+                    "중복 옵션값 감지로 옵션을 건너뜁니다(productId=%s, option=%s/%s)",
+                    product.id,
+                    opt_name,
+                    opt_val,
+                )
+                continue
+            seen_option_keys.add(option_key)
+
+            full_item_name = f"{name_to_use} {opt_val}" if opt_val != "단품" else name_to_use
             
+            # [개선] 옵션별 유니크 속성 매핑
+            # 카테고리 필수 속성 중 옵션명과 매칭되는 항목이 있으면 해당 옵션값을 속성값으로 사용
+            # 이를 통해 '중복된 옵션값이 있습니다' 에러 방지 (Coupang은 itemName뿐만 아니라 attributes의 유니크성도 체크함)
+            specific_attributes = [attr.copy() for attr in item_attributes]
+            opt_name_low = opt_name.lower()
+            
+            # [개선] 옵션별 유니크 속성 매핑 로직 강화
+            # 1. 기존 속성 중 색상/사이즈와 유사한 것을 찾아 먼저 업데이트 시도
+            updated_existing = False
+            for attr in specific_attributes:
+                attr_type_low = attr.get("attributeTypeName", "").lower()
+                is_color_attr = any(k in attr_type_low for k in ["색상", "컬러", "color", "종류", "타입", "type"])
+                is_size_attr = any(k in attr_type_low for k in ["사이즈", "size", "규격", "용량"])
+                
+                # 옵션 그룹명(opt_name)이 속성명과 매칭되거나, 
+                # 옵션명이 매우 일반적인 경우(option, 옵션 등) 첫 번째 색상/사이즈 속성에 할당
+                is_generic_opt = opt_name_low in ["", "option", "옵션", "선택", "종류", "구분"]
+                
+                match_color = (is_color_attr and ("색상" in opt_name_low or is_generic_opt))
+                match_size = (is_size_attr and ("사이즈" in opt_name_low or is_generic_opt))
+                
+                if match_color or match_size:
+                    attr["attributeValueName"] = opt_val
+                    updated_existing = True
+                    # 컬러/사이즈 하나만 업데이트해도 일단 중복은 피할 수 있으나, 
+                    # 여러 속성이 있을 경우를 위해 break는 일단 보류하거나 필요시 조정
+            
+            # 2. 만약 업데이트된 것이 없다면, 필수/노출 속성 외에 OPTIONAL 속성에서 매칭되는 것 탐색
+            if not updated_existing and notice_meta and isinstance(notice_meta.get("attributes"), list):
+                for candidate in notice_meta["attributes"]:
+                    if not isinstance(candidate, dict): continue
+                    c_type = candidate.get("attributeTypeName", "")
+                    c_type_low = c_type.lower()
+                    
+                    is_c_color = any(k in c_type_low for k in ["색상", "컬러", "color"])
+                    is_c_size = any(k in c_type_low for k in ["사이즈", "size", "규격"])
+                    
+                    is_generic_opt = opt_name_low in ["", "option", "옵션", "선택", "종류", "구분"]
+                    
+                    if (is_c_color and ("색상" in opt_name_low or is_generic_opt)) or \
+                       (is_c_size and ("사이즈" in opt_name_low or is_generic_opt)):
+                        # 중복 추가 방지: 이미 specific_attributes 에 해당 c_type 이 있는지 확인
+                        if not any(a.get("attributeTypeName") == c_type for a in specific_attributes):
+                            specific_attributes.append({
+                                "attributeTypeName": c_type,
+                                "attributeValueName": opt_val,
+                                "exposed": "EXPOSED"
+                            })
+                            updated_existing = True
+                            break
+            
+            # 3. 여전히 업데이트된 속성이 없는데 옵션이 여러개라면 Coupang API 제약(중복 아이템 불허) 대응을 위해 강제 추가
+            if not updated_existing and len(options) > 1:
+                # 이미 '색상' 속성이 있는지 확인
+                color_attr = next((a for a in specific_attributes if a.get("attributeTypeName") == "색상"), None)
+                if color_attr:
+                    color_attr["attributeValueName"] = opt_val
+                else:
+                    specific_attributes.append({
+                        "attributeTypeName": "색상",
+                        "attributeValueName": opt_val,
+                        "exposed": "EXPOSED"
+                    })
+
             items_payload.append({
                 "itemName": full_item_name[:150],
                 "originalPrice": opt_price,
@@ -3325,7 +3394,7 @@ def _map_product_to_coupang_payload(
                 "pccNeeded": pcc_needed,
                 "unitCount": 1,
                 "images": images,
-                "attributes": item_attributes, # TODO: 카테고리에 맞는 상세 옵션 속성 매핑 필요 시 보완
+                "attributes": specific_attributes, 
                 "certifications": item_certifications,
                 "contents": (
                     contents_blocks + [{"contentsType": "HTML", "contentDetails": [{"content": description_html, "detailType": "TEXT"}]}]
