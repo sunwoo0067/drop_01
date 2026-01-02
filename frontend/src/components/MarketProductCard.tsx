@@ -27,8 +27,9 @@ interface MarketProductCardProps {
         marketAccountId: string;
         accountName: string | null;
         marketCode: string;
+        storeUrl?: string | null;
     };
-    onViewOnCoupang: (marketItemId: string) => void;
+    onViewExternal: (item: MarketProductCardProps["item"]) => void;
     onPremiumOptimize: (productId: string) => void;
 }
 
@@ -44,7 +45,10 @@ const formatDate = (dateStr: string | null) => {
     });
 };
 
-const MarketProductCard = memo(({ item, onViewOnCoupang, onPremiumOptimize }: MarketProductCardProps) => {
+const MarketProductCard = memo(({ item, onViewExternal, onPremiumOptimize }: MarketProductCardProps) => {
+    const sellingPriceValue = Number(item.sellingPrice ?? 0);
+    const sellingPrice = Number.isFinite(sellingPriceValue) ? sellingPriceValue : 0;
+
     return (
         <Card
             className="group overflow-hidden border-none shadow-md hover:shadow-2xl transition-all duration-500 rounded-3xl bg-card/40 backdrop-blur-xl border border-white/10"
@@ -93,12 +97,12 @@ const MarketProductCard = memo(({ item, onViewOnCoupang, onPremiumOptimize }: Ma
                 </div>
 
                 {/* 외부 링크 */}
-                <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="absolute bottom-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
                     <Button
                         size="icon"
                         variant="secondary"
                         className="h-9 w-9 rounded-full shadow-lg"
-                        onClick={() => onViewOnCoupang(item.marketItemId)}
+                        onClick={() => onViewExternal(item)}
                     >
                         <ExternalLink className="h-4 w-4" />
                     </Button>
@@ -118,7 +122,7 @@ const MarketProductCard = memo(({ item, onViewOnCoupang, onPremiumOptimize }: Ma
                 <div className="flex items-center justify-between text-sm py-3 border-y border-foreground/5">
                     <div className="flex flex-col">
                         <span className="text-muted-foreground text-[10px] uppercase font-bold tracking-tighter">판매가</span>
-                        <span className="font-bold text-base text-primary">{item.sellingPrice.toLocaleString()}원</span>
+                        <span className="font-bold text-base text-primary">{sellingPrice.toLocaleString()}원</span>
                     </div>
                     <div className="flex flex-col items-end">
                         <span className="text-muted-foreground text-[10px] uppercase font-bold tracking-tighter">등록일</span>
@@ -132,7 +136,7 @@ const MarketProductCard = memo(({ item, onViewOnCoupang, onPremiumOptimize }: Ma
                     className="flex-1 rounded-2xl font-bold bg-accent hover:bg-accent/80 text-foreground border-none transition-all"
                     variant="outline"
                     size="sm"
-                    onClick={() => onViewOnCoupang(item.marketItemId)}
+                    onClick={() => onViewExternal(item)}
                 >
                     <ExternalLink className="mr-2 h-4 w-4" />
                     조회
@@ -168,5 +172,3 @@ const MarketProductCard = memo(({ item, onViewOnCoupang, onPremiumOptimize }: Ma
 MarketProductCard.displayName = "MarketProductCard";
 
 export default MarketProductCard;
-
-

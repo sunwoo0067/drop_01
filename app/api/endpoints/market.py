@@ -365,14 +365,17 @@ def list_market_products(
     from app.db import get_session as get_dropship_session
     from app.session_factory import session_factory
     
+    market_code_normalized = (market_code or "COUPANG").strip().upper()
+
     # 대상 계정 ID 목록 추출
     if account_id:
         account_ids = [account_id]
     else:
         stmt_accounts = select(MarketAccount.id).where(
-            MarketAccount.market_code == market_code,
             MarketAccount.is_active == True
         )
+        if market_code_normalized != "ALL":
+            stmt_accounts = stmt_accounts.where(MarketAccount.market_code == market_code_normalized)
         account_ids = session.scalars(stmt_accounts).all()
     
     if not account_ids:
@@ -383,6 +386,12 @@ def list_market_products(
             "offset": offset,
         }
     
+    accounts_map = {}
+    if account_ids:
+        acc_stmt = select(MarketAccount).where(MarketAccount.id.in_(account_ids))
+        accounts = session.scalars(acc_stmt).all()
+        accounts_map = {acc.id: acc for acc in accounts}
+
     # MarketListing 조회
     stmt = (
         select(MarketListing)
@@ -409,15 +418,19 @@ def list_market_products(
         
         for listing in listings:
             product = product_map.get(listing.product_id)
+            account = accounts_map.get(listing.market_account_id)
             items.append({
                 "id": str(listing.id),
                 "productId": str(listing.product_id),
                 "marketAccountId": str(listing.market_account_id),
+                "marketCode": account.market_code if account else market_code_normalized,
+                "accountName": account.name if account else None,
                 "marketItemId": listing.market_item_id,
                 "status": listing.status,
                 "coupangStatus": listing.coupang_status,
                 "rejectionReason": listing.rejection_reason,
                 "linkedAt": listing.linked_at.isoformat() if listing.linked_at else None,
+                "storeUrl": listing.store_url,
                 # Product 정보
                 "name": product.name if product else None,
                 "processedName": product.processed_name if product else None,
@@ -438,7 +451,7 @@ def list_market_products(
         "total": total,
         "limit": limit,
         "offset": offset,
-        "marketCode": market_code,
+        "marketCode": market_code_normalized,
         "accountIds": [str(aid) for aid in account_ids],
     }
 

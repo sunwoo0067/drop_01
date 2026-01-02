@@ -53,7 +53,7 @@ export default function MarketProductsPage() {
     // SWR로 상품 데이터 가져오기 - 캐싱 및 자동 재검증
     const productsUrl = selectedAccountId && selectedAccountId !== 'all'
         ? `/market/products?accountId=${selectedAccountId}&limit=100`
-        : '/market/products?limit=100';
+        : '/market/products?marketCode=ALL&limit=100';
 
     const { data: productsData, error: productsError, isLoading, mutate } = useSWR(
         productsUrl,
@@ -73,10 +73,18 @@ export default function MarketProductsPage() {
         setSelectedAccountId(value);
     }, []);
 
-    // 쿠팡 상품 상세 보기 (새 탭)
-    const handleViewOnCoupang = useCallback((sellerProductId: string) => {
-        // 쿠팡 Wing 판매자 센터 상품 조회 URL (로그인 필요)
-        window.open(`https://wing.coupang.com/product/${sellerProductId}`, '_blank');
+    const handleViewExternal = useCallback((item: any) => {
+        if (item.storeUrl) {
+            window.open(item.storeUrl, '_blank');
+            return;
+        }
+        if (item.marketCode === "COUPANG") {
+            window.open(`https://wing.coupang.com/product/${item.marketItemId}`, '_blank');
+            return;
+        }
+        if (item.marketCode === "SMARTSTORE") {
+            window.open("https://sell.smartstore.naver.com/#/products", "_blank");
+        }
     }, []);
 
     const handlePremiumOptimize = useCallback(async (productId: string) => {
@@ -96,7 +104,7 @@ export default function MarketProductsPage() {
         return items.filter((item: any) =>
             (item.name || "").toLowerCase().includes(searchLower) ||
             (item.processedName || "").toLowerCase().includes(searchLower) ||
-            item.marketItemId.toLowerCase().includes(searchLower)
+            (item.marketItemId || "").toString().toLowerCase().includes(searchLower)
         );
     }, [items, searchTerm]);
 
@@ -219,7 +227,7 @@ export default function MarketProductsPage() {
                         <MarketProductCard
                             key={item.id}
                             item={item}
-                            onViewOnCoupang={handleViewOnCoupang}
+                            onViewExternal={handleViewExternal}
                             onPremiumOptimize={handlePremiumOptimize}
                         />
                     ))
