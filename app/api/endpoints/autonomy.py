@@ -9,7 +9,7 @@ from typing import Optional, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import select, func, case
 from sqlalchemy.orm import Session
 
 from app.db import get_session
@@ -311,7 +311,10 @@ def get_segment_stats(
             AutonomyDecisionLog.tier_used.label("tier"),
             func.count(AutonomyDecisionLog.id).label("total_decisions"),
             func.sum(
-                func.cast(AutonomyDecisionLog.decision == "APPLIED", func.int)
+                case(
+                    (AutonomyDecisionLog.decision == "APPLIED", 1),
+                    else_=0,
+                )
             ).label("applied_count"),
             func.avg(AutonomyDecisionLog.confidence).label("avg_confidence")
         )
