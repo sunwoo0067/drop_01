@@ -115,6 +115,10 @@ class OwnerClanClient:
             resp = client.put(url, json=payload or {}, headers=headers)
 
 
+        if resp.status_code == 403 and not settings.ownerclan_use_self_proxy:
+            logger.warning("OwnerClan GraphQL returned 403. Retrying via proxy.")
+            return self._call_via_proxy("POST", self._graphql_url, payload=payload)
+
         if not resp.content:
             return resp.status_code, {}
         try:

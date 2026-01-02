@@ -897,8 +897,7 @@ query {{
                     error_message=None if status_code == 200 else f"HTTP {status_code}"
                 ))
             except Exception as e:
-                logger.error(f"오너클랜 목록 수집 중 오류: {e}")
-                break # 다음 배치 시도 또는 종료
+                raise RuntimeError(f"오너클랜 목록 수집 중 오류: {e}") from e
             
             if status_code != 200 or not payload.get("data"):
                 error_detail = None
@@ -927,6 +926,8 @@ query {{
             time.sleep(0.5)
 
         if not keys_batch:
+            if date_preset and date_preset != "all":
+                raise RuntimeError(f"오너클랜 최근 수집 결과가 없습니다(datePreset={date_preset}).")
             break
 
         # --- 2단계: 수집된 키들에 대한 상세 정보 일괄 조회 ---
@@ -988,47 +989,55 @@ query ($keys: [ID!]!) {
                 error_message=None if status_code == 200 else f"HTTP {status_code}"
             ))
         except Exception as e:
-            logger.error(f"오너클랜 상세 정보 일괄 수집 중 오류: {e}")
-            continue # 다음 배치 시도
+            raise RuntimeError(f"오너클랜 상세 정보 일괄 수집 중 오류: {e}") from e
 
-        if status_code == 200 and detail_payload.get("data"):
-            nodes = detail_payload["data"].get("itemsByKeys") or []
-            for node in nodes:
-                item_code = node.get("key")
-                if not item_code:
-                    continue
-                
-                # HTML 정규화
-                detail_html = node.get("detail_html") or node.get("content")
-                if isinstance(detail_html, str) and detail_html.strip():
-                    node["detail_html"] = normalize_ownerclan_html(detail_html)
-                
-                source_updated_at = _parse_ownerclan_datetime(node.get("updatedAt"))
+        if status_code != 200 or not detail_payload.get("data"):
+            error_detail = None
+            if isinstance(detail_payload, dict):
+                errors = detail_payload.get("errors")
+                if isinstance(errors, list) and errors:
+                    error_detail = errors[0].get("message") if isinstance(errors[0], dict) else str(errors[0])
+            raise RuntimeError(
+                f"OwnerClan itemsByKeys query failed (HTTP {status_code}): {error_detail or 'no data'}"
+            )
 
-                stmt = insert(SupplierItemRaw).values(
-                    supplier_code="ownerclan",
-                    item_code=str(item_code),
-                    item_key=str(node.get("key")),
-                    item_id=str(node.get("id")),
-                    source_updated_at=source_updated_at,
-                    raw=_sanitize_json(node),
-                    fetched_at=datetime.now(timezone.utc),
-                )
+        nodes = detail_payload["data"].get("itemsByKeys") or []
+        for node in nodes:
+            item_code = node.get("key")
+            if not item_code:
+                continue
 
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["supplier_code", "item_code"],
-                    set_={
-                        "item_key": stmt.excluded.item_key,
-                        "item_id": stmt.excluded.item_id,
-                        "raw": stmt.excluded.raw,
-                        "fetched_at": stmt.excluded.fetched_at,
-                    },
-                )
-                session.execute(stmt)
-                processed += 1
+            # HTML 정규화
+            detail_html = node.get("detail_html") or node.get("content")
+            if isinstance(detail_html, str) and detail_html.strip():
+                node["detail_html"] = normalize_ownerclan_html(detail_html)
 
-                if max_items > 0 and processed >= max_items:
-                    break
+            source_updated_at = _parse_ownerclan_datetime(node.get("updatedAt"))
+
+            stmt = insert(SupplierItemRaw).values(
+                supplier_code="ownerclan",
+                item_code=str(item_code),
+                item_key=str(node.get("key")),
+                item_id=str(node.get("id")),
+                source_updated_at=source_updated_at,
+                raw=_sanitize_json(node),
+                fetched_at=datetime.now(timezone.utc),
+            )
+
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["supplier_code", "item_code"],
+                set_={
+                    "item_key": stmt.excluded.item_key,
+                    "item_id": stmt.excluded.item_id,
+                    "raw": stmt.excluded.raw,
+                    "fetched_at": stmt.excluded.fetched_at,
+                },
+            )
+            session.execute(stmt)
+            processed += 1
+
+            if max_items > 0 and processed >= max_items:
+                break
 
         # 상태 업데이트 및 커밋
         upsert_sync_state(session, "items_raw", date_to_ms, cursor)
