@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     ownerclan_auth_url: str = "https://auth.ownerclan.com/auth"
     ownerclan_graphql_url: str = "https://api.ownerclan.com/v1/graphql"
     ownerclan_use_handler: bool = False # PR-3: 신규 핸들러 사용 여부
+    ownerclan_use_self_proxy: bool = False # Supabase Edge Function 프록시 사용 여부
     ownerclan_retry_count: int = 5 # tenacity 재시도 횟수
     ownerclan_batch_commit_size: int = 200 # 배치 커밋 단위 (50~2000)
 

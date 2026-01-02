@@ -8,9 +8,9 @@ from app.settings import settings
 from app.models import SourceBase, DropshipBase, MarketBase
 
 
-source_engine = create_engine(settings.source_database_url, pool_pre_ping=True)
-dropship_engine = create_engine(settings.dropship_database_url, pool_pre_ping=True)
-market_engine = create_engine(settings.market_database_url, pool_pre_ping=True)
+source_engine = create_engine(settings.source_database_url, pool_pre_ping=True, pool_size=20, max_overflow=20)
+dropship_engine = create_engine(settings.dropship_database_url, pool_pre_ping=True, pool_size=20, max_overflow=20)
+market_engine = create_engine(settings.market_database_url, pool_pre_ping=True, pool_size=20, max_overflow=20)
 
 SessionLocal = sessionmaker(
     autoflush=False,
