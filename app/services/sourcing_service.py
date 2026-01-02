@@ -304,8 +304,19 @@ class SourcingService:
             elif margin_rate > 0: profit_score = margin_rate / 0.15
         
         # Seasonality (30%)
-        # already provided as seasonal_score arg, or default to 0.5
-        s_score = seasonal_score if seasonal_score is not None else 0.5
+        # 시즌성 점수가 없으면 AI로 자동 계산
+        if seasonal_score is None:
+            from app.services.ai.service import AIService
+            ai_service = AIService()
+            try:
+                seasonality_result = await ai_service.predict_seasonality(name)
+                s_score = seasonality_result.get("current_month_score", 0.5)
+                logger.info(f"시즌성 점수 자동 계산 (상품명: {name}, 점수: {s_score:.2f})")
+            except Exception as e:
+                logger.warning(f"시즌성 점수 계산 실패 (상품명: {name}): {e}")
+                s_score = 0.5  # 기본값
+        else:
+            s_score = seasonal_score
         
         # Competition (20%) - Placeholder (Default high if unknown)
         comp_score = 1.0 
@@ -338,6 +349,17 @@ class SourcingService:
             elif grade == "BLOCK":
                 final_score_val -= 50.0 # BLOCK은 자동 승인 방지
                 logger.info(f"Policy Penalty: BLOCK -50 (New Score: {final_score_val:.1f})")
+
+        # 5. 시즌성 점수 기반 보너스 추가
+        # 현재 월에 높은 시즌성 점수를 가진 상품에 추가 가산점
+        if s_score > 0.7:
+            seasonality_boost = 15  # 높은 시즌성 점수 보너스
+            final_score_val += seasonality_boost
+            logger.info(f"시즌성 보너스 +{seasonality_boost} (현재 월 시즌성 점수: {s_score:.2f}, 새 점수: {final_score_val:.1f})")
+        elif s_score > 0.5:
+            seasonality_boost = 8  # 중간 시즌성 점수 보너스
+            final_score_val += seasonality_boost
+            logger.info(f"시즌성 보너스 +{seasonality_boost} (현재 월 시즌성 점수: {s_score:.2f}, 새 점수: {final_score_val:.1f})")
 
         final_score_val = max(0.0, min(100.0, final_score_val))
 
