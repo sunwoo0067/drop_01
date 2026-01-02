@@ -801,6 +801,8 @@ query ($first: Int!, $after: String) {
 
 def sync_ownerclan_items_raw(session: Session, job: SupplierSyncJob) -> OwnerClanJobResult:
     account_id, access_token = _get_ownerclan_access_token(session, user_type="seller")
+    if not access_token:
+        raise RuntimeError("OwnerClan access token missing for user_type=seller. Check primary account settings.")
 
     client = OwnerClanClient(
         auth_url=settings.ownerclan_auth_url,
@@ -899,7 +901,14 @@ query {{
                 break # 다음 배치 시도 또는 종료
             
             if status_code != 200 or not payload.get("data"):
-                break
+                error_detail = None
+                if isinstance(payload, dict):
+                    errors = payload.get("errors")
+                    if isinstance(errors, list) and errors:
+                        error_detail = errors[0].get("message") if isinstance(errors[0], dict) else str(errors[0])
+                raise RuntimeError(
+                    f"OwnerClan allItems query failed (HTTP {status_code}): {error_detail or 'no data'}"
+                )
                 
             data = payload["data"]["allItems"]
             edges = data.get("edges") or []

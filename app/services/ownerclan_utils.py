@@ -43,24 +43,32 @@ def _sanitize_json(value: Any) -> Any:
         return new_dict
     return value
 
-def get_primary_ownerclan_account(session: Session, user_type: str = "seller") -> SupplierAccount | None:
+def get_primary_ownerclan_account(session: Session, user_type: str | None = "seller") -> SupplierAccount | None:
     """DB에서 오너클랜 계정 정보를 조회합니다."""
-    # settings에 명시된 ID가 있으면 그것을 우선, 없으면 첫 번째 계정
-    # 실제로는 'ownerclan' supplier_code를 가진 활성 계정을 찾음
-    account = (
+    base = (
         session.query(SupplierAccount)
         .filter(SupplierAccount.supplier_code == "ownerclan")
-        .filter(SupplierAccount.is_active == True)
+        .filter(SupplierAccount.is_active.is_(True))
+    )
+    if user_type:
+        base = base.filter(SupplierAccount.user_type == user_type)
+
+    primary = (
+        base.filter(SupplierAccount.is_primary.is_(True))
+        .order_by(SupplierAccount.updated_at.desc())
         .first()
     )
-    return account
+    if primary:
+        return primary
+
+    return base.order_by(SupplierAccount.updated_at.desc()).first()
 
 def _get_ownerclan_access_token(session: Session, user_type: str = "seller") -> tuple[str | None, str | None]:
     """DB 계정 정보에서 (account_id, access_token)을 가져옵니다."""
     account = get_primary_ownerclan_account(session, user_type)
     if not account:
         return None, None
-    token = (account.credentials or {}).get("access_token")
+    token = (account.credentials or {}).get("access_token") or account.access_token
     return str(account.id), token
 
 def upsert_sync_state(session: Session, sync_type: str, watermark_ms: int | None, cursor: str | None):
