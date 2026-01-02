@@ -1,0 +1,22 @@
+[Unit]
+Description=OwnerClan Sync Service (%i)
+After=network.target postgresql.service
+Documentation=https://github.com/sunwoo0067/drop_01
+
+[Service]
+Type=simple
+# 운영 환경에 맞춰 User/Group 변경 필요
+User=sunwoo
+Group=sunwoo
+WorkingDirectory=/home/sunwoo/project/drop/drop_01/drop_01_dev
+EnvironmentFile=/home/sunwoo/project/drop/drop_01/drop_01_dev/.env
+# %i가 items, orders, qna 등으로 들어오면 해당 JOB_TYPE으로 설정
+Environment=OWNERCLAN_JOB_TYPE=ownerclan_%i_raw
+ExecStart=/usr/bin/bash ops/run_ownerclan_sync.sh
+Restart=on-failure
+RestartSec=30s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

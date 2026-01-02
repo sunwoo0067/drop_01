@@ -1,0 +1,11 @@
+[Unit]
+Description=OwnerClan Sync Timer (%i)
+
+[Timer]
+OnBootSec=1min
+# 기본 실행 주기 (설치 스크립트에서 최적화 권장: 주문 1분, 아이템 15분 등)
+OnUnitActiveSec=5min
+Unit=sync@%i.service
+
+[Install]
+WantedBy=timers.target
