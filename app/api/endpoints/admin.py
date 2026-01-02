@@ -114,6 +114,19 @@ class PricingExperimentUpdate(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PricingExperimentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    status: str
+    test_ratio: float
+    config_variant: Optional[dict] = None
+    metrics_summary: Optional[dict] = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class TuningRecommendationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     

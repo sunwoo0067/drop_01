@@ -9,7 +9,20 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, delete
 
 from app.db import get_session
-from app.models import APIKey, MarketAccount, SupplierAccount, MarketListing, MarketOrderRaw, MarketProductRaw, Order, OrderItem
+from app.models import (
+    APIKey,
+    MarketAccount,
+    SupplierAccount,
+    MarketListing,
+    MarketOrderRaw,
+    MarketProductRaw,
+    Order,
+    OrderItem,
+    MarketInquiryRaw,
+    PricingRecommendation,
+    PriceChangeLog,
+    PricingSettings,
+)
 from app.ownerclan_client import OwnerClanClient
 from app.settings import settings
 
@@ -420,10 +433,15 @@ def delete_coupang_account(account_id: uuid.UUID, session: Session = Depends(get
     if order_raw_ids:
         session.query(Order).filter(Order.market_order_id.in_(order_raw_ids)).update({"market_order_id": None}, synchronize_session=False)
 
-    # 3. 연관된 Raw 데이터 및 Listing 삭제
+    # 3. 연관된 데이터 삭제 (FK 제약 조건 순서 고려 필요할 수 있으나 대부분 MarketAccount 직접 참조)
+    session.execute(delete(PricingRecommendation).where(PricingRecommendation.market_account_id == account_id))
+    session.execute(delete(PriceChangeLog).where(PriceChangeLog.market_account_id == account_id))
+    session.execute(delete(PricingSettings).where(PricingSettings.market_account_id == account_id))
+    
     session.execute(delete(MarketListing).where(MarketListing.market_account_id == account_id))
     session.execute(delete(MarketOrderRaw).where(MarketOrderRaw.account_id == account_id))
     session.execute(delete(MarketProductRaw).where(MarketProductRaw.account_id == account_id))
+    session.execute(delete(MarketInquiryRaw).where(MarketInquiryRaw.account_id == account_id))
 
     # 4. 최종적으로 계정 삭제
     session.delete(account)
@@ -565,7 +583,7 @@ def update_smartstore_account(account_id: uuid.UUID, payload: SmartStoreAccountU
 @router.post("/markets/smartstore/accounts/{account_id}/activate")
 def activate_smartstore_account(account_id: uuid.UUID, session: Session = Depends(get_session)) -> dict:
     account = session.get(MarketAccount, account_id)
-    if not account or account.market_code != "SMARTSTORE":
+    if not account or account.market_code not in ["SMARTSTORE", "NAVER"]:
         raise HTTPException(status_code=404, detail="스마트스토어 계정을 찾을 수 없습니다")
 
     # 다중 계정 지원을 위해 기존 계정 비활성화 로직 제거
@@ -591,7 +609,7 @@ def activate_smartstore_account(account_id: uuid.UUID, session: Session = Depend
 @router.delete("/markets/smartstore/accounts/{account_id}")
 def delete_smartstore_account(account_id: uuid.UUID, session: Session = Depends(get_session)) -> dict:
     account = session.get(MarketAccount, account_id)
-    if not account or account.market_code != "SMARTSTORE":
+    if not account or account.market_code not in ["SMARTSTORE", "NAVER"]:
         raise HTTPException(status_code=404, detail="스마트스토어 계정을 찾을 수 없습니다")
 
     # 1. OrderItem 중 이 계정의 Listing을 참조하는 항목의 연결 해제
@@ -606,10 +624,15 @@ def delete_smartstore_account(account_id: uuid.UUID, session: Session = Depends(
     if order_raw_ids:
         session.query(Order).filter(Order.market_order_id.in_(order_raw_ids)).update({"market_order_id": None}, synchronize_session=False)
 
-    # 3. 연관된 Raw 데이터 및 Listing 삭제
+    # 3. 연관된 데이터 삭제
+    session.execute(delete(PricingRecommendation).where(PricingRecommendation.market_account_id == account_id))
+    session.execute(delete(PriceChangeLog).where(PriceChangeLog.market_account_id == account_id))
+    session.execute(delete(PricingSettings).where(PricingSettings.market_account_id == account_id))
+
     session.execute(delete(MarketListing).where(MarketListing.market_account_id == account_id))
     session.execute(delete(MarketOrderRaw).where(MarketOrderRaw.account_id == account_id))
     session.execute(delete(MarketProductRaw).where(MarketProductRaw.account_id == account_id))
+    session.execute(delete(MarketInquiryRaw).where(MarketInquiryRaw.account_id == account_id))
 
     # 4. 최종적으로 계정 삭제
     session.delete(account)
