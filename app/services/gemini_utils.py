@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 if settings.gemini_api_key:
     genai.configure(api_key=settings.gemini_api_key)
     # Using existing stable model
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel(settings.gemini_model_name)
 else:
     logger.warning("GEMINI_API_KEY is not set. AI features heavily restricted.")
     model = None

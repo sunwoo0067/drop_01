@@ -100,6 +100,7 @@ class Settings(BaseSettings):
     # Gemini
     gemini_api_key: str = "" # Backwards compatibility
     gemini_api_keys: list[str] = [] # List of keys for rotation
+    gemini_model_name: str = "gemini-1.5-flash"
     
     # Ollama
     ollama_base_url: str = "http://127.0.0.1:11434"

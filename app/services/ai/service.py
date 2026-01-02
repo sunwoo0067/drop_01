@@ -83,7 +83,7 @@ class AIService:
         openai_keys = settings.openai_api_keys.copy()
         openai_keys.extend([k for k in db_openai_keys if k not in openai_keys])
 
-        self.gemini = GeminiProvider(api_keys=gemini_keys)
+        self.gemini = GeminiProvider(api_keys=gemini_keys, model_name=settings.gemini_model_name)
         self.ollama = OllamaProvider(
             base_url=settings.ollama_base_url,
             model_name=settings.ollama_model,
