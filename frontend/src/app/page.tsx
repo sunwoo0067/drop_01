@@ -8,10 +8,10 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Table, TableColumn } from "@/components/ui/Table";
 import { DashboardToolbar } from "./dashboard/DashboardToolbar";
-import { OverallStats, StatTable } from "./dashboard/StatTable";
+import { StatTable } from "./dashboard/StatTable";
 import { OrchestrationControl } from "./dashboard/OrchestrationControl";
 import { LogViewer } from "./dashboard/LogViewer";
-import { ShieldCheck, CheckCircle, AlertTriangle, RotateCcw, FileText } from "lucide-react";
+import { ShieldCheck, CheckCircle, AlertTriangle, RotateCcw, FileText, Activity } from "lucide-react";
 
 type LogFilter = {
   step: string;
@@ -26,7 +26,7 @@ export default function Home() {
     completed: 0
   });
   const [dashboardStats, setDashboardStats] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState("overall");
+  const [activeTab, setActiveTab] = useState("ai");
   const [events, setEvents] = useState<any[]>([]);
   const [filteredEvents, setFilteredEvents] = useState<any[]>([]);
   const [marketStats, setMarketStats] = useState<any[]>([]);
@@ -227,7 +227,18 @@ export default function Home() {
 
   // 진행률 계산
   const p = dashboardStats?.products || {};
-  const totalCompleted = p.refinement_completed || stats.completed || 0;
+  const marketsSummary = (dashboardStats?.markets && dashboardStats.markets.length > 0)
+    ? dashboardStats.markets
+    : marketStats;
+  const listingTotal = marketsSummary.reduce((sum: number, row: any) => sum + (row.listing_count || 0), 0);
+  const supplierTotal = p.total_raw ?? stats.total ?? 0;
+  const sourcingTotal = (p.sourcing_pending || 0) + (p.sourcing_approved || 0);
+  const processingTotal = (p.refinement_pending || 0)
+    + (p.refinement_processing || 0)
+    + (p.refinement_approval_pending || 0)
+    + (p.refinement_failed || 0)
+    + (p.refinement_completed || 0);
+  const latestEvent = events[0];
   const gatingSummary = gatingReport?.summary || {};
   const gatingStats = [
     {
@@ -369,230 +380,233 @@ export default function Home() {
         </Card>
       )}
 
+      {/* 핵심 요약 + 에이전트 진행 */}
+      <div className="grid gap-3 lg:grid-cols-[1.4fr,0.6fr]">
+        <Card className="border border-border">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs">전체 흐름 요약</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            {[
+              { label: "공급사 상품 전체", value: supplierTotal, hint: "RAW 기준" },
+              { label: "소싱 전체", value: sourcingTotal, hint: "PENDING + APPROVED" },
+              { label: "가공 전체", value: processingTotal, hint: "전 단계 합계" },
+              { label: "상품 등록 전체", value: listingTotal, hint: "마켓 리스팅 합계" },
+            ].map((row) => (
+              <div key={row.label} className="rounded-sm border border-border/60 bg-muted/30 px-3 py-2">
+                <div className="text-[10px] text-muted-foreground">{row.label}</div>
+                <div className="text-lg font-semibold">{row.value.toLocaleString()}</div>
+                <div className="text-[9px] text-muted-foreground">{row.hint}</div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        <Card className="border border-border">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs">AI 에이전트 진행</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex items-center justify-between text-[11px]">
+              <div className="flex items-center gap-2">
+                <span className={`h-2.5 w-2.5 rounded-full ${isRunning ? "bg-emerald-500" : "bg-muted-foreground"}`} />
+                <span className="font-semibold">{isRunning ? "실행 중" : "대기"}</span>
+              </div>
+              <span className="text-muted-foreground">{lastUpdatedAt ? lastUpdatedAt.toLocaleTimeString() : "-"}</span>
+            </div>
+            <div>
+              <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                <span>현재 단계</span>
+                <span>{latestEvent?.step || "-"}</span>
+              </div>
+              <div className="mt-1 h-2 rounded-full bg-muted/60">
+                <div
+                  className="h-2 rounded-full bg-primary transition-all"
+                  style={{ width: `${orchestrationProgress.progress || 0}%` }}
+                />
+              </div>
+              <div className="mt-1 text-[10px] text-muted-foreground">
+                {latestEvent?.message || "진행 중인 이벤트가 없습니다."}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
       {/* 탭/필터 바 */}
       <div className="space-y-3">
         <div className="flex items-center justify-between px-3 py-2 border border-border bg-card rounded-sm">
           <div className="flex gap-2 text-[11px]">
             <Button
-              variant={activeTab === "overall" ? "primary" : "ghost"}
+              variant={activeTab === "ai" ? "primary" : "ghost"}
               size="xs"
-              onClick={() => setActiveTab("overall")}
+              onClick={() => setActiveTab("ai")}
             >
-              종합 현황
+              AI 진행
             </Button>
             <Button
-              variant={activeTab === "product" ? "primary" : "ghost"}
+              variant={activeTab === "sourcing" ? "primary" : "ghost"}
               size="xs"
-              onClick={() => setActiveTab("product")}
-              className="relative"
+              onClick={() => setActiveTab("sourcing")}
             >
-              상품 현황
-              {totalCompleted > 0 && (
-                <span className="absolute -top-1 -right-1 h-3 w-3 rounded bg-destructive text-[8px] flex items-center justify-center">
-                  {totalCompleted}
-                </span>
-              )}
+              공급사/소싱
             </Button>
             <Button
-              variant={activeTab === "market" ? "primary" : "ghost"}
+              variant={activeTab === "processing" ? "primary" : "ghost"}
               size="xs"
-              onClick={() => setActiveTab("market")}
+              onClick={() => setActiveTab("processing")}
             >
-              마켓 현황 ({marketStats.length})
+              가공
+            </Button>
+            <Button
+              variant={activeTab === "listing" ? "primary" : "ghost"}
+              size="xs"
+              onClick={() => setActiveTab("listing")}
+            >
+              등록
             </Button>
             <Button
               variant={activeTab === "order" ? "primary" : "ghost"}
               size="xs"
               onClick={() => setActiveTab("order")}
             >
-              주문 현황
+              주문
+            </Button>
+            <Button
+              variant={activeTab === "logs" ? "primary" : "ghost"}
+              size="xs"
+              onClick={() => setActiveTab("logs")}
+            >
+              로그
             </Button>
           </div>
           <div className="text-[9px] text-muted-foreground bg-muted px-2 py-1 rounded-sm">
-            마지막 업데이트: {lastUpdatedAt?.toLocaleTimeString()}
+            마지막 업데이트: {lastUpdatedAt ? lastUpdatedAt.toLocaleTimeString() : "-"}
           </div>
         </div>
 
-        {/* 종합 현황 */}
-        {activeTab === "overall" && (
+        {/* AI 진행 */}
+        {activeTab === "ai" && (
           <div className="space-y-3">
-            <OverallStats stats={stats} dashboardStats={dashboardStats} />
             <OrchestrationControl
               isRunning={isRunning}
               isLoading={isLoading}
               orchestrationProgress={orchestrationProgress}
               onRunCycle={handleRunCycle}
             />
-            <div className="grid gap-3 md:grid-cols-[1.1fr,0.9fr]">
+            <div className="grid gap-3 md:grid-cols-[1fr,1fr]">
               <StatTable title="쿠팡 분기 현황" data={gatingStats} />
               <Card className="border border-border">
                 <CardHeader className="py-2">
-                  <CardTitle className="text-xs">스킵 원인 TOP</CardTitle>
+                  <CardTitle className="text-xs">최근 이벤트</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2">
-                  {(gatingSummary.skipReasonsTop || []).length > 0 ? (
-                    (gatingSummary.skipReasonsTop || []).map((row: any, index: number) => (
-                      <div
-                        key={`reason-${index}`}
-                        className="flex items-start justify-between gap-3 rounded-sm border border-border/50 bg-background px-2 py-1.5"
-                      >
-                        <span className="text-[10px] text-muted-foreground leading-tight">
-                          {row[1]}건
-                        </span>
-                        <span className="text-[10px] text-foreground leading-tight flex-1 text-right">
-                          {row[0]}
-                        </span>
+                  {events.slice(0, 6).map((row, index) => (
+                    <div
+                      key={`${row.step}-${row.status}-${index}`}
+                      className="flex items-start justify-between gap-3 rounded-sm border border-border/50 bg-background px-2 py-1.5"
+                    >
+                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                        <Activity className="h-3 w-3 text-primary" />
+                        <span className="font-semibold">{row.step}</span>
+                        <span>{row.status}</span>
                       </div>
-                    ))
-                  ) : (
-                    <div className="text-center text-[11px] text-muted-foreground py-4">
-                      스킵 로그가 없습니다.
+                      <span className="text-[10px] text-muted-foreground line-clamp-1 text-right max-w-[60%]">
+                        {row.message || "-"}
+                      </span>
                     </div>
-                  )}
-                  {gatingSummary.cutoff && (
-                    <div className="text-[9px] text-muted-foreground text-right">
-                      기준 시각: {new Date(gatingSummary.cutoff).toLocaleString()}
+                  ))}
+                  {events.length === 0 && (
+                    <div className="text-center text-[11px] text-muted-foreground py-4">
+                      이벤트가 없습니다.
                     </div>
                   )}
                 </CardContent>
               </Card>
             </div>
-            <LogViewer
-              filteredEvents={filteredEvents}
-              logFilter={logFilter}
-              setLogFilter={setLogFilter}
-              autoScroll={autoScroll}
-              setAutoScroll={setAutoScroll}
-            />
           </div>
         )}
 
-        {/* 상품 현황 */}
-        {activeTab === "product" && (
-          <ProductStats dashboardStats={dashboardStats} />
+        {/* 공급사/소싱 */}
+        {activeTab === "sourcing" && (
+          <StatTable
+            title="공급사/소싱 상세"
+            data={[
+              {
+                label: "공급사 전체 수량 (RAW)",
+                value: supplierTotal,
+                icon: <CheckCircle className="h-3 w-3 text-primary" />,
+                description: "SupplierItemRaw 기준",
+              },
+              {
+                label: "소싱 대기",
+                value: p.sourcing_pending || 0,
+                icon: <CheckCircle className="h-3 w-3 text-warning" />,
+              },
+              {
+                label: "소싱 승인",
+                value: p.sourcing_approved || 0,
+                icon: <CheckCircle className="h-3 w-3 text-success" />,
+              },
+            ]}
+          />
         )}
 
-        {/* 마켓 현황 */}
-        {activeTab === "market" && (
-          <MarketStats marketStats={marketStats} />
+        {/* 가공 */}
+        {activeTab === "processing" && (
+          <StatTable
+            title="가공 단계 상세"
+            data={[
+              {
+                label: "가공 대기",
+                value: p.refinement_pending || 0,
+                icon: <CheckCircle className="h-3 w-3 text-muted-foreground" />,
+              },
+              {
+                label: "가공 중",
+                value: p.refinement_processing || 0,
+                icon: <CheckCircle className="h-3 w-3 text-info" />,
+              },
+              {
+                label: "승인 대기",
+                value: p.refinement_approval_pending || 0,
+                icon: <ShieldCheck className="h-3 w-3 text-warning" />,
+              },
+              {
+                label: "가공 실패",
+                value: p.refinement_failed || 0,
+                icon: <CheckCircle className="h-3 w-3 text-destructive" />,
+              },
+              {
+                label: "가공 완료",
+                value: p.refinement_completed || 0,
+                icon: <CheckCircle className="h-3 w-3 text-success" />,
+              },
+            ]}
+          />
+        )}
+
+        {/* 등록 */}
+        {activeTab === "listing" && (
+          <MarketStats marketStats={marketsSummary} />
         )}
 
         {/* 주문 현황 */}
         {activeTab === "order" && (
           <OrderStats dashboardStats={dashboardStats} />
         )}
+
+        {/* 로그 */}
+        {activeTab === "logs" && (
+          <LogViewer
+            filteredEvents={filteredEvents}
+            logFilter={logFilter}
+            setLogFilter={setLogFilter}
+            autoScroll={autoScroll}
+            setAutoScroll={setAutoScroll}
+          />
+        )}
       </div>
-    </div>
-  );
-}
-
-function ProductStats({ dashboardStats }: any) {
-  const p = dashboardStats?.products || {};
-
-  return (
-    <div className="space-y-3">
-      <StatTable
-        title="데이터 처리 총량 (Items)"
-        data={[
-          {
-            label: "전체 수집 (RAW)",
-            value: p.total_raw || 0,
-            icon: <CheckCircle className="h-3 w-3 text-primary" />,
-            progress: 100,
-            description: "전체 수집 원본 데이터 명세",
-          },
-          {
-            label: "최종 가공 완료 (Products)",
-            value: p.refinement_completed || 0,
-            icon: <CheckCircle className="h-3 w-3 text-success" />,
-            progress: p.total_raw > 0 ? (p.refinement_completed / p.total_raw) * 100 : 0,
-            description: "마켓 등록 즉시 가능 수량",
-          },
-          {
-            label: "합계 재고 수량 (Stock)",
-            value: p.total_stock || 0,
-            icon: <CheckCircle className="h-3 w-3 text-warning" />,
-            description: "DB 내 모든 리스팅의 가용 재고 총합",
-          },
-          {
-            label: "스케일 도달 (Step 3)",
-            value: p.lifecycle_stages?.step_3 || 0,
-            icon: <CheckCircle className="h-3 w-3 text-info" />,
-            description: "검증이 완료된 고효율 주력 상품",
-          },
-        ]}
-      />
-      <StatTable
-        title="1단계: 소싱 (Candidate Discovery)"
-        data={[
-          {
-            label: "전체 수집 (RAW)",
-            value: p.total_raw || 0,
-            icon: <CheckCircle className="h-3 w-3 text-muted-foreground" />,
-          },
-          {
-            label: "소싱 대기 (PENDING)",
-            value: p.sourcing_pending || 0,
-            icon: <CheckCircle className="h-3 w-3 text-warning" />,
-            progress: p.total_raw > 0 ? (p.sourcing_pending / p.total_raw) * 100 : 0,
-          },
-          {
-            label: "소싱 승인 (APPROVED)",
-            value: p.sourcing_approved || 0,
-            icon: <CheckCircle className="h-3 w-3 text-success" />,
-            progress: p.total_raw > 0 ? (p.sourcing_approved / p.total_raw) * 100 : 0,
-          },
-        ]}
-      />
-      <StatTable
-        title="2단계: 가공 (AI Optimization)"
-        data={[
-          {
-            label: "가공 대기",
-            value: p.refinement_pending || 0,
-            icon: <CheckCircle className="h-3 w-3 text-muted-foreground" />,
-          },
-          {
-            label: "가공 중",
-            value: p.refinement_processing || 0,
-            icon: <CheckCircle className="h-3 w-3 text-info" />,
-          },
-          {
-            label: "승인 대기",
-            value: p.refinement_approval_pending || 0,
-            icon: <ShieldCheck className="h-3 w-3 text-warning" />,
-          },
-          {
-            label: "가공 실패",
-            value: p.refinement_failed || 0,
-            icon: <CheckCircle className="h-3 w-3 text-destructive" />,
-            description: "데이터 정합성 부족 건",
-          },
-        ]}
-      />
-      <StatTable
-        title="3단계: 리스팅 (Final Products)"
-        data={[
-          {
-            label: "가공 완료",
-            value: p.refinement_completed || 0,
-            icon: <CheckCircle className="h-3 w-3 text-warning" />,
-            description: "최적화 완료 상품 수",
-          },
-          {
-            label: "탐색 단계 (Step 1)",
-            value: p.lifecycle_stages?.step_1 || 0,
-            icon: <CheckCircle className="h-3 w-3 text-info" />,
-            description: "신규 등록 및 반응 확인 중",
-          },
-          {
-            label: "성과 발생 상품",
-            value: (p.lifecycle_stages?.step_2 || 0) + (p.lifecycle_stages?.step_3 || 0),
-            icon: <CheckCircle className="h-3 w-3 text-success" />,
-            description: "검증 또는 스케일 도달 상품",
-          },
-        ]}
-      />
     </div>
   );
 }
