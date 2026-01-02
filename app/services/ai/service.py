@@ -63,7 +63,7 @@ def _get_cached_db_keys() -> Dict[str, List[str]]:
             operation="select",
             recoverable=True
         )
-        logger.error(f"Failed to fetch API keys from DB: {wrapped_error}")
+        logger.error(f"DB에서 API 키 가져오기 실패: {wrapped_error}")
         return {"gemini": [], "openai": []}
 
 class AIService:
@@ -131,7 +131,7 @@ class AIService:
             
         # If text is long and using Ollama, use the long-context capable model (Ministral 3B)
         if is_ollama and text_len > 4000:
-            logger.info(f"Long text detected ({text_len} chars). Overriding with {settings.ollama_vision_model}")
+            logger.info(f"긴 텍스트 감지 ({text_len}자). {settings.ollama_vision_model}로 모델 변경")
             target_model = settings.ollama_vision_model
 
         prompt = f"""
@@ -155,7 +155,7 @@ class AIService:
             target_model = settings.ollama_logic_model
             
         if is_ollama and text_len > 4000:
-            logger.info(f"Long text detected ({text_len} chars). Overriding with {settings.ollama_vision_model}")
+            logger.info(f"긴 텍스트 감지 ({text_len}자). {settings.ollama_vision_model}로 모델 변경")
             target_model = settings.ollama_vision_model
 
         prompt = f"""
@@ -246,7 +246,7 @@ class AIService:
             return await target_provider.generate_json(prompt, model=target_model, image_data=image_data)
         except Exception as e:
             wrapped_error = wrap_exception(e, AIError, provider=provider, prompt="optimize_seo")
-            logger.error(f"optimize_seo failed: {wrapped_error}")
+            logger.error(f"optimize_seo 실패: {wrapped_error}")
             raise wrapped_error
 
     async def expand_keywords(self, keyword: str, provider: ProviderType = "auto") -> List[str]:
@@ -284,7 +284,7 @@ class AIService:
             return await target_provider.generate_json(prompt, model=target_model)
         except Exception as e:
             wrapped_error = wrap_exception(e, AIError, provider=provider, prompt="predict_seasonality")
-            logger.error(f"predict_seasonality failed: {wrapped_error}")
+            logger.error(f"predict_seasonality 실패: {wrapped_error}")
             raise wrapped_error
 
     async def plan_seasonal_strategy(self, context_products: Optional[List[Dict[str, Any]]] = None, provider: ProviderType = "auto") -> Dict[str, Any]:
@@ -349,7 +349,7 @@ class AIService:
             return await target_provider.generate_json(prompt, model=model)
         except Exception as e:
             wrapped_error = wrap_exception(e, AIError, provider=provider, prompt="generate_json")
-            logger.error(f"generate_json failed: {wrapped_error}")
+            logger.error(f"generate_json 실패: {wrapped_error}")
             raise wrapped_error
 
     async def generate_image(
@@ -376,7 +376,7 @@ class AIService:
             )
         except Exception as e:
             wrapped_error = wrap_exception(e, AIError, provider=provider, prompt="generate_image")
-            logger.error(f"generate_image failed: {wrapped_error}")
+            logger.error(f"generate_image 실패: {wrapped_error}")
             return b""
 
     async def generate_text(self, prompt: str, model: Optional[str] = None, provider: ProviderType = "auto") -> str:
@@ -386,7 +386,7 @@ class AIService:
             return await target_provider.generate_text(prompt, model=model)
         except Exception as e:
             wrapped_error = wrap_exception(e, AIError, provider=provider, prompt="generate_text")
-            logger.error(f"generate_text failed: {wrapped_error}")
+            logger.error(f"generate_text 실패: {wrapped_error}")
             raise wrapped_error
 
     async def describe_image(self, image_data: bytes, prompt: str = "이 이미지를 상세히 설명해주세요. 특히 상품의 특징, 색상, 디자인, 재질 등을 중심으로 설명해주세요.", provider: ProviderType = "auto") -> str:
@@ -394,7 +394,7 @@ class AIService:
             return await self._get_provider(provider).describe_image(image_data, prompt)
         except Exception as e:
             wrapped_error = wrap_exception(e, AIError, provider=provider, prompt="describe_image")
-            logger.error(f"describe_image failed: {wrapped_error}")
+            logger.error(f"describe_image 실패: {wrapped_error}")
             raise wrapped_error
 
     async def extract_text_from_image(self, image_data: bytes, format: Literal["text", "markdown", "json"] = "text", provider: ProviderType = "auto") -> str:
@@ -402,7 +402,7 @@ class AIService:
             return await self._get_provider(provider).extract_text_from_image(image_data, format=format)
         except Exception as e:
             wrapped_error = wrap_exception(e, AIError, provider=provider, prompt="extract_text_from_image")
-            logger.error(f"extract_text_from_image failed: {wrapped_error}")
+            logger.error(f"extract_text_from_image 실패: {wrapped_error}")
             raise wrapped_error
 
     async def analyze_visual_layout(self, image_data: bytes, prompt: str = "Identify the main product features, logo position, and design style in this image.", provider: ProviderType = "auto") -> str:
