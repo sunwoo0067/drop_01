@@ -1,7 +1,5 @@
 from __future__ import annotations
-
 from typing import Any
-
 
 def parse_int_price(value: Any) -> int:
     if value is None:
@@ -10,7 +8,6 @@ def parse_int_price(value: Any) -> int:
         return int(float(value))
     except Exception:
         return 0
-
 
 def parse_shipping_fee(raw: dict | None) -> int:
     if not raw or not isinstance(raw, dict):
@@ -25,7 +22,6 @@ def parse_shipping_fee(raw: dict | None) -> int:
         if digits:
             return int(digits)
     return 0
-
 
 def calculate_selling_price(cost: int, margin_rate: float, shipping_fee: int, market_fee_rate: float = 0.13) -> int:
     safe_cost = max(0, int(cost or 0))
