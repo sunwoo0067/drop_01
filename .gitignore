@@ -29,4 +29,6 @@ docs/api_docs/coupang/*:Zone.Identifier
 ollama_update/
 ollama_new
 *.log
-
+*.err
+output.txt
+verify_logs.txt
