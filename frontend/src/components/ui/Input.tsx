@@ -6,7 +6,7 @@ export interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 
     size?: "xs" | "sm" | "md";
 }
 
-const Input = forwardRef<HTMLInputElement, InputProps>(
+export const Input = forwardRef<HTMLInputElement, InputProps>(
     ({ className, type, error, size = "md", ...props }, ref) => {
         const sizes = {
             xs: "h-6 px-2 text-xs py-1",
@@ -30,5 +30,3 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
     }
 );
 Input.displayName = "Input";
-
-export { Input };

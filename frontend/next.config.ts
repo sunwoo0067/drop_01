@@ -19,6 +19,7 @@ const nextConfig: NextConfig = {
       { protocol: 'http', hostname: 'cdn.ownerclan.com' },
       { protocol: 'https', hostname: '*.naver.net' },
       { protocol: 'https', hostname: '*.naver.com' },
+      { protocol: 'https', hostname: 'images.unsplash.com' },
       { protocol: 'https', hostname: 'localhost' },
       { protocol: 'http', hostname: 'localhost' },
     ],
