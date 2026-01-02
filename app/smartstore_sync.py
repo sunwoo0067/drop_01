@@ -1023,6 +1023,9 @@ class SmartStoreSync:
                     listing.market_item_id = external_id
                     listing.status = "ACTIVE"
                 
+                # 상품 상태를 LISTED로 업데이트하여 중복 등록 방지
+                product.processing_status = "LISTED"
+                
                 tmp_db.commit()
 
                 logger.info(f"Successfully registered product to SmartStore: {product.name}")

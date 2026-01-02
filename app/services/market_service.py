@@ -127,8 +127,14 @@ class MarketService:
 
             product = self.db.get(Product, product_id)
             success, msg = register_coupang_product(self.db, account_id, product_id)
+            logger.info(f"Coupang registration result: product_id={product_id}, success={success}, msg={msg}")
             if success:
                 return {"status": "success", "message": msg or "Registered successfully"}
+            
+            # 쿠팡 등록 실패 시 (또는 건너뛰기 시) 스마트스토어 시도 검토
+            if "SKIP_COUPANG_FOR_SMARTSTORE" in (msg or ""):
+                logger.info(f"Fallback to SmartStore for product {product_id}")
+                return self.register_product("SMARTSTORE", account_id, product_id)
 
             skip_message = str(msg) if msg is not None else ""
             fallback_disabled = bool(product) and is_naver_fallback_disabled(self.db, product)
