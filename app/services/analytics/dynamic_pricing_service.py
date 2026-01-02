@@ -67,7 +67,7 @@ class DynamicPricingService:
         """
         PricingAgent를 사용하여 AI 기반 최적 가격 제안
         """
-        product = self.db.query(Product).join(MarketListing).filter(MarketListing.id == listing_id).first()
+        product = self.db.query(Product).join(MarketListing, Product.id == MarketListing.product_id).filter(MarketListing.id == listing_id).first()
         if not product:
             return {"status": "error", "message": "Product not found for listing"}
 
