@@ -96,36 +96,37 @@ class ProcessingService:
             # 데이터 추출
             raw_images: list[str] = []
             detail_html = ""
-            if not self._name_only_processing():
-                try:
-                    if product.supplier_item_id:
-                        raw_item = self.db.get(SupplierItemRaw, product.supplier_item_id)
-                        raw = raw_item.raw if raw_item and isinstance(raw_item.raw, dict) else {}
-                        
-                        images_val = raw.get("images")
-                        if isinstance(images_val, str):
-                            s = images_val.strip()
-                            if s.startswith(("http://", "https://")):
-                                raw_images.append(s)
-                        elif isinstance(images_val, list):
-                            for it in images_val[:30]:
-                                if isinstance(it, str):
-                                    s = it.strip()
+            name_only = self._name_only_processing()
+            try:
+                if product.supplier_item_id:
+                    raw_item = self.db.get(SupplierItemRaw, product.supplier_item_id)
+                    raw = raw_item.raw if raw_item and isinstance(raw_item.raw, dict) else {}
+
+                    images_val = raw.get("images")
+                    if isinstance(images_val, str):
+                        s = images_val.strip()
+                        if s.startswith(("http://", "https://")):
+                            raw_images.append(s)
+                    elif isinstance(images_val, list):
+                        for it in images_val[:30]:
+                            if isinstance(it, str):
+                                s = it.strip()
+                                if s.startswith(("http://", "https://")) and s not in raw_images:
+                                    raw_images.append(s)
+                            elif isinstance(it, dict):
+                                u = it.get("url") or it.get("src")
+                                if isinstance(u, str):
+                                    s = u.strip()
                                     if s.startswith(("http://", "https://")) and s not in raw_images:
                                         raw_images.append(s)
-                                elif isinstance(it, dict):
-                                    u = it.get("url") or it.get("src")
-                                    if isinstance(u, str):
-                                        s = u.strip()
-                                        if s.startswith(("http://", "https://")) and s not in raw_images:
-                                            raw_images.append(s)
-                        
-                        thumb = raw.get("thumbnail") or raw.get("main_image")
-                        if thumb and isinstance(thumb, str) and thumb.strip().startswith("http"):
-                            t = thumb.strip()
-                            if t not in raw_images:
-                                raw_images.insert(0, t)
 
+                    thumb = raw.get("thumbnail") or raw.get("main_image")
+                    if thumb and isinstance(thumb, str) and thumb.strip().startswith("http"):
+                        t = thumb.strip()
+                        if t not in raw_images:
+                            raw_images.insert(0, t)
+
+                    if not name_only:
                         for key in ("detail_html", "detailHtml"):
                             val = raw.get(key)
                             if isinstance(val, str) and val.strip():
@@ -150,11 +151,11 @@ class ProcessingService:
                                 for u in _detail_imgs:
                                     if u not in raw_images:
                                         raw_images.append(u)
-                            
+
                             product.description = detail_html
                             # 중간 commit 제거 - 최종 commit에서 한 번에 처리
-                except Exception as e:
-                    logger.error(f"상품 데이터 추출 실패 (상품 ID: {product_id}): {e}")
+            except Exception as e:
+                logger.error(f"상품 데이터 추출 실패 (상품 ID: {product_id}): {e}")
 
             # 벤치마크 상품 정보 가져오기 시도
             benchmark_data = None
@@ -188,32 +189,38 @@ class ProcessingService:
                 "target_market": "Coupang",
             }
             
-            # 에이전트 실행
-            try:
-                result = await self.processing_agent.run(str(product_id), input_data, benchmark_data=benchmark_data)
-                # Handle dictionary or object response
-                if hasattr(result, "get"):
-                    output = result.get("final_output", {})
-                else:
-                    output = getattr(result, "final_output", {})
-                
-                if output.get("processed_name"):
-                    product.processed_name = output.get("processed_name")
-                if output.get("processed_keywords"):
-                    product.processed_keywords = output.get("processed_keywords")
-                if output.get("processed_image_urls"):
-                    product.processed_image_urls = output.get("processed_image_urls")
-            except Exception as e:
-                logger.error(f"ProcessingAgent 실행 실패 (상품 ID: {product_id}): {e}")
-                if not self._name_only_processing() and (not product.processed_image_urls) and raw_images:
-                    # 비동기 이미지 처리 사용
-                    product.processed_image_urls = await image_processing_service.process_and_upload_images_async(
-                        raw_images, product_id=str(product_id)
-                    )
+            # 에이전트 실행 (name-only 모드에서는 외부 AI 호출 스킵)
+            if name_only:
+                if not product.processed_name:
+                    product.processed_name = product.name
+                if product.processed_keywords is None:
+                    product.processed_keywords = []
+            else:
+                try:
+                    result = await self.processing_agent.run(str(product_id), input_data, benchmark_data=benchmark_data)
+                    # Handle dictionary or object response
+                    if hasattr(result, "get"):
+                        output = result.get("final_output", {})
+                    else:
+                        output = getattr(result, "final_output", {})
+                    
+                    if output.get("processed_name"):
+                        product.processed_name = output.get("processed_name")
+                    if output.get("processed_keywords"):
+                        product.processed_keywords = output.get("processed_keywords")
+                    if output.get("processed_image_urls"):
+                        product.processed_image_urls = output.get("processed_image_urls")
+                except Exception as e:
+                    logger.error(f"ProcessingAgent 실행 실패 (상품 ID: {product_id}): {e}")
+                    if not self._name_only_processing() and (not product.processed_image_urls) and raw_images:
+                        # 비동기 이미지 처리 사용
+                        product.processed_image_urls = await image_processing_service.process_and_upload_images_async(
+                            raw_images, product_id=str(product_id)
+                        )
 
             has_name = bool(product.processed_name or product.name)
-            if self._name_only_processing():
-                has_images = True
+            if name_only:
+                has_images = len(raw_images) >= max(1, int(min_images_required))
             else:
                 has_images = bool(product.processed_image_urls and len(product.processed_image_urls) >= max(1, int(min_images_required)))
             
@@ -246,7 +253,7 @@ class ProcessingService:
         from app.session_factory import session_factory
         
         # 병렬 처리를 위한 세마포어 (API 부하 조절)
-        sem = asyncio.Semaphore(20)
+        sem = asyncio.Semaphore(max(1, int(settings.processing_concurrent_limit)))
         
         async def _limited_process(p_id):
             async with sem:

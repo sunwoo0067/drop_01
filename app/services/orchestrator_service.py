@@ -323,7 +323,13 @@ class OrchestratorService:
                     return strategy
                 
                 # 가공 완료된(COMPLETED) 최근 상품들 등록 (설정된 한도 적용)
-                stmt_prod = select(Product).where(Product.processing_status == "COMPLETED").order_by(Product.updated_at.desc()).limit(listing_limit)
+                stmt_prod = (
+                    select(Product)
+                    .where(Product.processing_status == "COMPLETED")
+                    .where(Product.supplier_item_id.is_not(None))
+                    .order_by(Product.updated_at.desc())
+                    .limit(listing_limit)
+                )
                 products = self.db.scalars(stmt_prod).all()
                 
                 accounts_by_market: dict[str, list[MarketAccount]] = {}
@@ -607,6 +613,7 @@ class OrchestratorService:
                     stmt_prod = (
                         select(Product)
                         .where(Product.processing_status == "COMPLETED")
+                        .where(Product.supplier_item_id.is_not(None))
                         .limit(int(listing_batch_limit))
                     )
                     products = db.scalars(stmt_prod).all()

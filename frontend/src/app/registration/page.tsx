@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import Image from "next/image";
 import {
     Loader2,
@@ -14,12 +14,18 @@ import {
     ShoppingCart,
     ArrowRight,
     RefreshCcw,
-    AlertTriangle
+    AlertTriangle,
+    ExternalLink,
+    Trash2,
+    Image as ImageIcon
 } from "lucide-react";
-import { Card, CardContent, CardFooter } from "@/components/ui/Card";
+import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
+import { Table, TableColumn } from "@/components/ui/Table";
+import { Drawer } from "@/components/ui/Drawer";
+import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import api from "@/lib/api";
 import { Product } from "@/types";
 import { cn } from "@/lib/utils";
@@ -37,9 +43,7 @@ function normalizeCoupangStatus(status?: string | null): string | null {
     if (!s) return null;
 
     const su = s.toUpperCase();
-    if (su === "APPROVAL_REQUESTED") {
-        return "APPROVING";
-    }
+    if (su === "APPROVAL_REQUESTED") return "APPROVING";
     if (
         su === "DENIED" ||
         su === "DELETED" ||
@@ -84,18 +88,15 @@ export default function RegistrationPage() {
     const [registeringIds, setRegisteringIds] = useState<Set<string>>(new Set());
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [bulkRegistering, setBulkRegistering] = useState(false);
+    const [selectedProduct, setSelectedProduct] = useState<RegistrationProduct | null>(null);
 
-    // 가공 완료 + DRAFT 상태 상품 조회
     const fetchProducts = async () => {
         setLoading(true);
         setError(null);
         try {
-            // DRAFT 상품 중 COMPLETED 가공 상태인 것 + MarketListing의 coupang_status가 DENIED인 것 조회
             const response = await api.get("/products/", {
                 params: {
                     processingStatus: "COMPLETED",
-                    // status 필터는 백엔드에서 DRAFT만 가져오도록 되어있을 수 있으므로 
-                    // 모든 DRAFT 상품을 가져온 후 프론트엔드에서 추가 필터링
                     status: "DRAFT"
                 }
             });
@@ -111,6 +112,7 @@ export default function RegistrationPage() {
                     forbiddenTags: []
                 };
             });
+
             const ids = processed.map((p) => p.id);
             if (ids.length > 0) {
                 try {
@@ -146,7 +148,6 @@ export default function RegistrationPage() {
         fetchProducts();
     }, []);
 
-    // 개별 상품 쿠팡 등록
     const handleRegister = async (productId: string) => {
         if (registeringIds.has(productId)) return;
 
@@ -155,13 +156,13 @@ export default function RegistrationPage() {
             await api.post(`/coupang/register/${productId}`, null, {
                 params: { autoFix: true, wait: true }
             });
-            // 등록 성공 시 목록에서 제거
             setItems(prev => prev.filter(item => item.id !== productId));
             setSelectedIds(prev => {
                 const next = new Set(prev);
                 next.delete(productId);
                 return next;
             });
+            if (selectedProduct?.id === productId) setSelectedProduct(null);
         } catch (e: any) {
             console.error("Registration failed", e);
             const detail = e.response?.data?.detail;
@@ -176,7 +177,6 @@ export default function RegistrationPage() {
         }
     };
 
-    // 일괄 등록
     const handleBulkRegister = async () => {
         if (selectedIds.size === 0) {
             alert("등록할 상품을 선택해주세요.");
@@ -190,7 +190,6 @@ export default function RegistrationPage() {
                 { productIds },
                 { params: { autoFix: true, wait: true, limit: 50 } }
             );
-            // 등록 완료된 상품들 목록에서 제거
             setItems(prev => prev.filter(item => !selectedIds.has(item.id)));
             setSelectedIds(new Set());
             alert("일괄 등록이 완료되었습니다.");
@@ -207,8 +206,6 @@ export default function RegistrationPage() {
             const resp = await api.post(`/coupang/sync-status/${productId}`);
             const newStatus = normalizeCoupangStatus(resp.data.coupangStatus);
 
-            // 상태 업데이트 후, 만약 DENIED가 아니게 되었다면 목록 유지 또는 변경
-            // 여기서는 단순히 상태값만 업데이트해서 리렌더링 유도
             setItems(prev => prev.map(item => {
                 if (item.id === productId) {
                     return { ...item, coupangStatus: newStatus };
@@ -216,9 +213,14 @@ export default function RegistrationPage() {
                 return item;
             }));
 
+            if (selectedProduct?.id === productId) {
+                setSelectedProduct(prev => prev ? { ...prev, coupangStatus: newStatus } : null);
+            }
+
             if (newStatus === 'APPROVED') {
                 alert("상품이 승인되었습니다! 목록에서 제거합니다.");
                 setItems(prev => prev.filter(item => item.id !== productId));
+                if (selectedProduct?.id === productId) setSelectedProduct(null);
             } else {
                 alert(`동기화 완료: ${newStatus}`);
             }
@@ -242,380 +244,363 @@ export default function RegistrationPage() {
         }
     };
 
-    // 전체 선택/해제
-    const toggleSelectAll = (checked: boolean) => {
-        if (checked) {
-            const readyIds = filteredItems
-                .filter(item => item.imagesCount >= 1)
-                .map(item => item.id);
-            setSelectedIds(new Set(readyIds));
-        } else {
-            setSelectedIds(new Set());
+    const filteredItems = useMemo(() => {
+        return items.filter(item =>
+            item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            item.processed_name?.toLowerCase().includes(searchTerm.toLowerCase())
+        );
+    }, [items, searchTerm]);
+
+    const readyCount = useMemo(() => filteredItems.filter(i => i.imagesCount >= 1).length, [filteredItems]);
+
+    const getMarketStatusBadge = (item: RegistrationProduct) => {
+        if (isRegistrationSkipped(item.rejectionReason)) {
+            return <Badge variant="outline" className="bg-amber-500/10 text-amber-600 border-amber-200">등록 제외</Badge>;
+        }
+        const status = normalizeCoupangStatus(item.coupangStatus);
+        switch (status) {
+            case 'DENIED': return <Badge variant="destructive" className="bg-destructive/10 text-destructive border-destructive/20 animate-pulse">심사 반려</Badge>;
+            case 'IN_REVIEW':
+            case 'APPROVING': return <Badge variant="outline" className="bg-blue-500/10 text-blue-600 border-blue-200">심사 중</Badge>;
+            case 'APPROVED': return <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 border-emerald-200">승인 완료</Badge>;
+            case 'SAVED': return <Badge variant="outline" className="bg-muted text-muted-foreground border-border">임시 저장</Badge>;
+            default: return <Badge variant="outline" className="bg-muted/50 text-muted-foreground/60 border-border/50">{item.imagesCount >= 1 ? "등록 가능" : "준비 부족"}</Badge>;
         }
     };
 
-    // 개별 선택/해제
-    const toggleSelect = (id: string, checked: boolean) => {
-        setSelectedIds(prev => {
-            const next = new Set(prev);
-            if (checked) {
-                next.add(id);
-            } else {
-                next.delete(id);
+    const columns: TableColumn<RegistrationProduct>[] = [
+        {
+            key: "selection",
+            title: "선택",
+            width: "50px",
+            align: "center",
+            render: (_, row) => (
+                <input
+                    type="checkbox"
+                    checked={selectedIds.has(row.id)}
+                    onChange={(e) => {
+                        const checked = e.target.checked;
+                        setSelectedIds(prev => {
+                            const next = new Set(prev);
+                            if (checked) next.add(row.id);
+                            else next.delete(row.id);
+                            return next;
+                        });
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    className="h-4 w-4 rounded border-border"
+                />
+            )
+        },
+        {
+            key: "image",
+            title: "이미지",
+            width: "80px",
+            render: (_, row) => (
+                <div className="h-10 w-10 rounded-lg overflow-hidden bg-muted relative">
+                    {row.processed_image_urls && row.processed_image_urls.length > 0 ? (
+                        <Image src={row.processed_image_urls[0]} alt={row.name} fill className="object-cover" />
+                    ) : (
+                        <ImageIcon className="h-4 w-4 m-auto absolute inset-0 text-muted-foreground/30" />
+                    )}
+                </div>
+            )
+        },
+        {
+            key: "name",
+            title: "상품명",
+            render: (_, row) => (
+                <div className="flex flex-col max-w-[400px]">
+                    <div className="flex items-center gap-2">
+                        <span className="font-bold truncate text-foreground/90">{row.processed_name || row.name}</span>
+                        {row.forbiddenTags && row.forbiddenTags.length > 0 && (
+                            <Badge className="bg-amber-500/10 text-amber-600 border-amber-200 text-[9px] h-4 px-1">태그주의</Badge>
+                        )}
+                    </div>
+                    {row.processed_name && (
+                        <span className="text-[10px] text-muted-foreground/60 truncate italic">{row.name}</span>
+                    )}
+                </div>
+            )
+        },
+        {
+            key: "coupang_status",
+            title: "쿠팡 상태",
+            width: "120px",
+            render: (_, row) => getMarketStatusBadge(row)
+        },
+        {
+            key: "selling_price",
+            title: "판매가",
+            width: "120px",
+            align: "right",
+            render: (price) => <span className="font-mono font-bold text-primary">{price.toLocaleString()}원</span>
+        },
+        {
+            key: "actions",
+            title: "작업",
+            width: "150px",
+            align: "right",
+            render: (_, row) => {
+                const isRegistering = registeringIds.has(row.id);
+                const isReady = row.imagesCount >= 1;
+                return (
+                    <Button
+                        size="sm"
+                        variant={isReady ? "primary" : "outline"}
+                        className="h-8 rounded-lg px-3 text-[11px] font-bold"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            handleRegister(row.id);
+                        }}
+                        disabled={!isReady || isRegistering}
+                    >
+                        {isRegistering ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : normalizeCoupangStatus(row.coupangStatus) === 'DENIED' ? (
+                            "재수정 및 등록"
+                        ) : (
+                            "등록 실행"
+                        )}
+                    </Button>
+                );
             }
-            return next;
-        });
-    };
-
-    // 등록 가능 여부 체크 (이미지 1장 이상)
-    const isReadyForRegistration = (item: RegistrationProduct) => {
-        return item.imagesCount >= 1;
-    };
-
-    const filteredItems = items.filter(item =>
-        item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.processed_name?.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-
-    const readyCount = filteredItems.filter(isReadyForRegistration).length;
-    const notReadyCount = filteredItems.length - readyCount;
+        }
+    ];
 
     return (
-        <div className="space-y-8 animate-in fade-in duration-500">
+        <div className="space-y-4 animate-in fade-in duration-500 pb-10">
             {/* Header Section */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 px-3 py-2 border border-border bg-card rounded-sm">
-                <div className="flex items-center gap-3">
-                    <div className="h-6 w-6 rounded-sm bg-primary/10 flex items-center justify-center">
-                        <Upload className="h-3 w-3 text-primary" />
-                    </div>
-                    <div>
-                        <h1 className="text-sm font-semibold text-foreground">상품 등록</h1>
-                        <p className="text-[10px] text-muted-foreground">
-                            가공 완료 상품 등록 및 대기 항목 관리
-                        </p>
-                    </div>
-                </div>
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 px-3 py-2 border border-border bg-card/50 backdrop-blur-sm rounded-sm">
+                <Breadcrumb items={[{ label: "상품 등록 센터", icon: <Upload className="h-3 w-3" /> }]} />
                 <div className="flex items-center gap-2">
-                    <Button variant="outline" size="sm" onClick={fetchProducts}>
-                        <RotateCw className="mr-1.5 h-3 w-3" />
+                    <Button variant="outline" size="sm" onClick={fetchProducts} className="rounded-lg h-9 px-4 font-bold">
+                        <RotateCw className="mr-2 h-3.5 w-3.5" />
                         새로고침
                     </Button>
-                    <Button variant="outline" size="sm" onClick={handleResetPending}>
-                        <RefreshCcw className="mr-1.5 h-3 w-3" />
-                        등록대기 초기화
+                    <Button variant="outline" size="sm" onClick={handleResetPending} className="rounded-lg h-9 px-4 font-bold border-destructive/20 text-destructive hover:bg-destructive/5">
+                        <Trash2 className="mr-2 h-3.5 w-3.5" />
+                        대기열 비우기
                     </Button>
                     <Button
                         size="sm"
                         onClick={handleBulkRegister}
                         disabled={selectedIds.size === 0 || bulkRegistering}
+                        className="rounded-lg h-9 px-4 font-bold shadow-lg shadow-primary/20"
                     >
-                        {bulkRegistering ? (
-                            <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
-                        ) : (
-                            <Sparkles className="mr-1.5 h-3 w-3" />
-                        )}
-                        선택 등록 ({selectedIds.size})
+                        {bulkRegistering ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <Sparkles className="mr-2 h-3.5 w-3.5" />}
+                        선택 상품 등록 ({selectedIds.size})
                     </Button>
                 </div>
             </div>
 
-            {/* Stats Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <Card className="border border-border">
-                    <CardContent className="p-3">
-                        <div className="flex items-center gap-3">
-                            <div className="h-7 w-7 rounded-sm bg-muted flex items-center justify-center">
-                                <Clock className="h-3.5 w-3.5 text-muted-foreground" />
-                            </div>
-                            <div>
-                                <p className="text-[10px] text-muted-foreground">등록 대기</p>
-                                <p className="text-lg font-semibold">{filteredItems.length}</p>
-                            </div>
-                        </div>
-                    </CardContent>
-                </Card>
-                <Card className="border border-border">
-                    <CardContent className="p-3">
-                        <div className="flex items-center gap-3">
-                            <div className="h-7 w-7 rounded-sm bg-muted flex items-center justify-center">
-                                <CheckCircle2 className="h-3.5 w-3.5 text-success" />
-                            </div>
-                            <div>
-                                <p className="text-[10px] text-muted-foreground">등록 가능</p>
-                                <p className="text-lg font-semibold">{readyCount}</p>
-                            </div>
-                        </div>
-                    </CardContent>
-                </Card>
-                <Card className="border border-border">
-                    <CardContent className="p-3">
-                        <div className="flex items-center gap-3">
-                            <div className="h-7 w-7 rounded-sm bg-muted flex items-center justify-center">
-                                <AlertCircle className="h-3.5 w-3.5 text-warning" />
-                            </div>
-                            <div>
-                                <p className="text-[10px] text-muted-foreground">이미지 부족</p>
-                                <p className="text-lg font-semibold">{notReadyCount}</p>
-                            </div>
-                        </div>
-                    </CardContent>
-                </Card>
+            {/* Stats Overview */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                {[
+                    { label: "총 대기 상품", value: filteredItems.length, icon: ShoppingCart },
+                    { label: "등록 가능", value: readyCount, icon: CheckCircle2, color: "text-emerald-500" },
+                    { label: "이미지 부족", value: filteredItems.length - readyCount, icon: AlertCircle, color: "text-amber-500" },
+                    { label: "선택된 상품", value: selectedIds.size, icon: MousePointer2, color: "text-primary" }
+                ].map((stat, idx) => (
+                    <Card key={idx} className="bg-card/40 border border-border pb-3 pt-4 px-4 shadow-sm relative overflow-hidden group">
+                        <stat.icon className={cn("absolute -right-2 -bottom-2 h-12 w-12 opacity-5 group-hover:scale-110 transition-transform", stat.color)} />
+                        <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">{stat.label}</p>
+                        <p className={cn("text-2xl font-black mt-1", stat.color)}>{stat.value}</p>
+                    </Card>
+                ))}
             </div>
 
-            {/* Search and Filters */}
-            <div className="flex flex-col md:flex-row gap-3 items-center">
-                <div className="relative flex-1 group w-full">
+            {/* Toolbar */}
+            <div className="flex items-center gap-3 bg-card border border-border p-2 rounded-sm pr-4">
+                <div className="relative flex-1 group">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
                     <Input
-                        placeholder="상품명으로 검색..."
+                        placeholder="등록 대기 상품 검색..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="pl-9"
-                        size="sm"
+                        className="pl-10 h-10 bg-transparent border-none focus-visible:ring-0 focus-visible:ring-offset-0 text-sm font-medium"
                     />
                 </div>
-                <div className="flex items-center gap-2">
-                    <input
-                        type="checkbox"
-                        id="selectAll"
-                        checked={selectedIds.size === readyCount && readyCount > 0}
-                        onChange={(e) => toggleSelectAll(e.target.checked)}
-                        className="h-5 w-5 rounded border-gray-300"
-                    />
-                    <label htmlFor="selectAll" className="text-xs text-muted-foreground">
-                        등록 가능 전체 선택
-                    </label>
-                </div>
+                <div className="h-6 w-px bg-border mx-2" />
                 <Button
-                    variant="outline"
+                    variant="ghost"
                     size="sm"
-                    onClick={() => window.location.href = '/market-products'}
+                    className="text-[10px] font-black uppercase tracking-widest"
+                    onClick={() => {
+                        if (selectedIds.size === readyCount) setSelectedIds(new Set());
+                        else setSelectedIds(new Set(filteredItems.filter(i => i.imagesCount >= 1).map(i => i.id)));
+                    }}
                 >
-                    마켓 상품 보기
-                    <ArrowRight className="ml-1.5 h-3 w-3" />
+                    {selectedIds.size === readyCount ? "선택 해제" : "등록 가능 전체 선택"}
                 </Button>
             </div>
 
-            {/* Product List */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {loading ? (
-                    <div className="col-span-full h-80 flex flex-col items-center justify-center space-y-4">
-                        <div className="h-12 w-12 rounded-full border-4 border-primary/20 border-t-primary animate-spin" />
-                        <p className="text-muted-foreground font-medium animate-pulse">상품 데이터를 불러오는 중...</p>
-                    </div>
-                ) : error ? (
-                    <Card className="col-span-full border-2 border-destructive/20 bg-destructive/5">
-                        <CardContent className="flex flex-col items-center py-12 text-center">
-                            <AlertCircle className="h-12 w-12 text-destructive mb-4" />
-                            <h3 className="text-xl font-bold mb-2">오류 발생</h3>
-                            <p className="text-muted-foreground">{error}</p>
-                            <Button className="mt-6 rounded-xl" variant="outline" onClick={fetchProducts}>다시 시도</Button>
-                        </CardContent>
-                    </Card>
-                ) : filteredItems.length === 0 ? (
-                    <div className="col-span-full py-20 text-center">
-                        <div className="h-20 w-20 bg-accent rounded-full flex items-center justify-center mx-auto mb-6">
-                            <CheckCircle2 className="h-10 w-10 text-muted-foreground/50" />
-                        </div>
-                        <h3 className="text-2xl font-bold text-foreground mb-2">등록 대기 상품이 없습니다</h3>
-                        <p className="text-muted-foreground">가공 페이지에서 상품을 가공해 주세요.</p>
-                        <Button className="mt-8 rounded-xl h-11 px-8" onClick={() => window.location.href = '/processing'}>가공 페이지로 이동</Button>
-                    </div>
-                ) : (
-                    filteredItems.map((item) => {
-                        const isReady = isReadyForRegistration(item);
-                        const isRegistering = registeringIds.has(item.id);
-                        const isSelected = selectedIds.has(item.id);
+            {/* Table */}
+            <div className="border border-border/50 rounded-sm bg-card shadow-sm overflow-hidden">
+                <Table
+                    columns={columns}
+                    data={filteredItems}
+                    loading={loading}
+                    hover
+                    onRowClick={(row) => setSelectedProduct(row)}
+                    emptyMessage="등록할 수 있는 가공 완료 상품이 없습니다."
+                />
+            </div>
 
-                        return (
-                            <Card
-                                key={item.id}
-                                className={cn(
-                                    "group overflow-hidden border-2 shadow-md hover:shadow-2xl transition-all duration-500 rounded-3xl bg-card/40 backdrop-blur-xl",
-                                    isSelected ? "border-primary" : "border-transparent",
-                                    !isReady && "opacity-70"
-                                )}
+            {/* Detail Drawer */}
+            <Drawer
+                isOpen={!!selectedProduct}
+                onClose={() => setSelectedProduct(null)}
+                title="등록 상세 정보"
+                description="마켓 등록 상태와 반려 사유를 정밀 분석합니다."
+                size="lg"
+                footer={
+                    <div className="flex items-center justify-between w-full">
+                        <Button
+                            variant="outline"
+                            className="rounded-xl font-bold"
+                            onClick={() => selectedProduct && handleSyncStatus(selectedProduct.id)}
+                        >
+                            <RefreshCcw className="mr-2 h-4 w-4" />
+                            상태 재동기화
+                        </Button>
+                        <div className="flex items-center gap-2">
+                            <Button variant="outline" onClick={() => setSelectedProduct(null)} className="rounded-xl font-bold">
+                                닫기
+                            </Button>
+                            <Button
+                                className="rounded-xl font-bold px-6 shadow-lg shadow-primary/20"
+                                onClick={() => selectedProduct && handleRegister(selectedProduct.id)}
+                                disabled={selectedProduct?.imagesCount === 0 || registeringIds.has(selectedProduct?.id || "")}
                             >
-                                {/* Image Preview */}
-                                <div className="aspect-[4/3] relative overflow-hidden bg-muted">
-                                    {item.processed_image_urls && item.processed_image_urls.length > 0 ? (
-                                        <Image
-                                            src={item.processed_image_urls[0]}
-                                            alt={item.name || "상품 이미지"}
-                                            fill
-                                            sizes="(min-width: 1024px) 25vw, (min-width: 768px) 33vw, 100vw"
-                                            className="object-cover transition-transform duration-700 group-hover:scale-110"
-                                        />
-                                    ) : (
-                                        <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground/30 space-y-2">
-                                            <ShoppingCart className="h-12 w-12" />
-                                            <span className="text-xs font-medium uppercase tracking-widest">No Image</span>
-                                        </div>
-                                    )}
+                                <Upload className="mr-2 h-4 w-4" />
+                                즉시 재등록
+                            </Button>
+                        </div>
+                    </div>
+                }
+            >
+                {selectedProduct && (
+                    <div className="space-y-8 pb-10">
+                        {/* Status Analysis Header */}
+                        <div className={cn(
+                            "p-6 rounded-3xl border shadow-sm flex flex-col items-center text-center space-y-3",
+                            normalizeCoupangStatus(selectedProduct.coupangStatus) === 'DENIED' ? "bg-destructive/5 border-destructive/20" : "bg-primary/5 border-primary/10"
+                        )}>
+                            <div className={cn(
+                                "h-12 w-12 rounded-2xl flex items-center justify-center shadow-lg",
+                                normalizeCoupangStatus(selectedProduct.coupangStatus) === 'DENIED' ? "bg-destructive text-white" : "bg-primary text-white"
+                            )}>
+                                {normalizeCoupangStatus(selectedProduct.coupangStatus) === 'DENIED' ? <AlertTriangle className="h-6 w-6" /> : <Clock className="h-6 w-6" />}
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-black tracking-tight">
+                                    {isRegistrationSkipped(selectedProduct.rejectionReason) ? "등록 프로세스 제외" :
+                                        normalizeCoupangStatus(selectedProduct.coupangStatus) === 'DENIED' ? "승인 반려됨" : "등록 대기 또는 심사 중"}
+                                </h3>
+                                <p className="text-xs text-muted-foreground mt-1 font-medium">쿠팡 파트너스 센터의 응답 결과입니다.</p>
+                            </div>
+                        </div>
 
-                                    {/* Select Checkbox */}
-                                    {isReady && (
-                                        <div className="absolute top-4 left-4">
-                                            <input
-                                                type="checkbox"
-                                                checked={isSelected}
-                                                onChange={(e) => toggleSelect(item.id, e.target.checked)}
-                                                className="h-5 w-5 rounded border-2 border-white bg-white/80 backdrop-blur-sm"
-                                            />
-                                        </div>
-                                    )}
+                        {/* Rejection / Info Section */}
+                        {(selectedProduct.rejectionReason || (selectedProduct.forbiddenTags && selectedProduct.forbiddenTags.length > 0)) && (
+                            <div className="space-y-4">
+                                <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest pl-1">Issue Overview</label>
 
-                                    {/* Image Count Badge */}
-                                    <div className="absolute top-4 right-4">
-                                        <Badge
-                                            className={cn(
-                                                "backdrop-blur-md border-0 text-[10px] font-bold tracking-widest uppercase py-1",
-                                                isReady ? "bg-emerald-500/80 text-white" : "bg-amber-500/80 text-white"
-                                            )}
-                                        >
-                                            이미지 {item.imagesCount}/1
-                                        </Badge>
+                                {isRegistrationSkipped(selectedProduct.rejectionReason) && (
+                                    <div className="p-5 rounded-2xl bg-amber-500/10 border border-amber-500/20">
+                                        <div className="flex items-center gap-2 text-amber-600 mb-2">
+                                            <AlertCircle className="h-4 w-4" />
+                                            <span className="text-sm font-black">제외 사유</span>
+                                        </div>
+                                        <p className="text-[13px] text-amber-700 font-medium leading-relaxed">
+                                            {formatSkipReason(selectedProduct.rejectionReason)}
+                                        </p>
+                                    </div>
+                                )}
+
+                                {normalizeCoupangStatus(selectedProduct.coupangStatus) === 'DENIED' && selectedProduct.rejectionReason && (
+                                    <div className="p-5 rounded-2xl bg-destructive/5 border border-destructive/10">
+                                        <div className="flex items-center gap-2 text-destructive mb-2">
+                                            <AlertTriangle className="h-4 w-4" />
+                                            <span className="text-sm font-black">심사 반려 사유 (쿠팡)</span>
+                                        </div>
+                                        <p className="text-[13px] text-destructive/80 font-medium leading-relaxed bg-white/50 p-4 rounded-xl border border-destructive/5">
+                                            {selectedProduct.rejectionReason.reason || "상세 사유가 제공되지 않았습니다."}
+                                        </p>
+                                        {selectedProduct.rejectionReason.context && (
+                                            <p className="text-[11px] text-muted-foreground mt-3 italic">
+                                                Context: {selectedProduct.rejectionReason.context}
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
+
+                                {selectedProduct.forbiddenTags && selectedProduct.forbiddenTags.length > 0 && (
+                                    <div className="p-5 rounded-2xl bg-amber-500/5 border border-amber-500/10">
+                                        <div className="flex items-center gap-2 text-amber-600 mb-2">
+                                            <Sparkles className="h-4 w-4" />
+                                            <span className="text-sm font-black">금지 태그 감지</span>
+                                        </div>
+                                        <div className="flex flex-wrap gap-2 mt-2">
+                                            {selectedProduct.forbiddenTags.map((tag, idx) => (
+                                                <Badge key={idx} variant="outline" className="border-amber-500/20 text-amber-700 bg-amber-500/5">
+                                                    {tag}
+                                                </Badge>
+                                            ))}
+                                        </div>
+                                        <p className="text-[11px] text-muted-foreground mt-3">위 태그들은 쿠팡 정책상 반려될 가능성이 높습니다. 수정 후 재등록을 권장합니다.</p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Product Summary */}
+                        <div className="grid grid-cols-2 gap-6">
+                            <div className="space-y-3">
+                                <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest pl-1">Product Identity</label>
+                                <div className="aspect-[4/3] relative rounded-2xl overflow-hidden border border-border group shadow-inner bg-muted">
+                                    {selectedProduct.processed_image_urls?.[0] ? (
+                                        <Image src={selectedProduct.processed_image_urls[0]} alt="Thumbnail" fill className="object-cover transition-transform group-hover:scale-105" />
+                                    ) : <ImageIcon className="h-8 w-8 m-auto text-muted-foreground/20" />}
+                                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex flex-col justify-end p-4">
+                                        <p className="text-white font-black truncate">{selectedProduct.processed_name || selectedProduct.name}</p>
+                                        <p className="text-white/60 text-[10px] truncate">{selectedProduct.id}</p>
                                     </div>
                                 </div>
+                            </div>
 
-                                <CardContent className="p-5 space-y-4">
-                                    <div className="space-y-1">
-                                        <div className="flex items-center gap-2">
-                                            <h3 className="font-bold text-lg leading-tight truncate group-hover:text-primary transition-colors">
-                                                {item.processed_name || item.name}
-                                            </h3>
-                                            {item.forbiddenTags && item.forbiddenTags.length > 0 && (
-                                                <Badge variant="warning" className="text-[10px]">
-                                                    금지 태그
-                                                </Badge>
-                                            )}
-                                        </div>
-                                        {item.processed_name && (
-                                            <p className="text-xs text-muted-foreground line-through opacity-50 truncate">
-                                                {item.name}
-                                            </p>
-                                        )}
-                                        {item.forbiddenTags && item.forbiddenTags.length > 0 && (
-                                            <p className="text-[10px] text-amber-600">
-                                                {item.forbiddenTags.join(", ")}
-                                            </p>
-                                        )}
+                            <div className="space-y-6">
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest pl-1">Pricing & Logic</label>
+                                    <div className="p-4 rounded-2xl bg-muted/30 border border-border">
+                                        <p className="text-[10px] text-muted-foreground font-black uppercase mb-1">Final Selling Price</p>
+                                        <p className="text-2xl font-black text-primary font-mono">{selectedProduct.selling_price.toLocaleString()}원</p>
                                     </div>
-
-                                    <div className="flex items-center justify-between text-sm py-3 border-y border-foreground/5">
-                                        <div className="flex flex-col">
-                                            <span className="text-muted-foreground text-[10px] uppercase font-bold tracking-tighter">판매가</span>
-                                            <span className="font-bold text-base text-primary">{item.selling_price.toLocaleString()}원</span>
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest pl-1">Asset Status</label>
+                                    <div className="p-4 rounded-2xl bg-muted/30 border border-border flex items-center justify-between">
+                                        <div>
+                                            <p className="text-[10px] text-muted-foreground font-black uppercase mb-1">Processed Images</p>
+                                            <p className="text-lg font-black">{selectedProduct.imagesCount} / 1</p>
                                         </div>
-                                        <div className="flex flex-col items-end">
-                                            <span className="text-muted-foreground text-[10px] uppercase font-bold tracking-tighter">마켓 상태</span>
-                                    {isRegistrationSkipped(item.rejectionReason) ? (
-                                        <Badge variant="warning" className="text-[10px]">
-                                            등록 제외
-                                        </Badge>
-                                    ) : normalizeCoupangStatus(item.coupangStatus) === 'DENIED' ? (
-                                        <Badge variant="destructive" className="text-[10px] animate-pulse">
-                                            승인 반려
-                                        </Badge>
-                                            ) : normalizeCoupangStatus(item.coupangStatus) === 'IN_REVIEW' ? (
-                                                <Badge variant="secondary" className="text-[10px] bg-blue-100 text-blue-700">
-                                                    심사 중
-                                                </Badge>
-                                            ) : normalizeCoupangStatus(item.coupangStatus) === 'APPROVING' ? (
-                                                <Badge variant="secondary" className="text-[10px] bg-blue-100 text-blue-700">
-                                                    승인 대기
-                                                </Badge>
-                                            ) : normalizeCoupangStatus(item.coupangStatus) === 'SAVED' ? (
-                                                <Badge variant="secondary" className="text-[10px]">
-                                                    임시 저장
-                                                </Badge>
-                                            ) : normalizeCoupangStatus(item.coupangStatus) === 'APPROVED' ? (
-                                                <Badge variant="success" className="text-[10px]">
-                                                    승인 완료
-                                                </Badge>
-                                            ) : (
-                                                <Badge variant="secondary" className="text-[10px]">
-                                                    {isReady ? "등록 가능" : "이미지 부족"}
-                                                </Badge>
-                                            )}
+                                        <div className={cn(
+                                            "h-8 w-8 rounded-full flex items-center justify-center shadow-inner",
+                                            selectedProduct.imagesCount >= 1 ? "bg-emerald-500 shadow-emerald-500/20" : "bg-destructive shadow-destructive/20"
+                                        )}>
+                                            {selectedProduct.imagesCount >= 1 ? <CheckCircle2 className="h-4 w-4 text-white" /> : <AlertCircle className="h-4 w-4 text-white" />}
                                         </div>
                                     </div>
-
-                                    {isRegistrationSkipped(item.rejectionReason) && (
-                                        <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 space-y-2">
-                                            <div className="flex items-center gap-2 text-amber-700">
-                                                <AlertTriangle className="h-4 w-4" />
-                                                <span className="text-xs font-bold">등록 제외 사유</span>
-                                            </div>
-                                            <p className="text-xs text-amber-700/90 leading-relaxed line-clamp-3">
-                                                {formatSkipReason(item.rejectionReason)}
-                                            </p>
-                                        </div>
-                                    )}
-
-                                    {normalizeCoupangStatus(item.coupangStatus) === 'DENIED' && item.rejectionReason && (
-                                        <div className="p-3 rounded-xl bg-destructive/5 border border-destructive/10 space-y-2">
-                                            <div className="flex items-center gap-2 text-destructive">
-                                                <AlertTriangle className="h-4 w-4" />
-                                                <span className="text-xs font-bold">반려 사유</span>
-                                            </div>
-                                            <p className="text-xs text-destructive/80 leading-relaxed line-clamp-3">
-                                                {item.rejectionReason.reason || "상세 사유 없음"}
-                                            </p>
-                                        </div>
-                                    )}
-                                </CardContent>
-
-                                <CardFooter className="px-5 pb-5 pt-0">
-                                    <div className="flex flex-col gap-2 w-full">
-                                        <Button
-                                            className={cn(
-                                                "w-full rounded-2xl font-bold transition-all shadow-lg",
-                                                isReady
-                                                    ? "bg-primary hover:bg-primary/90 shadow-primary/20"
-                                                    : "bg-muted text-muted-foreground cursor-not-allowed"
-                                            )}
-                                            size="sm"
-                                            onClick={() => handleRegister(item.id)}
-                                            disabled={!isReady || isRegistering}
-                                        >
-                                            {isRegistering ? (
-                                                <>
-                                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                                    처리 중...
-                                                </>
-                                            ) : normalizeCoupangStatus(item.coupangStatus) === 'DENIED' ? (
-                                                <>
-                                                    <RotateCw className="mr-2 h-4 w-4" />
-                                                    수정 및 재등록
-                                                </>
-                                            ) : isReady ? (
-                                                <>
-                                                    <Upload className="mr-2 h-4 w-4" />
-                                                    쿠팡 등록
-                                                </>
-                                            ) : (
-                                                "이미지 추가 필요"
-                                            )}
-                                        </Button>
-
-                                        {item.coupangStatus && (
-                                            <Button
-                                                variant="outline"
-                                                className="w-full rounded-2xl text-xs h-8 border-dashed"
-                                                onClick={() => handleSyncStatus(item.id)}
-                                            >
-                                                <RefreshCcw className="mr-2 h-3 w-3" />
-                                                상태 동기화
-                                            </Button>
-                                        )}
-                                    </div>
-                                </CardFooter>
-                            </Card>
-                        );
-                    })
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 )}
-            </div>
+            </Drawer>
         </div>
     );
 }
+
+// Missing imports for some icons used in stats
+import { MousePointer2 } from "lucide-react";

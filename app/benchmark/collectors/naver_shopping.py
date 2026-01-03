@@ -32,7 +32,7 @@ class NaverShoppingBenchmarkCollector:
         )
 
         html = ""
-        if settings.ownerclan_use_self_proxy:
+        if settings.ownerclan_use_sef_proxy:
             status, html = await self._saver._fetch_via_proxy(url)
             if status != 200:
                 logger.error(f"네이버쇼핑 BEST 수집 실패 (Proxy): HTTP {status} (url={url})")
@@ -134,7 +134,7 @@ class NaverShoppingBenchmarkCollector:
         url = f"https://smartstore.naver.com/v1/products/{product_id}/reviews?page=1&size={limit}&sortType=REVIEW_RANKING"
         
         try:
-            if settings.ownerclan_use_self_proxy:
+            if settings.ownerclan_use_sef_proxy:
                 status, raw = await self._saver._fetch_via_proxy(url)
                 if status != 200:
                     return []
@@ -164,7 +164,7 @@ class NaverShoppingBenchmarkCollector:
         html = ""
         blocked_reason: str | None = None
         
-        if settings.ownerclan_use_self_proxy:
+        if settings.ownerclan_use_sef_proxy:
             status, html = await self._saver._fetch_via_proxy(url)
             if status != 200:
                 logger.error(f"네이버 스마트스토어 상세 수집 실패 (Proxy): HTTP {status} (url={url})")

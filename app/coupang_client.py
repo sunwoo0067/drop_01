@@ -82,12 +82,14 @@ class CoupangClient:
         access_key: str,
         secret_key: str,
         vendor_id: str,
+        vendor_user_id: str | None = None,
         base_url: str = "https://api-gateway.coupang.com",
         timeout: httpx.Timeout | None = None,
     ) -> None:
         self._access_key = access_key
         self._secret_key = secret_key
         self._vendor_id = vendor_id
+        self._vendor_user_id = vendor_user_id
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout or httpx.Timeout(60.0, connect=10.0)
 

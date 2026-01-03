@@ -62,6 +62,9 @@ export default function Home() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
 
+  // 전문가 모드 설정
+  const [isExpertMode, setIsExpertMode] = useState(false);
+
   const fetchStats = useCallback(async () => {
     try {
       const res = await api.get("/products/stats");
@@ -287,14 +290,27 @@ export default function Home() {
   return (
     <div className="space-y-3">
       {/* 툴바 */}
-      <DashboardToolbar
-        isLoading={isLoading}
-        isRunning={isRunning}
-        onRunCycle={() => handleRunCycle(true)}
-        onToggleSettings={() => setShowSettings(!showSettings)}
-        onToggleNotifications={() => setShowNotifications(!showNotifications)}
-        notificationCount={notifications.length}
-      />
+      <div className="flex items-center justify-between gap-3">
+        <DashboardToolbar
+          isLoading={isLoading}
+          isRunning={isRunning}
+          onRunCycle={() => handleRunCycle(true)}
+          onToggleSettings={() => setShowSettings(!showSettings)}
+          onToggleNotifications={() => setShowNotifications(!showNotifications)}
+          notificationCount={notifications.length}
+        />
+        <div className="flex items-center gap-2 bg-card border border-border px-3 py-1 rounded-sm shadow-sm">
+          <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">전문가 모드</span>
+          <button
+            onClick={() => setIsExpertMode(!isExpertMode)}
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 ${isExpertMode ? 'bg-primary' : 'bg-muted'}`}
+          >
+            <span
+              className={`pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-transform ${isExpertMode ? 'translate-x-4' : 'translate-x-0'}`}
+            />
+          </button>
+        </div>
+      </div>
 
       {/* 설정 패널 */}
       {showSettings && (
@@ -458,192 +474,252 @@ export default function Home() {
 
       {/* 탭/필터 바 */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between px-3 py-2 border border-border bg-card rounded-sm">
-          <div className="flex gap-2 text-[11px]">
-            <Button
-              variant={activeTab === "ai" ? "primary" : "ghost"}
-              size="xs"
-              onClick={() => setActiveTab("ai")}
-            >
-              AI 진행
-            </Button>
-            <Button
-              variant={activeTab === "sourcing" ? "primary" : "ghost"}
-              size="xs"
-              onClick={() => setActiveTab("sourcing")}
-            >
-              공급사/소싱
-            </Button>
-            <Button
-              variant={activeTab === "processing" ? "primary" : "ghost"}
-              size="xs"
-              onClick={() => setActiveTab("processing")}
-            >
-              가공
-            </Button>
-            <Button
-              variant={activeTab === "listing" ? "primary" : "ghost"}
-              size="xs"
-              onClick={() => setActiveTab("listing")}
-            >
-              등록
-            </Button>
-            <Button
-              variant={activeTab === "order" ? "primary" : "ghost"}
-              size="xs"
-              onClick={() => setActiveTab("order")}
-            >
-              주문
-            </Button>
-            <Button
-              variant={activeTab === "logs" ? "primary" : "ghost"}
-              size="xs"
-              onClick={() => setActiveTab("logs")}
-            >
-              로그
-            </Button>
-          </div>
-          <div className="text-[9px] text-muted-foreground bg-muted px-2 py-1 rounded-sm">
-            마지막 업데이트: {lastUpdatedAt ? lastUpdatedAt.toLocaleTimeString() : "-"}
-          </div>
-        </div>
+        {/* 탭/필터 바 (전문가 모드 전용) */}
+        {isExpertMode ? (
+          <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-500">
+            <div className="flex items-center justify-between px-3 py-2 border border-border bg-card rounded-sm shadow-sm">
+              <div className="flex gap-2 text-[11px]">
+                <Button
+                  variant={activeTab === "ai" ? "primary" : "ghost"}
+                  size="xs"
+                  onClick={() => setActiveTab("ai")}
+                >
+                  AI 진행
+                </Button>
+                <Button
+                  variant={activeTab === "sourcing" ? "primary" : "ghost"}
+                  size="xs"
+                  onClick={() => setActiveTab("sourcing")}
+                >
+                  공급사/소싱
+                </Button>
+                <Button
+                  variant={activeTab === "processing" ? "primary" : "ghost"}
+                  size="xs"
+                  onClick={() => setActiveTab("processing")}
+                >
+                  가공
+                </Button>
+                <Button
+                  variant={activeTab === "listing" ? "primary" : "ghost"}
+                  size="xs"
+                  onClick={() => setActiveTab("listing")}
+                >
+                  등록
+                </Button>
+                <Button
+                  variant={activeTab === "order" ? "primary" : "ghost"}
+                  size="xs"
+                  onClick={() => setActiveTab("order")}
+                >
+                  주문
+                </Button>
+                <Button
+                  variant={activeTab === "logs" ? "primary" : "ghost"}
+                  size="xs"
+                  onClick={() => setActiveTab("logs")}
+                >
+                  로그
+                </Button>
+              </div>
+              <div className="text-[9px] text-muted-foreground bg-muted px-2 py-1 rounded-sm">
+                상태: 전문가 분석 모드
+              </div>
+            </div>
 
-        {/* AI 진행 */}
-        {activeTab === "ai" && (
-          <div className="space-y-3">
-            <OrchestrationControl
-              isRunning={isRunning}
-              isLoading={isLoading}
-              orchestrationProgress={orchestrationProgress}
-              onRunCycle={handleRunCycle}
-            />
-            <Card className="border border-border">
-              <CardHeader className="py-2">
-                <CardTitle className="text-xs">KPI 하이라이트</CardTitle>
-              </CardHeader>
-              <CardContent className="grid gap-2 sm:grid-cols-3">
-                {kpiHighlights.map((item) => (
-                  <div key={item.label} className="rounded-sm border border-border/60 bg-muted/30 px-3 py-2">
-                    <div className="text-[10px] text-muted-foreground">{item.label}</div>
-                    <div className={`text-lg font-semibold ${item.tone}`}>
-                      {item.value.toFixed(1)}%
-                    </div>
-                    <div className="text-[9px] text-muted-foreground">{item.detail}</div>
+            {/* AI 진행 */}
+            {activeTab === "ai" && (
+              <div className="space-y-3">
+                <OrchestrationControl
+                  isRunning={isRunning}
+                  isLoading={isLoading}
+                  orchestrationProgress={orchestrationProgress}
+                  onRunCycle={handleRunCycle}
+                />
+                <Card className="border border-border">
+                  <CardHeader className="py-2">
+                    <CardTitle className="text-xs">KPI 하이라이트</CardTitle>
+                  </CardHeader>
+                  <CardContent className="grid gap-2 sm:grid-cols-3">
+                    {kpiHighlights.map((item) => (
+                      <div key={item.label} className="rounded-sm border border-border/60 bg-muted/30 px-3 py-2">
+                        <div className="text-[10px] text-muted-foreground">{item.label}</div>
+                        <div className={`text-lg font-semibold ${item.tone}`}>
+                          {item.value.toFixed(1)}%
+                        </div>
+                        <div className="text-[9px] text-muted-foreground">{item.detail}</div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+                <div className="grid gap-3 md:grid-cols-[1fr,1fr]">
+                  <StatTable title="쿠팡 분기 현황" data={gatingStats} />
+                  <Card className="border border-border">
+                    <CardHeader className="py-2">
+                      <CardTitle className="text-xs">최근 이벤트</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      {events.slice(0, 6).map((row, index) => (
+                        <div
+                          key={`${row.step}-${row.status}-${index}`}
+                          className="flex items-start justify-between gap-3 rounded-sm border border-border/50 bg-background px-2 py-1.5"
+                        >
+                          <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                            <Activity className="h-3 w-3 text-primary" />
+                            <span className="font-semibold">{row.step}</span>
+                            <span>{row.status}</span>
+                          </div>
+                          <span className="text-[10px] text-muted-foreground line-clamp-1 text-right max-w-[60%]">
+                            {row.message || "-"}
+                          </span>
+                        </div>
+                      ))}
+                      {events.length === 0 && (
+                        <div className="text-center text-[11px] text-muted-foreground py-4">
+                          이벤트가 없습니다.
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              </div>
+            )}
+
+            {/* 공급사/소싱 */}
+            {activeTab === "sourcing" && (
+              <StatTable
+                title="공급사/소싱 상세"
+                data={[
+                  {
+                    label: "공급사 전체 수량 (RAW)",
+                    value: supplierTotal,
+                    icon: <CheckCircle className="h-3 w-3 text-primary" />,
+                    description: "SupplierItemRaw 기준",
+                  },
+                  {
+                    label: "소싱 대기",
+                    value: p.sourcing_pending || 0,
+                    icon: <CheckCircle className="h-3 w-3 text-warning" />,
+                  },
+                  {
+                    label: "소싱 승인",
+                    value: p.sourcing_approved || 0,
+                    icon: <CheckCircle className="h-3 w-3 text-success" />,
+                  },
+                ]}
+              />
+            )}
+
+            {/* 가공 */}
+            {activeTab === "processing" && (
+              <StatTable
+                title="가공 단계 상세"
+                data={[
+                  {
+                    label: "가공 대기",
+                    value: p.refinement_pending || 0,
+                    icon: <CheckCircle className="h-3 w-3 text-muted-foreground" />,
+                  },
+                  {
+                    label: "가공 중",
+                    value: p.refinement_processing || 0,
+                    icon: <CheckCircle className="h-3 w-3 text-info" />,
+                  },
+                  {
+                    label: "승인 대기",
+                    value: p.refinement_approval_pending || 0,
+                    icon: <ShieldCheck className="h-3 w-3 text-warning" />,
+                  },
+                  {
+                    label: "가공 실패",
+                    value: p.refinement_failed || 0,
+                    icon: <CheckCircle className="h-3 w-3 text-destructive" />,
+                  },
+                  {
+                    label: "가공 완료",
+                    value: p.refinement_completed || 0,
+                    icon: <CheckCircle className="h-3 w-3 text-success" />,
+                  },
+                ]}
+              />
+            )}
+
+            {/* 등록 */}
+            {activeTab === "listing" && (
+              <MarketStats marketStats={marketsSummary} />
+            )}
+
+            {/* 주문 현황 */}
+            {activeTab === "order" && (
+              <OrderStats dashboardStats={dashboardStats} />
+            )}
+
+            {/* 로그 */}
+            {activeTab === "logs" && (
+              <LogViewer
+                filteredEvents={filteredEvents}
+                logFilter={logFilter}
+                setLogFilter={setLogFilter}
+                autoScroll={autoScroll}
+                setAutoScroll={setAutoScroll}
+              />
+            )}
+          </div>
+        ) : (
+          <div className="grid gap-3 animate-in fade-in duration-700">
+            <Card className="border border-border/50 bg-gradient-to-br from-card to-muted/10">
+              <CardContent className="p-8 flex flex-col items-center justify-center space-y-4">
+                <div className="relative">
+                  <div className={`absolute inset-0 rounded-full animate-ping opacity-20 ${isRunning ? 'bg-emerald-500' : 'bg-muted-foreground'}`} />
+                  <div className={`relative h-16 w-16 rounded-full flex items-center justify-center ${isRunning ? 'bg-emerald-500 text-white shadow-[0_0_20px_rgba(16,185,129,0.5)]' : 'bg-muted text-muted-foreground'}`}>
+                    <Activity className={`h-8 w-8 ${isRunning ? 'animate-pulse' : ''}`} />
                   </div>
-                ))}
+                </div>
+                <div className="text-center space-y-1">
+                  <h3 className="text-xl font-black">{isRunning ? "AI 에이전트가 가동 중입니다" : "AI 에이전트가 대기 중입니다"}</h3>
+                  <p className="text-sm text-muted-foreground">
+                    {latestEvent?.message || "현재 시스템이 안정적인 상태로 운영되고 있습니다."}
+                  </p>
+                </div>
+                {!isRunning && (
+                  <Button size="lg" className="px-10 rounded-full font-bold shadow-lg shadow-primary/20" onClick={() => handleRunCycle(true)}>
+                    자율 운영 시작하기
+                  </Button>
+                )}
+
+                <div className="w-full max-w-2xl grid grid-cols-4 gap-4 mt-8 pt-8 border-t border-border/50">
+                  <div className="text-center space-y-1">
+                    <p className="text-[10px] font-bold text-muted-foreground uppercase">발굴</p>
+                    <p className="text-xl font-black">{p.sourcing_approved?.toLocaleString() || 0}</p>
+                    <div className="h-1 w-full bg-muted rounded-full overflow-hidden">
+                      <div className="h-full bg-blue-500" style={{ width: `${Math.min(100, ((p.sourcing_approved || 0) / (p.sourcing_pending || 1)) * 100)}%` }} />
+                    </div>
+                  </div>
+                  <div className="text-center space-y-1">
+                    <p className="text-[10px] font-bold text-muted-foreground uppercase">가공</p>
+                    <p className="text-xl font-black">{p.refinement_completed?.toLocaleString() || 0}</p>
+                    <div className="h-1 w-full bg-muted rounded-full overflow-hidden">
+                      <div className="h-full bg-amber-500" style={{ width: `${Math.min(100, ((p.refinement_completed || 0) / (processingTotal || 1)) * 100)}%` }} />
+                    </div>
+                  </div>
+                  <div className="text-center space-y-1">
+                    <p className="text-[10px] font-bold text-muted-foreground uppercase">등록</p>
+                    <p className="text-xl font-black">{listingTotal?.toLocaleString() || 0}</p>
+                    <div className="h-1 w-full bg-muted rounded-full overflow-hidden">
+                      <div className="h-full bg-emerald-500" style={{ width: '85%' }} />
+                    </div>
+                  </div>
+                  <div className="text-center space-y-1">
+                    <p className="text-[10px] font-bold text-muted-foreground uppercase">주문</p>
+                    <p className="text-xl font-black">{(dashboardStats?.orders?.payment_completed || 0).toLocaleString()}</p>
+                    <div className="h-1 w-full bg-muted rounded-full overflow-hidden">
+                      <div className="h-full bg-primary" style={{ width: '40%' }} />
+                    </div>
+                  </div>
+                </div>
               </CardContent>
             </Card>
-            <div className="grid gap-3 md:grid-cols-[1fr,1fr]">
-              <StatTable title="쿠팡 분기 현황" data={gatingStats} />
-              <Card className="border border-border">
-                <CardHeader className="py-2">
-                  <CardTitle className="text-xs">최근 이벤트</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {events.slice(0, 6).map((row, index) => (
-                    <div
-                      key={`${row.step}-${row.status}-${index}`}
-                      className="flex items-start justify-between gap-3 rounded-sm border border-border/50 bg-background px-2 py-1.5"
-                    >
-                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                        <Activity className="h-3 w-3 text-primary" />
-                        <span className="font-semibold">{row.step}</span>
-                        <span>{row.status}</span>
-                      </div>
-                      <span className="text-[10px] text-muted-foreground line-clamp-1 text-right max-w-[60%]">
-                        {row.message || "-"}
-                      </span>
-                    </div>
-                  ))}
-                  {events.length === 0 && (
-                    <div className="text-center text-[11px] text-muted-foreground py-4">
-                      이벤트가 없습니다.
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
           </div>
-        )}
-
-        {/* 공급사/소싱 */}
-        {activeTab === "sourcing" && (
-          <StatTable
-            title="공급사/소싱 상세"
-            data={[
-              {
-                label: "공급사 전체 수량 (RAW)",
-                value: supplierTotal,
-                icon: <CheckCircle className="h-3 w-3 text-primary" />,
-                description: "SupplierItemRaw 기준",
-              },
-              {
-                label: "소싱 대기",
-                value: p.sourcing_pending || 0,
-                icon: <CheckCircle className="h-3 w-3 text-warning" />,
-              },
-              {
-                label: "소싱 승인",
-                value: p.sourcing_approved || 0,
-                icon: <CheckCircle className="h-3 w-3 text-success" />,
-              },
-            ]}
-          />
-        )}
-
-        {/* 가공 */}
-        {activeTab === "processing" && (
-          <StatTable
-            title="가공 단계 상세"
-            data={[
-              {
-                label: "가공 대기",
-                value: p.refinement_pending || 0,
-                icon: <CheckCircle className="h-3 w-3 text-muted-foreground" />,
-              },
-              {
-                label: "가공 중",
-                value: p.refinement_processing || 0,
-                icon: <CheckCircle className="h-3 w-3 text-info" />,
-              },
-              {
-                label: "승인 대기",
-                value: p.refinement_approval_pending || 0,
-                icon: <ShieldCheck className="h-3 w-3 text-warning" />,
-              },
-              {
-                label: "가공 실패",
-                value: p.refinement_failed || 0,
-                icon: <CheckCircle className="h-3 w-3 text-destructive" />,
-              },
-              {
-                label: "가공 완료",
-                value: p.refinement_completed || 0,
-                icon: <CheckCircle className="h-3 w-3 text-success" />,
-              },
-            ]}
-          />
-        )}
-
-        {/* 등록 */}
-        {activeTab === "listing" && (
-          <MarketStats marketStats={marketsSummary} />
-        )}
-
-        {/* 주문 현황 */}
-        {activeTab === "order" && (
-          <OrderStats dashboardStats={dashboardStats} />
-        )}
-
-        {/* 로그 */}
-        {activeTab === "logs" && (
-          <LogViewer
-            filteredEvents={filteredEvents}
-            logFilter={logFilter}
-            setLogFilter={setLogFilter}
-            autoScroll={autoScroll}
-            setAutoScroll={setAutoScroll}
-          />
         )}
       </div>
     </div>

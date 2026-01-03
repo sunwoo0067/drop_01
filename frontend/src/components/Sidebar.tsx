@@ -90,135 +90,130 @@ export default function Sidebar() {
 
     return (
         <div className={cn(
-            "flex flex-col border-r bg-card h-screen",
-            collapsed ? "w-16" : "w-56"
+            "flex flex-col border-r bg-card h-screen transition-all duration-300 ease-in-out relative z-30",
+            collapsed ? "w-16" : "w-64"
         )}>
-            {/* Collapse Toggle Button */}
+            {/* Collapse Toggle Button - Improved positioning and design */}
             <button
                 onClick={() => setCollapsed(!collapsed)}
                 aria-label={collapsed ? "사이드바 펼치기" : "사이드바 접기"}
-                className="absolute -right-3 top-4 flex h-5 w-5 items-center justify-center rounded bg-background border border-border shadow-sm hover:bg-muted transition-colors z-10"
+                className="absolute -right-3 top-6 flex h-6 w-6 items-center justify-center rounded-full bg-background border border-border shadow-md hover:bg-muted transition-all active:scale-95 z-40"
             >
                 {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronLeft className="h-3 w-3" />}
             </button>
 
-            {/* Logo Section */}
-            <div className="flex h-14 items-center px-4 border-b border-border">
-                <div className="flex items-center gap-2">
-                    <div className="h-8 w-8 rounded-sm bg-primary flex items-center justify-center shrink-0">
-                        <Package className="h-4 w-4 text-primary-foreground" />
+            {/* Logo Section - Professional branding */}
+            <div className="flex h-16 items-center px-5 border-b border-border/50">
+                <Link href="/" className="flex items-center gap-3 group">
+                    <div className="h-9 w-9 rounded-xl bg-primary flex items-center justify-center shrink-0 shadow-lg shadow-primary/20 group-hover:scale-105 transition-transform">
+                        <Package className="h-5 w-5 text-primary-foreground" />
                     </div>
                     {!collapsed && (
                         <div className="flex flex-col">
-                            <span className="text-base font-bold text-foreground tracking-tight">
+                            <span className="text-sm font-black text-foreground tracking-tighter uppercase italic leading-none">
                                 DROP AUTOMATA
                             </span>
-                            <span className="text-[11px] text-muted-foreground uppercase tracking-wider">
-                                ERP System
+                            <span className="text-[9px] text-muted-foreground font-bold tracking-[0.2em] uppercase mt-1 opacity-70">
+                                AI ERP SYSTEM
                             </span>
                         </div>
                     )}
-                </div>
+                </Link>
             </div>
 
+            {/* Quick Actions - Simplified and more visible */}
             {!collapsed && (
-                <div className="px-3 py-2 border-b border-border/60">
-                    <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-                        빠른 이동
-                    </div>
-                    <div className="grid grid-cols-3 gap-1">
+                <div className="px-4 py-4 border-b border-border/40">
+                    <div className="grid grid-cols-3 gap-2">
                         {quickLinks.map((item) => (
                             <Link
                                 key={item.href}
                                 href={item.href}
-                                className="flex flex-col items-center gap-1 rounded-sm border border-border bg-muted/30 px-2 py-2 text-[11px] font-semibold text-foreground hover:bg-muted transition-colors"
+                                className="flex flex-col items-center gap-1.5 rounded-xl border border-border/50 bg-accent/30 p-2 text-[10px] font-bold text-foreground hover:bg-accent hover:border-primary/30 transition-all hover:-translate-y-0.5"
+                                title={item.name}
                             >
-                                <item.icon className="h-4 w-4" />
-                                <span>{item.name}</span>
+                                <item.icon className="h-3.5 w-3.5 text-primary" />
+                                <span className="opacity-80">{item.name}</span>
                             </Link>
                         ))}
                     </div>
                 </div>
             )}
 
-            {/* Navigation Section */}
-            <nav className="flex-1 overflow-y-auto overflow-x-hidden py-2 table-scroll">
+            {/* Navigation Section - Better grouping and visual hierarchy */}
+            <nav className="flex-1 overflow-y-auto overflow-x-hidden py-4 px-3 space-y-6 scrollbar-hide">
                 {menuGroups.map((group) => (
-                    <div key={group.title} className="border-b border-border/50">
+                    <div key={group.title} className="space-y-1">
                         {!collapsed && (
-                            <button
-                                onClick={() => toggleGroup(group.title)}
-                                className="w-full px-3 py-2 flex items-center justify-between hover:bg-muted transition-colors"
-                            >
-                                <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                            <div className="px-2 mb-2 flex items-center justify-between">
+                                <span className="text-[10px] font-black text-muted-foreground/50 uppercase tracking-[0.15em]">
                                     {group.title}
                                 </span>
-                                <ChevronDown
-                                    className={cn(
-                                        "h-3 w-3 text-muted-foreground transition-transform",
-                                        expandedGroups.includes(group.title) ? "rotate-180" : ""
-                                    )}
-                                />
-                            </button>
-                        )}
-                        {(collapsed || expandedGroups.includes(group.title)) && (
-                            <div className="space-y-0.5">
-                                {group.items.map((item) => {
-                                    const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
-                                    return (
-                                        <Link
-                                            key={item.href}
-                                            href={item.href}
-                                            className={cn(
-                                                "flex items-center px-3 py-2 text-sm font-medium transition-colors border-l-2",
-                                                isActive
-                                                    ? "bg-primary/10 text-primary border-primary"
-                                                    : "text-muted-foreground border-transparent hover:bg-muted hover:text-foreground",
-                                                collapsed && "justify-center px-0 h-8 w-8 mx-auto"
-                                            )}
-                                            title={collapsed ? item.name : ""}
-                                        >
-                                            <item.icon
-                                                className={cn(
-                                                    "h-4 w-4 flex-shrink-0",
-                                                    !collapsed && "mr-2"
-                                                )}
-                                            />
-                                            {!collapsed && <span>{item.name}</span>}
-                                        </Link>
-                                    );
-                                })}
                             </div>
                         )}
+                        <div className="space-y-0.5">
+                            {group.items.map((item) => {
+                                const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
+                                return (
+                                    <Link
+                                        key={item.href}
+                                        href={item.href}
+                                        className={cn(
+                                            "flex items-center px-3 py-2.5 text-xs font-bold transition-all rounded-xl relative group",
+                                            isActive
+                                                ? "bg-primary/10 text-primary shadow-sm shadow-primary/5"
+                                                : "text-muted-foreground/80 hover:bg-accent hover:text-foreground",
+                                            collapsed && "justify-center px-0 h-10 w-10 mx-auto"
+                                        )}
+                                        title={collapsed ? item.name : ""}
+                                    >
+                                        <item.icon
+                                            className={cn(
+                                                "h-4 w-4 transition-transform group-hover:scale-110",
+                                                !collapsed && "mr-3",
+                                                isActive ? "text-primary" : "opacity-70 group-hover:opacity-100"
+                                            )}
+                                        />
+                                        {!collapsed && <span>{item.name}</span>}
+
+                                        {isActive && !collapsed && (
+                                            <div className="absolute left-0 w-1 h-4 bg-primary rounded-full my-auto" />
+                                        )}
+                                    </Link>
+                                );
+                            })}
+                        </div>
                     </div>
                 ))}
             </nav>
 
-            {/* User Profile Section */}
-            <div className="p-3 border-t border-border">
+            {/* User Profile Section - Clean and modern */}
+            <div className="p-4 border-t border-border/50">
                 <div className={cn(
-                    "w-full border border-border",
-                    !collapsed && "p-2"
+                    "flex items-center p-2 rounded-2xl border border-border/50 bg-accent/20",
+                    collapsed ? "justify-center h-12 w-12 mx-auto" : "gap-3"
                 )}>
-                    <div className={cn(
-                        "flex items-center",
-                        collapsed ? "justify-center" : "gap-2"
-                    )}>
-                        <div className="h-7 w-7 rounded-sm bg-secondary flex items-center justify-center shrink-0 border border-border">
-                            <User className="h-4 w-4 text-foreground" />
-                        </div>
-                        {!collapsed && (
-                            <div className="flex flex-col min-w-0 flex-1">
-                                <span className="text-sm font-semibold truncate">Admin User</span>
-                                <span className="text-[11px] text-muted-foreground truncate uppercase">License: Premium</span>
-                            </div>
-                        )}
-                        {!collapsed && (
-                            <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-sm">
-                                <LogOut className="h-3 w-3" />
-                            </Button>
-                        )}
+                    <div className="h-8 w-8 rounded-full bg-gradient-to-br from-primary/20 to-primary/40 flex items-center justify-center shrink-0 border border-primary/20 shadow-inner">
+                        <User className="h-4 w-4 text-primary" />
                     </div>
+                    {!collapsed && (
+                        <div className="flex flex-col min-w-0 flex-1">
+                            <span className="text-[12px] font-black text-foreground truncate leading-none">Admin User</span>
+                            <div className="flex items-center gap-1 mt-1">
+                                <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                <span className="text-[9px] text-muted-foreground font-bold uppercase tracking-wider">Premium</span>
+                            </div>
+                        </div>
+                    )}
+                    {!collapsed && (
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-xl"
+                        >
+                            <LogOut className="h-3.5 w-3.5" />
+                        </Button>
+                    )}
                 </div>
             </div>
         </div>

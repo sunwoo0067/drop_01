@@ -557,7 +557,7 @@ class SourcingService:
         Schedules a background sync job for ALL products from OwnerClan.
         Checks if a job is already in progress to avoid duplicates.
         """
-        from app.ownerclan_sync import start_background_ownerclan_job
+        from app.services.ownerclan.jobs import start_background_ownerclan_job
         from app.session_factory import session_factory
         
         # Check for existing active jobs

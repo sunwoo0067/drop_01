@@ -3,7 +3,14 @@ import logging
 from app.db import get_session
 from app.services.orchestrator_service import OrchestratorService
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[
+        logging.FileHandler("orchestration_run.log"),
+        logging.StreamHandler(),
+    ],
+)
 logger = logging.getLogger(__name__)
 
 async def run_full_cycle():

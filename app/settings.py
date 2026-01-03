@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     ownerclan_auth_url: str = "https://auth.ownerclan.com/auth"
     ownerclan_graphql_url: str = "https://api.ownerclan.com/v1/graphql"
     ownerclan_use_handler: bool = False # PR-3: 신규 핸들러 사용 여부
-    ownerclan_use_self_proxy: bool = False # Supabase Edge Function 프록시 사용 여부
+    ownerclan_use_sef_proxy: bool = False # Supabase Edge Function 프록시 사용 여부
     ownerclan_retry_count: int = 5 # tenacity 재시도 횟수
     ownerclan_batch_commit_size: int = 200 # 배치 커밋 단위 (50~2000)
 
@@ -37,7 +37,8 @@ class Settings(BaseSettings):
     coupang_bulk_try: str = "0"
     coupang_research_ignore_skip_log: str = "0"
     coupang_research_ignore_doc_pending: str = "0"
-    coupang_fallback_category_codes: str = "77800,77797,77795"
+    # Fallback codes for risky/blocked Coupang categories. Avoid default 77800 (blocked) to reduce skips.
+    coupang_fallback_category_codes: str = "77797,77795"
     coupang_daily_limit: int = 50
     coupang_fallback_ratio_threshold: float = 0.3
     coupang_stability_mode: bool = False

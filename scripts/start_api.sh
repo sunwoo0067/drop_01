@@ -10,6 +10,13 @@ if [ "${API_RELOAD:-}" = "1" ]; then
   RELOAD_ARGS+=(--reload)
 fi
 
+if [ -f .env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . ./.env
+  set +a
+fi
+
 if ss -ltn | grep -qE ":${PORT}\\b"; then
   echo "[백엔드] 포트 ${PORT}가 이미 사용 중입니다. 먼저 stop_api.sh를 실행하세요." >&2
   exit 1

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from typing import Dict, Any, Tuple
@@ -76,8 +77,15 @@ class DynamicPricingService:
             "product_name": product.name,
             "target_roi": target_roi
         }
-        
-        result = await agent.run(str(listing_id), input_data)
+
+        try:
+            result = await asyncio.wait_for(agent.run(str(listing_id), input_data), timeout=30)
+        except asyncio.TimeoutError:
+            logger.warning("PricingAgent timeout for listing %s", listing_id)
+            return {"status": "error", "message": "PricingAgent timeout"}
+        except Exception as e:
+            logger.error("PricingAgent failed for listing %s: %s", listing_id, e)
+            return {"status": "error", "message": "PricingAgent failed"}
         
         if result.status == "COMPLETED" and result.final_output:
             return {

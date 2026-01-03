@@ -18,7 +18,7 @@ from app.models import SupplierItemRaw, SupplierSyncJob
 from app.ownerclan_client import OwnerClanClient
 from app.settings import settings
 from app.services.detail_html_normalizer import normalize_ownerclan_html
-from app.services.ownerclan_utils import (
+from app.services.ownerclan.core import (
     OwnerClanJobResult,
     _parse_ownerclan_datetime,
     _sanitize_json,
@@ -277,7 +277,6 @@ class OwnerClanItemSyncHandler:
                     item_code=str(item_code),
                     item_key=str(item.get("key")),
                     item_id=str(item.get("id")),
-                    name=item.get("name") or "",
                     source_updated_at=source_updated_at,
                     raw=_sanitize_json(item),
                     fetched_at=datetime.now(timezone.utc),

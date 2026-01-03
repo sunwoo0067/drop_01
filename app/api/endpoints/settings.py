@@ -60,6 +60,12 @@ class OwnerClanAccountIn(BaseModel):
     is_active: bool = True
 
 
+class SupplierConfigIn(BaseModel):
+    margin_rate: float = 0.15
+    delivery_fee: int = 3000
+    sync_auto_enabled: bool = True
+
+
 @router.get("/suppliers/ownerclan/primary")
 def get_ownerclan_primary_account(session: Session = Depends(get_session)) -> dict:
     account = (
@@ -145,6 +151,40 @@ def set_ownerclan_primary_account(payload: OwnerClanPrimaryAccountIn, session: S
         "username": account.username,
         "tokenExpiresAt": _to_iso(account.token_expires_at),
     }
+
+
+@router.get("/suppliers/config")
+def get_supplier_config(session: Session = Depends(get_session)) -> dict:
+    from app.models import SystemSetting
+    setting = session.query(SystemSetting).filter_by(key="supplier_config").one_or_none()
+    
+    if not setting:
+        return {
+            "margin_rate": settings.pricing_default_margin_rate or 0.15,
+            "delivery_fee": 3000,
+            "sync_auto_enabled": True
+        }
+    
+    return setting.value
+
+
+@router.post("/suppliers/config")
+def update_supplier_config(payload: SupplierConfigIn, session: Session = Depends(get_session)) -> dict:
+    from app.models import SystemSetting
+    setting = session.query(SystemSetting).filter_by(key="supplier_config").one_or_none()
+    
+    if not setting:
+        setting = SystemSetting(
+            key="supplier_config",
+            value=payload.model_dump(),
+            description="Global Supplier & Pricing Configuration"
+        )
+        session.add(setting)
+    else:
+        setting.value = payload.model_dump()
+    
+    session.commit()
+    return setting.value
 
 
 @router.get("/suppliers/ownerclan/accounts")

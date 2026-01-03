@@ -1,7 +1,13 @@
 import argparse
 import asyncio
+import os
+import sys
 import time
 import uuid
+
+sys.path.insert(0, os.getcwd())
+os.environ.setdefault("COUPANG_ENABLE_CATEGORY_PREDICTION", "1")
+os.environ.setdefault("COUPANG_PREDICT_ON_UNKNOWN", "1")
 
 from sqlalchemy import select
 
@@ -9,6 +15,7 @@ from app.db import SessionLocal
 from app.models import MarketAccount, Product, SourcingCandidate, SupplierItemRaw
 from app.coupang_sync import register_product
 from app.services.processing_service import ProcessingService
+from app.services.sourcing_service import FORBIDDEN_KEYWORDS
 
 
 def _extract_detail_html(raw: dict) -> str:
@@ -75,9 +82,37 @@ def _ensure_candidates(session, needed: int) -> int:
     return created
 
 
-async def _process_name(session, product_id: uuid.UUID) -> None:
+async def _process_name(session, product_id: uuid.UUID, min_images_required: int = 2) -> None:
     service = ProcessingService(session)
-    await service.process_product(product_id, min_images_required=1)
+    await service.process_product(product_id, min_images_required=min_images_required)
+
+
+def _has_valid_images(raw: dict) -> bool:
+    if not isinstance(raw, dict):
+        return False
+    images_val = raw.get("images")
+    if isinstance(images_val, str) and images_val.strip().startswith(("http://", "https://")):
+        return True
+    if isinstance(images_val, list):
+        for it in images_val:
+            if isinstance(it, str) and it.strip().startswith(("http://", "https://")):
+                return True
+            if isinstance(it, dict):
+                u = it.get("url") or it.get("src")
+                if isinstance(u, str) and u.strip().startswith(("http://", "https://")):
+                    return True
+    thumb = raw.get("thumbnail") or raw.get("main_image")
+    return isinstance(thumb, str) and thumb.strip().startswith(("http://", "https://"))
+
+
+def _contains_forbidden_keyword(name: str | None) -> bool:
+    if not name:
+        return False
+    lowered = name.lower()
+    for kw in FORBIDDEN_KEYWORDS:
+        if kw.lower() in lowered:
+            return True
+    return False
 
 
 async def main() -> int:
@@ -135,51 +170,63 @@ async def main() -> int:
                     .first()
                 )
 
-                if not raw_item:
+            if not raw_item:
+                cand.status = "REJECTED"
+                session.commit()
+                print(f"skip raw_not_found candidate={cand.id}")
+                time.sleep(sleep_seconds)
+                continue
+            if _contains_forbidden_keyword(cand.name):
+                cand.status = "REJECTED"
+                session.commit()
+                print(f"skip forbidden_keyword candidate={cand.id}")
+                time.sleep(sleep_seconds)
+                continue
+
+            product = (
+                session.query(Product)
+                .filter(Product.supplier_item_id == raw_item.id)
+                .first()
+            )
+            if not product:
+                raw = raw_item.raw if isinstance(raw_item.raw, dict) else {}
+                if not _has_valid_images(raw):
                     cand.status = "REJECTED"
                     session.commit()
-                    print(f"skip raw_not_found candidate={cand.id}")
+                    print(f"skip no_images candidate={cand.id}")
                     time.sleep(sleep_seconds)
                     continue
-
-                product = (
-                    session.query(Product)
-                    .filter(Product.supplier_item_id == raw_item.id)
-                    .first()
+                product = Product(
+                    id=uuid.uuid4(),
+                    supplier_item_id=raw_item.id,
+                    name=cand.name,
+                    cost_price=cand.supply_price,
+                    selling_price=int(cand.supply_price * 1.5) if cand.supply_price else 0,
+                    status="ACTIVE",
+                    processing_status="PENDING",
+                    description=_extract_detail_html(raw),
                 )
-                if not product:
-                    raw = raw_item.raw if isinstance(raw_item.raw, dict) else {}
-                    product = Product(
-                        id=uuid.uuid4(),
-                        supplier_item_id=raw_item.id,
-                        name=cand.name,
-                        cost_price=cand.supply_price,
-                        selling_price=int(cand.supply_price * 1.5) if cand.supply_price else 0,
-                        status="ACTIVE",
-                        processing_status="PENDING",
-                        description=_extract_detail_html(raw),
-                    )
-                    session.add(product)
-                    session.commit()
-                    session.refresh(product)
-
-                await _process_name(session, product.id)
+                session.add(product)
+                session.commit()
                 session.refresh(product)
 
-                ok, err = register_product(session, account_id, product.id)
-                if ok:
-                    cand.status = "APPROVED"
-                    total_success += 1
-                    session.commit()
-                    print(f"registered {total_success}/{target} product={product.id}")
-                else:
-                    cand.status = "REJECTED"
-                    session.commit()
-                    print(f"failed product={product.id} err={err}")
+            await _process_name(session, product.id, min_images_required=2)
+            session.refresh(product)
 
-                time.sleep(sleep_seconds)
-                if total_success >= target:
-                    break
+            ok, err = register_product(session, account_id, product.id)
+            if ok:
+                cand.status = "APPROVED"
+                total_success += 1
+                session.commit()
+                print(f"registered {total_success}/{target} product={product.id}")
+            else:
+                cand.status = "REJECTED"
+                session.commit()
+                print(f"failed product={product.id} err={err}")
+
+            time.sleep(sleep_seconds)
+            if total_success >= target:
+                break
 
         if total_success >= target:
             break

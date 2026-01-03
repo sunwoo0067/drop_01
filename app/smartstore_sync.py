@@ -90,11 +90,14 @@ def _build_smartstore_payload(
         }
 
     # 기본 상품 정보 구성
+    # [URGENT FIX] 스마트스토어 상품명 50자 제한 준수를 위해 40자로 제한 (안전 마진)
+    safe_name = (name or "")[:40].strip()
+    
     origin_product = {
         "statusType": "SALE",
         "categoryNo": category_no,
         "leafCategoryId": category_no,
-        "name": name,
+        "name": safe_name,
         "detailContent": detail_content,
         "salePrice": sale_price,
         "stockQuantity": stock_quantity,
@@ -163,7 +166,7 @@ def _build_smartstore_payload(
         "channelProductDisplayStatusType": "ON",
         "channelProductSaleStatusType": "ON",
         "channelProductType": "NORMAL",
-        "channelProductName": name,
+        "channelProductName": safe_name,
         "channelProductSalePrice": sale_price,
         "naverShoppingRegistration": False,
     }
@@ -220,7 +223,7 @@ def _build_detail_attribute(
         "productInfoProvidedNotice": {
             "productInfoProvidedNoticeType": resolved_notice_type,
             "etc": {
-                "itemName": name,
+                "itemName": (name or "")[:40].strip(), # [URGENT FIX] 50자 제한 준수
                 "modelName": model_value,
                 "manufacturer": manufacturer_value,
                 "afterServiceDirector": after_service_director_value,
