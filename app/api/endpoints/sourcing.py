@@ -2,20 +2,19 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 import anyio
 from pydantic import BaseModel, Field
 from typing import List
-from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 import logging
 import uuid
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert
 
 from app.db import get_session
 from app.services.sourcing_service import SourcingService
-from app.models import SourcingCandidate, SupplierAccount, SupplierItemRaw, Product, MarketAccount
-from app.ownerclan_client import OwnerClanClient
-from app.settings import settings
-from app.services.pricing import calculate_selling_price, parse_int_price, parse_shipping_fee
-from app.services.detail_html_normalizer import normalize_ownerclan_html
+from app.models import SourcingCandidate, Product, MarketAccount
+from app.services.ownerclan_items import (
+    OwnerClanItemError,
+    create_or_get_product_from_raw_item,
+    get_or_fetch_ownerclan_item_raw,
+)
 
 router = APIRouter()
 
@@ -50,153 +49,6 @@ class PromoteCandidateIn(BaseModel):
 
 
 
-def _normalize_ownerclan_item_payload(payload: dict) -> dict:
-    if not isinstance(payload, dict):
-        return {}
-    data = payload.get("data")
-    if isinstance(data, dict):
-        payload = data
-
-    if isinstance(payload, dict):
-        detail_html = payload.get("detail_html") or payload.get("detailHtml")
-        if isinstance(detail_html, str) and detail_html.strip():
-            payload = {**payload, "detail_html": normalize_ownerclan_html(detail_html)}
-        else:
-            content = payload.get("content") or payload.get("description")
-            if isinstance(content, str) and content.strip():
-                payload = {**payload, "detail_html": normalize_ownerclan_html(content)}
-
-    return payload
-
-
-def _get_or_fetch_supplier_item_raw(
-    session: Session,
-    item_code: str,
-    force_fetch: bool,
-) -> SupplierItemRaw | None:
-    item_code_norm = str(item_code or "").strip()
-    if not item_code_norm:
-        return None
-
-    raw_item = (
-        session.execute(
-            select(SupplierItemRaw)
-            .where(SupplierItemRaw.supplier_code == "ownerclan")
-            .where(SupplierItemRaw.item_code == item_code_norm)
-        )
-        .scalars()
-        .first()
-    )
-    if raw_item and not force_fetch:
-        return raw_item
-
-    owner = (
-        session.query(SupplierAccount)
-        .filter(SupplierAccount.supplier_code == "ownerclan")
-        .filter(SupplierAccount.user_type == "seller")
-        .filter(SupplierAccount.is_primary.is_(True))
-        .filter(SupplierAccount.is_active.is_(True))
-        .one_or_none()
-    )
-    if not owner or not owner.access_token:
-        raise HTTPException(status_code=400, detail="오너클랜(seller) 대표 계정이 설정되어 있지 않습니다")
-
-    client = OwnerClanClient(
-        auth_url=settings.ownerclan_auth_url,
-        api_base_url=settings.ownerclan_api_base_url,
-        graphql_url=settings.ownerclan_graphql_url,
-        access_token=owner.access_token,
-    )
-    status_code, data = client.get_product(item_code_norm)
-    if status_code >= 400:
-        raise HTTPException(status_code=400, detail=f"오너클랜 상품 조회 실패: HTTP {status_code}")
-
-    raw_payload = _normalize_ownerclan_item_payload(data)
-    now = datetime.now(timezone.utc)
-    stmt = insert(SupplierItemRaw).values(
-        supplier_code="ownerclan",
-        item_code=item_code_norm,
-        item_key=str(raw_payload.get("key")) if raw_payload.get("key") is not None else None,
-        item_id=str(raw_payload.get("id")) if raw_payload.get("id") is not None else None,
-        fetched_at=now,
-        raw=raw_payload,
-    )
-    stmt = stmt.on_conflict_do_update(
-        index_elements=["supplier_code", "item_code"],
-        set_={
-            "item_key": stmt.excluded.item_key,
-            "item_id": stmt.excluded.item_id,
-            "raw": stmt.excluded.raw,
-            "fetched_at": stmt.excluded.fetched_at,
-        },
-    )
-    session.execute(stmt)
-    session.flush()
-
-    raw_item = (
-        session.execute(
-            select(SupplierItemRaw)
-            .where(SupplierItemRaw.supplier_code == "ownerclan")
-            .where(SupplierItemRaw.item_code == item_code_norm)
-        )
-        .scalars()
-        .first()
-    )
-    return raw_item
-
-
-def _create_or_get_product_from_raw_item(session: Session, raw_item: SupplierItemRaw) -> tuple[Product, bool]:
-    existing = (
-        session.execute(select(Product).where(Product.supplier_item_id == raw_item.id)).scalars().first()
-    )
-    if existing:
-        return existing, False
-
-    data = raw_item.raw if isinstance(raw_item.raw, dict) else {}
-    item_name = data.get("item_name") or data.get("name") or data.get("itemName") or "Untitled"
-    supply_price = (
-        data.get("supply_price")
-        or data.get("supplyPrice")
-        or data.get("fixedPrice")
-        or data.get("fixed_price")
-        or data.get("price")
-        or 0
-    )
-    brand_name = data.get("brand") or data.get("brand_name")
-    description = data.get("description") or data.get("content")
-
-    cost = parse_int_price(supply_price)
-    shipping_fee = parse_shipping_fee(data)
-    try:
-        margin_rate = float(settings.pricing_default_margin_rate or 0.0)
-    except Exception:
-        margin_rate = 0.0
-    if margin_rate < 0:
-        margin_rate = 0.0
-    selling_price = calculate_selling_price(
-        cost, 
-        margin_rate, 
-        shipping_fee, 
-        market_fee_rate=float(settings.pricing_market_fee_rate or 0.13)
-    )
-
-    from app.services.market_targeting import resolve_trade_flags_from_raw
-    parallel_imported, overseas_purchased = resolve_trade_flags_from_raw(raw_item.raw if raw_item else None)
-
-    product = Product(
-        supplier_item_id=raw_item.id,
-        name=str(item_name),
-        brand=str(brand_name) if brand_name is not None else None,
-        description=str(description) if description is not None else None,
-        cost_price=cost,
-        selling_price=selling_price,
-        status="DRAFT",
-        coupang_parallel_imported=parallel_imported,
-        coupang_overseas_purchased=overseas_purchased,
-    )
-    session.add(product)
-    session.flush()
-    return product, True
 
 
 async def _execute_post_promote_actions(product_id: uuid.UUID, auto_register_coupang: bool, min_images_required: int) -> None:
@@ -208,8 +60,8 @@ async def _execute_post_promote_actions(product_id: uuid.UUID, auto_register_cou
     with session_factory() as bg_session:
         service = ProcessingService(bg_session)
         effective_min_images_required = max(1, int(min_images_required))
-        # process_product는 동기 함수이므로 to_thread에서 실행 (service 내부적으로 I/O 수행)
-        anyio.from_thread.run(service.process_product, product_id, effective_min_images_required)
+        # process_product는 비동기이므로 await로 실행
+        await service.process_product(product_id, effective_min_images_required)
 
         if not auto_register_coupang:
             return
@@ -528,15 +380,29 @@ def promote_sourcing_candidate(
     if str(candidate.status or "").strip().upper() != "APPROVED":
         raise HTTPException(status_code=409, detail="APPROVED 상태의 후보만 승격할 수 있습니다")
 
-    raw_item = _get_or_fetch_supplier_item_raw(
-        session,
-        item_code=str(candidate.supplier_item_id or ""),
-        force_fetch=bool(payload.forceFetchOwnerClan),
-    )
+    try:
+        raw_item = get_or_fetch_ownerclan_item_raw(
+            session,
+            item_code=str(candidate.supplier_item_id or ""),
+            force_fetch=bool(payload.forceFetchOwnerClan),
+        )
+    except OwnerClanItemError as exc:
+        if exc.code == "missing_primary_account":
+            detail = "오너클랜(seller) 대표 계정이 설정되어 있지 않습니다"
+        elif exc.code == "fetch_failed":
+            http_status = exc.meta.get("http_status")
+            detail = (
+                f"오너클랜 상품 조회 실패: HTTP {http_status}"
+                if http_status is not None
+                else "오너클랜 상품 조회 실패"
+            )
+        else:
+            detail = "오너클랜 상품 조회 실패"
+        raise HTTPException(status_code=exc.status_code, detail=detail)
     if not raw_item:
         raise HTTPException(status_code=404, detail="오너클랜 raw item을 찾을 수 없습니다")
 
-    product, created = _create_or_get_product_from_raw_item(session, raw_item)
+    product, created, _updated = create_or_get_product_from_raw_item(session, raw_item)
 
     effective_auto_process = bool(payload.autoProcess) or bool(payload.autoRegisterCoupang)
 

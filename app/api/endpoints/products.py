@@ -8,18 +8,17 @@ from urllib.parse import urlparse
 import ipaddress
 import socket
 import logging
-from sqlalchemy.dialects.postgresql import insert
-from datetime import datetime, timezone
-
 from app.db import get_session
-from app.models import MarketListing, Product, SupplierAccount, SupplierItemRaw, SourcingCandidate
+from app.models import MarketListing, Product, SupplierItemRaw, SourcingCandidate
 from app.schemas.product import MarketListingResponse, ProductResponse
-from app.settings import settings
 from app.services.detail_html_checks import find_forbidden_tags
 from app.services.image_validation_report import parse_validation_failures_from_logs
 from app.services.image_validation_log import parse_validation_failures
 from pathlib import Path
-from app.services.pricing import calculate_selling_price, parse_int_price, parse_shipping_fee
+from app.services.ownerclan_items import (
+    create_or_get_product_from_raw_item,
+    refresh_ownerclan_raw_if_needed,
+)
 
 router = APIRouter()
 
@@ -193,92 +192,19 @@ def create_product_from_ownerclan_raw(payload: ProductFromOwnerClanRawIn, sessio
     if not raw_item or raw_item.supplier_code != "ownerclan":
         raise HTTPException(status_code=404, detail="오너클랜 raw item을 찾을 수 없습니다.")
 
-    existing = session.scalars(select(Product).where(Product.supplier_item_id == raw_item.id)).first()
-    if existing:
-        data = raw_item.raw if isinstance(raw_item.raw, dict) else {}
-        supply_price = (
-            data.get("supply_price")
-            or data.get("supplyPrice")
-            or data.get("fixedPrice")
-            or data.get("fixed_price")
-            or data.get("price")
-            or 0
-        )
-        cost = parse_int_price(supply_price)
-        shipping_fee = parse_shipping_fee(data)
-        try:
-            margin_rate = float(settings.pricing_default_margin_rate or 0.0)
-        except Exception:
-            margin_rate = 0.0
-        if margin_rate < 0:
-            margin_rate = 0.0
-        selling_price = calculate_selling_price(
-            cost, 
-            margin_rate, 
-            shipping_fee, 
-            market_fee_rate=float(settings.pricing_market_fee_rate or 0.13)
-        )
-
-        updated = False
-        if (existing.selling_price or 0) <= 0 and selling_price > 0:
-            existing.cost_price = cost
-            existing.selling_price = selling_price
-            updated = True
-            session.flush()
-
-        if updated:
-            session.commit()
-
-        return {"created": False, "updated": updated, "productId": str(existing.id)}
-
-    data = raw_item.raw if isinstance(raw_item.raw, dict) else {}
-    item_name = data.get("item_name") or data.get("name") or "Untitled"
-    supply_price = (
-        data.get("supply_price")
-        or data.get("supplyPrice")
-        or data.get("fixedPrice")
-        or data.get("fixed_price")
-        or data.get("price")
-        or 0
-    )
-    brand_name = data.get("brand") or data.get("brand_name")
-    description = data.get("description") or data.get("content")
-
-    cost = parse_int_price(supply_price)
-    shipping_fee = parse_shipping_fee(data)
-    try:
-        margin_rate = float(settings.pricing_default_margin_rate or 0.0)
-    except Exception:
-        margin_rate = 0.0
-    if margin_rate < 0:
-        margin_rate = 0.0
-    selling_price = calculate_selling_price(
-        cost, 
-        margin_rate, 
-        shipping_fee, 
-        market_fee_rate=float(settings.pricing_market_fee_rate or 0.13)
+    product, created, updated = create_or_get_product_from_raw_item(
+        session,
+        raw_item,
+        update_existing_pricing=True,
     )
 
-    from app.services.market_targeting import resolve_trade_flags_from_raw
-    parallel_imported, overseas_purchased = resolve_trade_flags_from_raw(raw_item.raw if raw_item else None)
+    if created or updated:
+        session.commit()
 
-    product = Product(
-        supplier_item_id=raw_item.id,
-        name=str(item_name),
-        brand=str(brand_name) if brand_name is not None else None,
-        description=str(description) if description is not None else None,
-        cost_price=cost,
-        selling_price=selling_price,
-        status="DRAFT",
-        coupang_parallel_imported=parallel_imported,
-        coupang_overseas_purchased=overseas_purchased,
-    )
-    session.add(product)
-    session.flush()
+    if created:
+        return {"created": True, "productId": str(product.id)}
 
-    session.commit()
-
-    return {"created": True, "productId": str(product.id)}
+    return {"created": False, "updated": updated, "productId": str(product.id)}
 
 
 @router.post("/html-warnings", status_code=200, response_model=list[ProductHtmlWarningOut])
@@ -296,69 +222,6 @@ def get_product_html_warnings(
     return results
 
 
-def _refresh_ownerclan_raw_if_needed(session: Session, product: Product) -> bool:
-    if not product or not product.supplier_item_id:
-        return False
-
-    raw_item = session.get(SupplierItemRaw, product.supplier_item_id)
-    if not raw_item or raw_item.supplier_code != "ownerclan":
-        return False
-
-    item_code = str(raw_item.item_code or "").strip()
-    if not item_code:
-        return False
-
-    owner = (
-        session.query(SupplierAccount)
-        .filter(SupplierAccount.supplier_code == "ownerclan")
-        .filter(SupplierAccount.user_type == "seller")
-        .filter(SupplierAccount.is_primary.is_(True))
-        .filter(SupplierAccount.is_active.is_(True))
-        .one_or_none()
-    )
-    if not owner or not owner.access_token:
-        return False
-
-    from app.ownerclan_client import OwnerClanClient
-
-    client = OwnerClanClient(
-        auth_url=settings.ownerclan_auth_url,
-        api_base_url=settings.ownerclan_api_base_url,
-        graphql_url=settings.ownerclan_graphql_url,
-        access_token=owner.access_token,
-    )
-
-    status_code, data = client.get_product(item_code)
-    if status_code >= 400:
-        return False
-
-    now = datetime.now(timezone.utc)
-    raw_payload = (data.get("data") if isinstance(data, dict) and isinstance(data.get("data"), dict) else data) or {}
-    if not isinstance(raw_payload, dict):
-        return False
-
-    stmt = insert(SupplierItemRaw).values(
-        supplier_code="ownerclan",
-        item_code=item_code,
-        item_key=str(raw_payload.get("key")) if raw_payload.get("key") is not None else None,
-        item_id=str(raw_payload.get("id")) if raw_payload.get("id") is not None else None,
-        fetched_at=now,
-        raw=raw_payload,
-    )
-    stmt = stmt.on_conflict_do_update(
-        index_elements=["supplier_code", "item_code"],
-        set_={
-            "item_key": stmt.excluded.item_key,
-            "item_id": stmt.excluded.item_id,
-            "raw": stmt.excluded.raw,
-            "fetched_at": stmt.excluded.fetched_at,
-        },
-    )
-    session.execute(stmt)
-    session.flush()
-    return True
-
-
 async def _execute_product_processing(product_id: uuid.UUID, min_images_required: int, force_fetch_ownerclan: bool) -> None:
     import traceback
     from app.session_factory import session_factory
@@ -371,7 +234,7 @@ async def _execute_product_processing(product_id: uuid.UUID, min_images_required
                 return
 
             if force_fetch_ownerclan:
-                _refresh_ownerclan_raw_if_needed(processing_session, product)
+                refresh_ownerclan_raw_if_needed(processing_session, product)
 
             service = ProcessingService(processing_session)
             await service.process_product(product_id, min_images_required=min_images_required)
@@ -536,7 +399,7 @@ async def _run_failed_product_processing(
         processed_ids.append(str(p.id))
 
         if force_fetch_ownerclan:
-            if _refresh_ownerclan_raw_if_needed(session, p):
+            if refresh_ownerclan_raw_if_needed(session, p):
                 refreshed += 1
                 refreshed_ids.append(str(p.id))
 

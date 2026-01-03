@@ -14,6 +14,7 @@ from app.db import get_session
 from app.models import Product, MarketListing, MarketAccount, MarketProductRaw
 from app.schemas.product import MarketListingResponse
 from app.smartstore_sync import SmartStoreSync
+from app.session_factory import session_factory
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -46,6 +47,24 @@ class SmartStoreChangeStatusIn(BaseModel):
 class SmartStoreOptionStockIn(BaseModel):
     productSalePrice: dict
     optionInfo: dict
+
+
+def _sync_market_products_bg(market_code: str, account_id: uuid.UUID, deep: bool) -> None:
+    market_code_norm = str(market_code or "").strip().upper()
+    try:
+        with session_factory() as sync_session:
+            if market_code_norm == "COUPANG":
+                from app.coupang_sync import sync_coupang_products
+
+                sync_coupang_products(sync_session, account_id, deep=bool(deep))
+            elif market_code_norm == "SMARTSTORE":
+                from app.smartstore_sync import sync_smartstore_products
+
+                sync_smartstore_products(sync_session, account_id)
+            else:
+                logger.error(f"Unsupported market code: {market_code_norm}")
+    except Exception:
+        logger.error("Market product sync failed", exc_info=True)
 
 
 @router.post("/smartstore/register/{product_id}", status_code=202)
@@ -464,29 +483,25 @@ def sync_market_products(
     account_id: uuid.UUID | None = Query(default=None, alias="accountId"),
     deep: bool = Query(default=False),
 ) -> dict:
-    if market_code == "COUPANG":
-        from app.coupang_sync import sync_coupang_products
-        sync_func = sync_coupang_products
-    elif market_code == "SMARTSTORE":
-        from app.smartstore_sync import sync_smartstore_products
-        sync_func = sync_smartstore_products
-    else:
-        raise HTTPException(status_code=400, detail=f"지원하지 않는 마켓 코드입니다: {market_code}")
+    market_code_norm = str(market_code or "").strip().upper()
+
+    if market_code_norm not in ("COUPANG", "SMARTSTORE"):
+        raise HTTPException(status_code=400, detail=f"지원하지 않는 마켓 코드입니다: {market_code_norm}")
 
     if account_id:
         accounts = session.scalars(select(MarketAccount).where(MarketAccount.id == account_id)).all()
     else:
         accounts = session.scalars(
-            select(MarketAccount).where(MarketAccount.market_code == market_code, MarketAccount.is_active == True)
+            select(MarketAccount).where(MarketAccount.market_code == market_code_norm, MarketAccount.is_active == True)
         ).all()
         
     if not accounts:
-        raise HTTPException(status_code=400, detail=f"활성 상태의 {market_code} 계정을 찾을 수 없습니다.")
+        raise HTTPException(status_code=400, detail=f"활성 상태의 {market_code_norm} 계정을 찾을 수 없습니다.")
 
     for account in accounts:
-        background_tasks.add_task(sync_func, session, account.id, deep=bool(deep))
+        background_tasks.add_task(_sync_market_products_bg, market_code_norm, account.id, bool(deep))
         
-    return {"status": "accepted", "message": f"{market_code} 상품 동기화({len(accounts)}개 계정)가 백그라운드에서 시작되었습니다.", "deep": bool(deep)}
+    return {"status": "accepted", "message": f"{market_code_norm} 상품 동기화({len(accounts)}개 계정)가 백그라운드에서 시작되었습니다.", "deep": bool(deep)}
 
 
 @router.get("/products/raw", status_code=200)
