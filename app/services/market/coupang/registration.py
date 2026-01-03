@@ -6,7 +6,8 @@ import os
 from datetime import datetime, timezone, timedelta
 from typing import Any, Tuple
 
-from sqlalchemy import func, insert, select
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -291,7 +292,8 @@ class CoupangProductManager:
             price = max(3000, ((int(product.selling_price or 0) + 99) // 100) * 100)
             items_payload.append({
                 "itemName": name_to_use[:150], "originalPrice": price, "salePrice": price,
-                "maximumBuyCount": 9999, "outboundShippingTimeDay": 3, "taxType": "TAX", "adultOnly": "EVERYONE",
+                "maximumBuyCount": 9999, "maximumBuyForPerson": 0, "maximumBuyForPersonPeriod": 1,
+                "outboundShippingTimeDay": 3, "taxType": "TAX", "adultOnly": "EVERYONE",
                 "parallelImported": "PARALLEL_IMPORTED" if product.coupang_parallel_imported else "NOT_PARALLEL_IMPORTED",
                 "overseasPurchased": "OVERSEAS_PURCHASED" if product.coupang_overseas_purchased else "NOT_OVERSEAS_PURCHASED",
                 "pccNeeded": bool(product.coupang_overseas_purchased), "unitCount": 1, "images": images_payload,
@@ -311,7 +313,8 @@ class CoupangProductManager:
                         a["attributeValueName"] = opt_val
                 items_payload.append({
                     "itemName": f"{name_to_use} {opt_val}"[:150], "originalPrice": price, "salePrice": price,
-                    "maximumBuyCount": 9999, "outboundShippingTimeDay": 3, "taxType": "TAX", "adultOnly": "EVERYONE",
+                    "maximumBuyCount": 9999, "maximumBuyForPerson": 0, "maximumBuyForPersonPeriod": 1,
+                    "outboundShippingTimeDay": 3, "taxType": "TAX", "adultOnly": "EVERYONE",
                     "parallelImported": "PARALLEL_IMPORTED" if product.coupang_parallel_imported else "NOT_PARALLEL_IMPORTED",
                     "overseasPurchased": "OVERSEAS_PURCHASED" if product.coupang_overseas_purchased else "NOT_OVERSEAS_PURCHASED",
                     "pccNeeded": bool(product.coupang_overseas_purchased), "unitCount": 1, "images": images_payload,
@@ -327,7 +330,8 @@ class CoupangProductManager:
             "displayProductName": name_to_use[:100], "brand": product.brand or "Detailed Page",
             "generalProductName": name_to_use, "productOrigin": "수입산", "deliveryMethod": "SEQUENCIAL",
             "deliveryCompanyCode": delivery_company_code, "deliveryChargeType": "FREE", "deliveryCharge": 0,
-            "freeShipOverAmount": 0, "remoteAreaDeliverable": "Y", "returnCenterCode": return_center_code,
+            "freeShipOverAmount": 0, "remoteAreaDeliverable": "Y", "unionDeliveryType": "NOT_UNION_DELIVERY",
+            "returnCenterCode": return_center_code,
             "returnChargeName": (return_center_detail or {}).get("shippingPlaceName", "기본 반품지"),
             "companyContactNumber": _normalize_phone((return_center_detail or {}).get("companyContactNumber", "070-4581-8906")),
             "returnZipCode": (return_center_detail or {}).get("returnZipCode", "14598"),
